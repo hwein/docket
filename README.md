@@ -16,10 +16,14 @@ by the team and read by you.
 - **Freedom in the how, duty to leave a trail.** Hooks check provenance, form and state, never content. Specs freeze
   at `ready` (a gate checks every point has a verifiable criterion and no user decision is open); dockets are
   append-only; the LOG is written by hooks only (sealed, rewrite, every point delivered or deviated, delivered /
-  blocked / dissent), so it cannot be made up; in the default work dir every LOG line is a git commit. `DOCKET
+  blocked / dissent), so it cannot be made up; in the default work dir every LOG line is a git commit. The first
+  implementer runs only once the docket is pre-registered and every refinement finding has a decision. `DOCKET
   DELIVERED` passes only when the project's check ran after the last agent returned, every cited `file:line`
-  exists, and every reference doc the spec names is updated or accounted for. Finished specs are not a reference
-  source: the docs say what IS, specs say what SHOULD.
+  exists, every reference doc the spec names is updated or accounted for, every CI hash is reachable from HEAD
+  and was pushed, and the stamp carries the docket's delivered/points count. Project rules from `DOCKET.md`
+  (`push_branch`, `commit_regex`, `forbidden_paths`, `forbidden_commands`) are enforced on every shell command
+  and write. Every refusal is counted per rule and shown again at the next run of that spec. Finished specs are
+  not a reference source: the docs say what IS, specs say what SHOULD.
 - **Two registers.** Reports to the orchestrator are dense and carry an `Unverified:` line. Messages to you are
   short and plain: a deterministic parser plus a small judge model (installed per project by `/docket init`) reject hashes, ids, hedges, option menus,
   promises and manual tasks assigned to you, and the message is rewritten before you see it.
@@ -28,7 +32,8 @@ by the team and read by you.
 - **`/docket init` interviews the repo first, you second.** It gathers evidence for eleven questions about how
   the repo is worked on (branches, commits, merges, gates, releases, storage, language, commenting, forbidden
   content, external systems), asks you only where the repo is silent or contradicts itself, and writes `DOCKET.md`
-  plus, if you wish, CONTRIBUTING.md. Re-running it shows only what moved.
+  plus, if you wish, CONTRIBUTING.md. Nothing is written before your `go`; the hook enforces that. Re-running it
+  shows only what moved.
 
 ## Install
 
@@ -63,5 +68,5 @@ Run the hook tests with `python hooks/test_hooks.py -v`.
 
 ## Status
 
-0.1.0, skeleton. The hooks are tested; the commands and agents are first drafts; `/docket init` is a specification
-of its interview, not yet verified in a real project.
+0.1.2. The hooks are tested (77 cases); `/implement` has run end to end in a toy project; `/docket init`,
+`/concept` and `/spec` are specifications of their interviews, not yet verified in a real project.

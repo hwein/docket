@@ -17,11 +17,14 @@ from datetime import datetime, timedelta
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (CONCEPT_ID, SPEC_ID, Paths, config_values, load_state, log_event, log_lines, log_time,
-                        message_text, read_input, refuse, release_lock, save_state, transcript_blocks)
+                        message_text, point_counts, read_input, refuse, release_lock, save_state, set_context,
+                        transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
-STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})\s*$", re.IGNORECASE)
+STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
+                   re.IGNORECASE)
 HASH = re.compile(r"(?<![0-9a-zA-Z/])[0-9a-f]{7,40}(?![0-9a-zA-Z])")
+CI_LINE = re.compile(r"\bCI\b[^\n]*", re.IGNORECASE)
 HEDGES = re.compile(r"\b(probably|likely|seems?|appears?|presumably|i think|i believe|might|vermutlich|"
                     r"wahrscheinlich|scheint|offenbar|wohl|könnte|vielleicht)\b", re.IGNORECASE)
 OPTIONS = re.compile(r"\b(option [a-c1-3]\b|alternatively|or alternatively|alternativ)", re.IGNORECASE)
@@ -43,6 +46,7 @@ def main():
     mode = state.get("mode", "none")
     if mode == "none":
         return 0
+    set_context(paths, state.get("spec", ""))
     text = message_text(hook_input)
     if text is None:
         return 0
@@ -88,6 +92,7 @@ def sealed_problems(text, state, paths, hook_input):
         problems.append(f"the terminal line names {head.group(2)}, this session is sealed on {spec_id}")
     docket = paths.docket_file(spec_id)
     delivered = bool(head) and head.group(1).upper() == "DELIVERED"
+    counts = None
     if docket is None:
         if delivered:
             problems.append("the docket file does not exist yet (write the skeleton first, one line per spec point)")
@@ -97,16 +102,26 @@ def sealed_problems(text, state, paths, hook_input):
                 body = handle.read()
         except OSError:
             body = ""
-        open_points = len(re.findall(r"(?<!`)\[ \](?!`)", body))
-        if open_points and delivered:
-            problems.append(f"{open_points} docket point(s) still open `[ ]`; each needs `[x]` with evidence "
+        counts = point_counts(body)
+        if counts[" "] and delivered:
+            problems.append(f"{counts[' ']} docket point(s) still open `[ ]`; each needs `[x]` with evidence "
                             "or `[~]` with a deviation line")
         if delivered:
             problems += provenance_problems(body, spec_id, paths, hook_input)
     stamp = STAMP.match(lines[-1]) if lines else None
     if stamp is None:
-        problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM <spec-id>` with the current time, fetched now")
+        problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM <spec-id> <delivered>/<points>` with the "
+                        "current time, fetched now, and the docket's counts")
     else:
+        # The stamp carries the state of the acceptance list: delivered/points as the docket shows them.
+        if counts is not None:
+            total = counts["x"] + counts["~"] + counts[" "]
+            if stamp.group(7) is None:
+                if delivered:
+                    problems.append(f"the stamp must end with the docket's counts `{counts['x']}/{total}` (delivered/points)")
+            elif (int(stamp.group(7)), int(stamp.group(8))) != (counts["x"], total):
+                problems.append(f"the stamp says {stamp.group(7)}/{stamp.group(8)} but the docket shows "
+                                f"{counts['x']}/{total} delivered/points: the stamp is read from the docket, not remembered")
         try:
             when = datetime(*(int(stamp.group(i)) for i in range(1, 6)))
             deviation = abs(datetime.now() - when)
@@ -163,6 +178,35 @@ def provenance_problems(body, spec_id, paths, hook_input):
     if missing:
         problems.append("cited locations that do not exist: " + ", ".join(sorted(set(missing))[:6]))
     problems += reference_problems(body, spec_id, paths)
+    problems += ci_problems(body, paths, blocks)
+    return problems
+
+
+def ci_problems(body, paths, blocks):
+    """A CI state belongs to a pushed hash: every hash on a CI line of the docket is reachable from HEAD,
+    and a `git push` ran in this session. With `ci` configured in DOCKET.md, DELIVERED needs such a line."""
+    import subprocess
+    problems = []
+    hashes = []
+    for line in CI_LINE.findall(body):
+        hashes += HASH.findall(line)
+    ci = config_values(paths).get("ci", "")
+    if ci and ci.lower() != "none" and not hashes:
+        problems.append("DOCKET.md configures CI: the docket needs a `CI: <state> <pushed hash>` line per delivered point")
+    if not hashes:
+        return problems
+    pushed = any(role == "assistant" and b.get("type") == "tool_use" and b.get("name") in ("Bash", "PowerShell")
+                 and re.search(r"\bgit\s+push\b", str((b.get("input") or {}).get("command", ""))) for _, role, b in blocks)
+    if blocks and not pushed:
+        problems.append("the docket cites a CI hash but no `git push` ran in this session")
+    for found in sorted(set(hashes)):
+        try:
+            result = subprocess.run(["git", "-C", paths.root, "merge-base", "--is-ancestor", found, "HEAD"],
+                                    capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode != 0:
+            problems.append(f"CI hash {found} is not reachable from HEAD: the CI state belongs to another commit")
     return problems
 
 

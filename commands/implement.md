@@ -44,8 +44,10 @@ implemented as written. Spawn no other agent while a rewrite runs.
 ## 2. Pre-registration
 
 Spawn a `fixer` to write the docket skeleton from `${CLAUDE_PLUGIN_ROOT}/templates/delivery-docket.md` to `dockets/<topic>/<spec id>.md`: one row
-per spec point with the evidence line you will accept (`<command> → <expected>`). The hook makes the file
-append-only from here. Changing the acceptance line later is not allowed; a point that cannot meet it becomes `[~]`.
+per spec point with the evidence line you will accept (`<command> → <expected>`), and the refinement lines with
+their decisions. The hook makes the file append-only from here, and it refuses the first implementer until the
+docket exists and every refinement line carries a decision (adopted / rejected / rewrite / dissent).
+Changing the acceptance line later is not allowed; a point that cannot meet it becomes `[~]`.
 
 ## 3. Points
 
@@ -71,8 +73,13 @@ set (LOG line `stop-requested`), end with `DOCKET BLOCKED <id>` and the reason "
 
 Reference update: for every file the spec names, an implementer updates it; the docket records `updated <file>` or
 `<file>: not needed, <reason>`. The Stop hook checks both: every named file is accounted for, and an `updated` file
-has changed since sealing. Merge and push per CONTRIBUTING.md; CI state belongs to the pushed hash and is read by you.
+has changed since sealing. Merge and push per CONTRIBUTING.md (the hook enforces `push_branch`, `commit_regex`,
+`forbidden_paths` and `forbidden_commands` from DOCKET.md where they are set). CI state belongs to the pushed hash
+and is read by you: the docket line is `CI: <state> <hash>`, and the hook checks that the hash is reachable from
+HEAD and that a push ran in this session; with `ci` configured, DELIVERED needs such a line.
 Metrics to `metrics/<spec id>.json` via `fixer`: rounds per point, model per round, refinement findings, inbox notes.
+The hooks keep `metrics/<spec id>.violations.json` themselves: every refused tool call or message, counted per rule,
+shown again at the next `/implement` of the spec.
 
 ## 5. Terminal message (the only message)
 
@@ -84,8 +91,9 @@ DOCKET DELIVERED <spec id>        (or DOCKET BLOCKED <spec id> / DOCKET DISSENT 
 <one sentence per deviation: what differs and why>
 <one sentence per reference doc updated>
 <blocker or dissent: what only the user can resolve, two positions with source for dissent>
-stamp: YYYY-MM-DD HH:MM <spec id>
+stamp: YYYY-MM-DD HH:MM <spec id> <delivered>/<points>
 ```
 
-The stamp is fetched from the clock at the moment of writing, never remembered. The hook refuses the message
-otherwise and closes the session on success; afterwards you answer only from the docket.
+The stamp is fetched from the clock at the moment of writing, never remembered, and ends with the docket's counts
+(`[x]` boxes / all points) read from the docket, not remembered. The hook refuses the message otherwise and closes
+the session on success; afterwards you answer only from the docket.

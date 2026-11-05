@@ -101,6 +101,7 @@ class Paths:
         self.inbox = posixpath.join(self.work, "inbox")
         self.log = posixpath.join(self.work, "LOG.md")
         self.config = posixpath.join(self.work, "DOCKET.md")
+        self.metrics = posixpath.join(self.work, "metrics")
         self.state_dir = posixpath.join(self.root, ".claude", "docket")
 
     def required_reading(self):
@@ -120,6 +121,9 @@ class Paths:
     def lock_file(self, spec_id):
         return posixpath.join(self.work, "locks", spec_id)
 
+    def violations_file(self, doc_id):
+        return posixpath.join(self.metrics, f"{doc_id or 'session'}.violations.json")
+
 
 def config_values(paths):
     """The Configuration table of DOCKET.md as {key: value}; backticks stripped."""
@@ -127,7 +131,8 @@ def config_values(paths):
     try:
         with open(paths.config, encoding="utf-8-sig", errors="ignore") as handle:
             for line in handle:
-                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                # Cells split on unescaped pipes; `\|` inside a value (a regex alternative) is a literal pipe.
+                cells = [cell.strip().replace("\\|", "|") for cell in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
                 if len(cells) >= 2 and cells[0] and not cells[0].startswith("-") and cells[0].lower() != "key":
                     value = cells[1].strip("`").strip()
                     if value.startswith("<"):
@@ -359,6 +364,59 @@ def message_text(hook_input, transcript_key="transcript_path"):
     return last_assistant_text(hook_input.get(transcript_key))
 
 
+CONTEXT = {}
+
+
+def set_context(paths, doc_id):
+    """Where refusals are counted: the metrics file of the document the session works on."""
+    CONTEXT.update({"paths": paths, "doc_id": doc_id or ""})
+
+
+def rule_key(message):
+    words = re.sub(r"^\[docket\]\s*", "", message).lower()
+    words = re.sub(r"[^a-z0-9 ]+", " ", words).split()
+    return "-".join(words[:5]) or "unnamed"
+
+
+def violations(paths, doc_id):
+    try:
+        with open(paths.violations_file(doc_id), encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def record_violation(paths, doc_id, message):
+    """Measurement with feedback: every refusal is counted per rule in metrics/<id>.violations.json
+    and shown again at the next /implement of that spec and at session start."""
+    counts = violations(paths, doc_id)
+    key = rule_key(message)
+    counts[key] = int(counts.get(key, 0)) + 1
+    try:
+        os.makedirs(paths.metrics, exist_ok=True)
+        with open(paths.violations_file(doc_id), "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(counts, handle, indent=1, sort_keys=True)
+    except (OSError, TypeError):
+        pass
+
+
+def violations_line(paths, doc_id):
+    counts = violations(paths, doc_id)
+    if not counts:
+        return ""
+    top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    return "[docket] Refusals so far for " + (doc_id or "this session") + ": " + ", ".join(
+        f"{key} ({n})" for key, n in top) + ". Each one is a rule you broke; do not repeat it."
+
+
+def point_counts(body):
+    """Boxes of a docket: delivered [x], deviations [~], open [ ] (backticked ones ignored)."""
+    return {mark: len(re.findall(r"(?<!`)\[" + re.escape(mark) + r"\](?!`)", body)) for mark in ("x", "~", " ")}
+
+
 def refuse(message):
     print(message, file=sys.stderr)
+    if CONTEXT.get("paths") is not None:
+        record_violation(CONTEXT["paths"], CONTEXT.get("doc_id", ""), message)
     return 2

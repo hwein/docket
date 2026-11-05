@@ -26,9 +26,9 @@ def run_hook(script, payload, project_dir):
     return result.returncode, result.stderr.decode("utf-8", "replace"), result.stdout.decode("utf-8", "replace")
 
 
-def stamp(minutes_off=0):
+def stamp(minutes_off=0, counts="1/1"):
     when = datetime.now() + timedelta(minutes=minutes_off)
-    return f"stamp: {when:%Y-%m-%d %H:%M} {SPEC}"
+    return f"stamp: {when:%Y-%m-%d %H:%M} {SPEC}" + (f" {counts}" if counts else "")
 
 
 class Project(unittest.TestCase):
@@ -311,8 +311,8 @@ class SealedStop(Project):
 
     def test_open_point_blocks_delivered_but_not_blocked(self):
         self.docket.write_text("# Docket\nflip `[ ]` to `[x]`\n| 1 | login | `cargo test` | [ ] |\n", "utf-8")
-        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 2)
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nDocker is not running.\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='0/1')}")[0], 2)
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nDocker is not running.\n{stamp(counts='0/1')}")[0], 0)
         self.assertEqual(self.state()["terminal"], "blocked")
 
     def test_blocked_without_docket_closes(self):
@@ -553,6 +553,175 @@ class Provenance(Project):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
         self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(-30)}")
         self.assertTrue(self.state()["degraded"])
+
+
+class StampCounts(Project):
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [~] |\n| 3 | c | `z` | [x] |\n", "utf-8")
+
+    def test_counts_must_match_the_docket(self):
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='3/3')}")
+        self.assertEqual(code, 2)
+        self.assertIn("2/3", err)
+        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='2/3')}")[0], 0)
+
+    def test_delivered_without_counts_is_refused_blocked_passes(self):
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='')}")
+        self.assertEqual(code, 2)
+        self.assertIn("2/3", err)
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\n{stamp(counts='')}")[0], 0)
+
+
+class Refinement(Project):
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+
+    def implementer(self):
+        return self.tool("Agent", subagent_type="docket:implementer", prompt="point 1")
+
+    def test_no_docket_refuses_first_implementer(self):
+        code, err, _ = self.implementer()
+        self.assertEqual(code, 2)
+        self.assertIn("skeleton", err)
+
+    def test_open_refinement_line_refuses_closed_passes(self):
+        self.docket.write_text("## Refinement\n\n- feasibility: hello.py does not exist\n- spec: fine → rejected: out of scope\n\n## Evidence\n", "utf-8")
+        code, err, _ = self.implementer()
+        self.assertEqual(code, 2)
+        self.assertIn("hello.py does not exist", err)
+        self.docket.write_text("## Refinement\n\n- feasibility: hello.py does not exist → REWRITE by the conceptor\n- spec: fine → rejected\n", "utf-8")
+        self.assertEqual(self.implementer()[0], 0)
+
+    def test_fixer_and_refiner_are_not_gated(self):
+        self.assertEqual(self.tool("Agent", subagent_type="docket:fixer", prompt="skeleton")[0], 0)
+        self.assertEqual(self.tool("Agent", subagent_type="docket:refiner", prompt="angle")[0], 0)
+
+
+class ProjectRules(Project):
+    def setUp(self):
+        super().setUp()
+        (self.work / "DOCKET.md").write_text(
+            "| Key | Value | Source |\n|---|---|---|\n| push_branch | `feature/.*` | |\n"
+            "| commit_regex | `(feat\|fix\|docs)(\\(.*\\))?: ` | |\n| forbidden_paths | `secrets/**, .env` | |\n"
+            "| forbidden_commands | `gh workflow run\|terraform apply` | |\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC)
+
+    def test_push_to_other_branch_refused(self):
+        code, err, _ = self.tool("Bash", command="git push origin main")
+        self.assertEqual(code, 2)
+        self.assertIn("push_branch", err)
+        self.assertEqual(self.tool("Bash", command="git push -u origin feature/login")[0], 0)
+        self.assertEqual(self.tool("Bash", command="git push origin HEAD:feature/login")[0], 0)
+
+    def test_commit_message_must_match(self):
+        code, err, _ = self.tool("Bash", command='git commit -m "login works"')
+        self.assertEqual(code, 2)
+        self.assertIn("commit_regex", err)
+        self.assertEqual(self.tool("Bash", command='git commit -m "feat(auth): login"')[0], 0)
+        self.assertEqual(self.tool("Bash", command="git commit -m \"$(cat <<'EOF'\nfix: typo\n\nbody\nEOF\n)\"")[0], 0)
+        self.assertEqual(self.tool("Bash", command="git commit -m \"$(cat <<'EOF'\nwrong\nEOF\n)\"")[0], 2)
+
+    def test_forbidden_paths_and_commands(self):
+        code, err, _ = self.tool("Write", file_path=f"{self.p}/secrets/key.pem", content="x")
+        self.assertEqual(code, 2)
+        self.assertIn("forbidden path", err)
+        self.assertEqual(self.tool("Edit", file_path=f"{self.p}/.env", old_string="a", new_string="b")[0], 2)
+        self.assertEqual(self.tool("Write", file_path=f"{self.p}/src/main.rs", content="x")[0], 0)
+        code, err, _ = self.tool("Bash", command="gh workflow run deploy.yml")
+        self.assertEqual(code, 2)
+        self.assertIn("forbidden_commands", err)
+        self.assertEqual(self.tool("Bash", command="gh pr list")[0], 0)
+
+    def test_rules_inactive_without_config(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n", "utf-8")
+        self.assertEqual(self.tool("Bash", command="git push origin main")[0], 0)
+        self.assertEqual(self.tool("Bash", command='git commit -m "anything"')[0], 0)
+
+
+class InitApproval(Project):
+    def test_init_writes_only_after_go(self):
+        self.prompt("/docket init")
+        self.assertEqual(self.state()["mode"], "init")
+        code, err, _ = self.tool("Write", file_path=str(self.work / "DOCKET.md"), content="# DOCKET")
+        self.assertEqual(code, 2)
+        self.assertIn("approved", err)
+        self.assertEqual(self.tool("Write", file_path=f"{self.p}/CONTRIBUTING.md", content="x")[0], 2)
+        self.assertEqual(self.tool("Write", file_path=f"{self.p}/notes.md", content="x")[0], 0)
+        self.prompt("go")
+        self.assertTrue(self.state()["init_approved"])
+        self.assertIn("init-approved", self.log())
+        self.assertEqual(self.tool("Write", file_path=str(self.work / "DOCKET.md"), content="# DOCKET")[0], 0)
+        self.assertEqual(self.tool("Write", file_path=f"{self.p}/CONTRIBUTING.md", content="x")[0], 0)
+
+    def test_other_text_is_not_a_go(self):
+        self.prompt("/docket init")
+        self.prompt("go on with the audit, I will decide later")
+        self.assertFalse(self.state().get("init_approved"))
+
+
+class Violations(Project):
+    def test_refusals_are_counted_and_fed_back(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.tool("Write", file_path=str(self.work / "LOG.md"), content="x")
+        self.tool("Write", file_path=str(self.work / "LOG.md"), content="x")
+        self.tool("AskUserQuestion", questions=[])
+        counts = json.loads((self.work / "metrics" / f"{SPEC}.violations.json").read_text("utf-8"))
+        self.assertEqual(sum(counts.values()), 3)
+        self.assertEqual(max(counts.values()), 2)
+        self.set_state(mode="none")
+        code, err, out = self.prompt(f"/implement {SPEC}")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Refusals so far", out)
+        self.assertIn("(2)", out)
+        _, _, out = run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
+        self.assertIn("Refusals so far", out)
+
+    def test_no_file_without_refusals(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.tool("Read", file_path=f"{self.p}/README.md")
+        self.assertFalse((self.work / "metrics").exists())
+
+
+class CiHash(Project):
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+        subprocess.run(["git", "-C", str(self.root), "init", "-q"], check=True)
+        (self.root / "a.txt").write_text("a\n", "utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"], check=True)
+        self.head = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        self.transcript = self.tmp / "transcript.jsonl"
+
+    def stop_t(self, message, pushed=True):
+        blocks = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "p1", "name": "Bash",
+                   "input": {"command": "git push origin feature/x" if pushed else "git status"}}]}}]
+        self.transcript.write_text("\n".join(json.dumps(b) for b in blocks) + "\n", "utf-8")
+        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
+                                    "stop_hook_active": False, "transcript_path": str(self.transcript)}, self.p)
+
+    def test_ci_hash_must_be_reachable_and_pushed(self):
+        self.docket.write_text(f"- [x] point 1: ok. CI: green {self.head[:10]}\n", "utf-8")
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("- [x] point 1: ok. CI: green 0123456789abcdef0123456789abcdef01234567\n", "utf-8")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("not reachable", err)
+        self.docket.write_text(f"- [x] point 1: ok. CI: green {self.head[:10]}\n", "utf-8")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}", pushed=False)
+        self.assertEqual(code, 2)
+        self.assertIn("git push", err)
+
+    def test_configured_ci_needs_a_hash_line(self):
+        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n| ci | `gh run watch` | |\n", "utf-8")
+        self.docket.write_text("- [x] point 1: ok. CI: none\n", "utf-8")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("pushed hash", err)
 
 
 class StartSummary(Project):

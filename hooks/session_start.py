@@ -13,7 +13,7 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import SPEC_ID, Paths, load_state, log_event, log_lines, read_input, save_state
+from docket_lib import SPEC_ID, Paths, load_state, log_event, log_lines, point_counts, read_input, save_state, violations_line
 
 TERMINAL_EVENTS = ("delivered", "blocked", "dissent")
 
@@ -43,6 +43,9 @@ def main():
         lines.append(f"[docket] A sealed implementation of {spec_id} is in progress: {points_summary(paths, spec_id)}. "
                      f"Continue from the docket at {paths.docket_file(spec_id) or paths.dockets} "
                      f"and the last lines of {paths.log}.")
+        feedback = violations_line(paths, spec_id)
+        if feedback:
+            lines.append(feedback)
     else:
         open_runs = interrupted_runs(paths)
         if open_runs:
@@ -64,7 +67,7 @@ def points_summary(paths, spec_id):
             body = handle.read()
     except OSError:
         return "docket unreadable"
-    counts = {mark: len(re.findall(r"(?<!`)\[" + re.escape(mark) + r"\](?!`)", body)) for mark in ("x", "~", " ")}
+    counts = point_counts(body)
     return f"{counts['x']} delivered, {counts['~']} deviations, {counts[' ']} open"
 
 

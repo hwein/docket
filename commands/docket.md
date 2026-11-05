@@ -49,7 +49,11 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    registers it as `check`. When the work dir is the home default, the hooks keep it under its own git history
    (`git init` on the first LOG line); for `docket/` inside the repo or a second repo, the diff says which.
    New repo: `git init`, remote (existing / create via `gh repo create` / none), all eleven questions.
-5. Show the diff, wait for the go, write, one LOG line. Re-runs show only findings whose fingerprint moved.
+   Questions 1, 2, 10 and 11 also become the configuration keys `push_branch`, `commit_regex`, `forbidden_paths`
+   and `forbidden_commands` (regexes and globs the hooks enforce); a pipe inside a regex is written `\|`.
+5. Show the diff and ask for the go. The hook refuses every write to DOCKET.md, CONTRIBUTING.md, CLAUDE.md,
+   AGENTS.md, .gitignore and settings files until the user answers with the one word `go` (or ok, yes, ja); that
+   answer is logged as `init-approved`. Then write, one LOG line. Re-runs show only findings whose fingerprint moved.
 
 ## `stop`
 

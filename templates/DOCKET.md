@@ -14,6 +14,10 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | model_ladder | fixer: claude-haiku-5-5 · implementer round 1: claude-sonnet-5-5 · round 2+: claude-opus-5-5 · refiners: claude-sonnet-5-5 | |
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |
 | ci | `<how CI is waited for and read, or "none">` | |
+| push_branch | `<regex the pushed branch must match, e.g. "feature/.*" or "main">` | question 1 |
+| commit_regex | `<regex for the first line of a commit message; escape pipes as \|>` | question 2 |
+| forbidden_paths | `<comma-separated globs no agent writes, e.g. "secrets/**, .env">` | question 10 |
+| forbidden_commands | `<regex of shell commands that need the user, e.g. "gh workflow run\|terraform apply">` | question 11 |
 
 ## Repository behaviour
 

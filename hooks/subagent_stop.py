@@ -9,7 +9,7 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import Paths, load_state, log_event, message_text, read_input, refuse, save_state
+from docket_lib import Paths, load_state, log_event, message_text, read_input, refuse, save_state, set_context
 
 MAX_LINES = 40
 
@@ -39,6 +39,7 @@ def end_rewrite(hook_input):
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
     state = load_state(paths, session_id)
+    set_context(paths, state.get("spec", ""))
     if state.get("mode") == "rewrite":
         state.update({"mode": "sealed", "rewrite": ""})
         save_state(paths, session_id, state)

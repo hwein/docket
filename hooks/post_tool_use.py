@@ -18,7 +18,7 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (Paths, absolute, frontmatter, load_state, log_event, log_has, read_input, refuse,
-                        under)
+                        set_context, under)
 
 CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b|==)", re.IGNORECASE)
 
@@ -44,6 +44,7 @@ def main():
 def docket_check(path, paths, session_id):
     state = load_state(paths, session_id)
     spec_id = state.get("spec", "")
+    set_context(paths, spec_id)
     snap = posixpath.join(paths.state_dir, f"snap-{spec_id}.md")
     try:
         with open(path, encoding="utf-8-sig", errors="ignore") as handle:

@@ -13,9 +13,11 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import SPEC_ID, Paths, load_state, lock_holder, log_event, read_input, refuse, save_state, take_lock
+from docket_lib import (SPEC_ID, Paths, load_state, lock_holder, log_event, read_input, refuse, save_state,
+                        set_context, take_lock, violations_line)
 
 IMPLEMENT = re.compile(r"^/implement\b(?P<rest>.*)$", re.DOTALL)
+GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
 COMMANDS = {
     "/concept": "concept",
     "/spec": "spec",
@@ -32,7 +34,8 @@ REMINDERS = {
              "the repo is silent or contradicts itself. Write nothing before the diff is approved."),
     "sealed": ("The spec is sealed. No questions to the user; defaults plus a 'deviation' line in the docket. "
                "Nothing you did not fetch yourself is a fact. The turn ends with exactly one message: "
-               "DOCKET DELIVERED, DOCKET BLOCKED or DOCKET DISSENT, last line `stamp: YYYY-MM-DD HH:MM <spec-id>`."),
+               "DOCKET DELIVERED, DOCKET BLOCKED or DOCKET DISSENT, last line `stamp: YYYY-MM-DD HH:MM <spec-id> "
+               "<delivered>/<points>` with the docket's current counts."),
     "rewrite": ("Rewrite mode: only the conceptor agent edits the named spec, and it records the rewrite with date "
                 "and reason in the spec."),
     "closed": ("The implementation is closed. Answer only from the docket, shorter when not understood; "
@@ -54,9 +57,11 @@ def main():
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
     state = load_state(paths, session_id)
+    set_context(paths, state.get("spec", ""))
     text = strip_harness_blocks(prompt).strip()
     if not text:
         return 0  # only harness notifications (task results, session notes): not user text
+    feedback = ""
     # A command may sit on its own line below a preamble (sessions started by another session).
     command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")
     lowered = command_line.lower()
@@ -77,6 +82,7 @@ def main():
         state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False})
         save_state(paths, session_id, state)
         log_event(paths, session_id, spec_id, "sealed")
+        feedback = violations_line(paths, spec_id)
     elif lowered.startswith("/docket stop"):
         if state.get("mode") in ("sealed", "rewrite"):
             state["stop_requested"] = True
@@ -85,8 +91,13 @@ def main():
     elif lowered.startswith("/docket"):
         for command, mode in COMMANDS.items():
             if lowered.startswith(command):
-                state.update({"mode": mode, "spec": ""})
+                state.update({"mode": mode, "spec": "", "init_approved": False})
                 save_state(paths, session_id, state)
+    elif state.get("mode") == "init" and GO.match(text):
+        # The diff is approved on the user's one word; only now may init write project files.
+        state["init_approved"] = True
+        save_state(paths, session_id, state)
+        log_event(paths, session_id, "", "init-approved")
     else:
         for command, mode in COMMANDS.items():
             if lowered.startswith(command):
@@ -108,6 +119,8 @@ def main():
         lines.append(f"[docket] Mode {mode}" + (f", spec {state['spec']}" if state.get("spec") else "")
                      + ". " + REMINDERS.get(mode, ""))
         lines.append(ambition())
+    if feedback:
+        lines.append(feedback)
     if state.get("degraded") and os.path.isfile(paths.config):
         missing = [f for f in paths.required_reading() if f not in state.get("read", [])]
         if missing:
