@@ -1,0 +1,13 @@
+{
+  "name": "docket-local",
+  "owner": {
+    "name": "Heiko Wein"
+  },
+  "plugins": [
+    {
+      "name": "docket",
+      "source": "./",
+      "description": "Spec in, docket out: frozen specs, append-only dockets, provenance hooks, a judge before delivery."
+    }
+  ]
+}

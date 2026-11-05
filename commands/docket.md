@@ -1,0 +1,54 @@
+---
+description: "The docket register, project setup and run control: /docket (register), /docket init (audit and interview), /docket stop (end a sealed run), /docket status."
+argument-hint: "[init | stop | status]"
+---
+
+# /docket
+
+Argument: `$ARGUMENTS`
+
+## No argument: the register
+
+Render the register from the files, never from memory: every concept, spec and docket under the work dir with
+title, topic, state and dependencies (`concept:`, `follows:`, `after`), plus the last ten LOG lines in words.
+Group by topic. Dependencies give a rough order, nothing more: never present the register as a roadmap and make
+no promises about what comes next. Ids are shown in the table only.
+
+## `init`: audit and interview
+
+Runs any time, never required. The repo is the first interview partner, the user the second: the user decides
+only where the repo is silent or contradicts itself. Nothing is written before the diff is approved.
+
+1. Findings, with a source for each (file, command, number), for the eleven questions:
+   branch model (`git branch -a`, default branch, branch protection); commit form (last 200 messages: convention,
+   language, ticket numbers); way into the target branch (merged PRs vs direct commits, squash vs merge commits);
+   who merges; gate before merge (workflows on pull_request, check scripts); release (tags, release workflow,
+   CHANGELOG, version field); storage of specs and dockets (existing spec folders, external repos in CLAUDE.md);
+   language (comments, README, issues); commenting (comment lines per code line per language: sparse < 5 %,
+   normal, verbose > 15 %; existing section markers); forbidden paths and content (.gitignore, guard hooks,
+   CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules).
+   Also: existing CLAUDE.md, AGENTS.md, CONTRIBUTING.md, hooks, commands, skills, permissions; a check script with
+   exit code and one result line.
+2. Compare findings with each other and with the framework rules. Three classes: unambiguous (one finding, no
+   objection), ambiguous or contradictory, silent.
+3. Interview: unambiguous findings are listed once ("adopted, source") and confirmed in one go at the end.
+   Ambiguous and silent questions get one card each (AskUserQuestion): both findings with source, the effect in
+   one sentence, the recommendation first, answerable with one word. A card never asks two things and never gives
+   the user a task.
+4. Diff: `DOCKET.md` in the work dir (configuration, repository behaviour or pointers to where the project already
+   answers, deviations, audit fingerprints), `.gitignore` lines, the permission rule `Edit(~/.docket/**)` in user
+   settings when the work dir is the home default, and the judge hook from `templates/judge-hook.json` into the
+   project's `.claude/settings.json` (the judge is a per-project opt-in, so it never runs in projects that did not ask). Existing CLAUDE.md, AGENTS.md or CONTRIBUTING.md receive the
+   decisions where they already treat the topic, otherwise as a marked section; no existing sentence changes before
+   the user decided the contradiction. Missing files of those three are created only on explicit wish.
+   New repo: `git init`, remote (existing / create via `gh repo create` / none), all eleven questions.
+5. Show the diff, wait for the go, write, one LOG line. Re-runs show only findings whose fingerprint moved.
+
+## `stop`
+
+In a sealed run: the hook records the request; the orchestrator ends at the next checkpoint with
+`DOCKET BLOCKED <id>` and the reason "stopped by user". Outside a sealed run: say in one sentence that nothing runs.
+
+## `status`
+
+One line: mode, spec, open points of the current docket, last LOG line.

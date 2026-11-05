@@ -1,0 +1,8 @@
+.claude/docket/
+.claude/docket-state*
+__pycache__/
+*.pyc
+experiments/*/result*.log
+experiments/*/.claude/settings.local.json
+framework/
+experiments/
