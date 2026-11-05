@@ -43,7 +43,8 @@ REMINDERS = {
 }
 WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock now, "
              "never remembered; the hook refuses the message otherwise. Sent back: do exactly what the hook asks "
-             "(the stamp line alone, or correction lines); repeat a message only when it says it was held back.")
+             "(the stamp line alone, correction lines, or the line `[docket] noted`); repeat a message only when it says "
+             "it was held back.")
 
 
 def ambition():

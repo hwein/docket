@@ -13,6 +13,9 @@ it runs after the message is on the screen, so a rewrite shows the message twice
   answer to a refusal is never held back and nothing is lost.
 - The terminal client streams a message in batches; each batch is held until the last one, then the
   whole message is shown at once. Claude Code Desktop and the SDK send one batch per message.
+- In every mode of a set-up project, the answer to a judge verdict (`[docket] noted`) is hidden: the judge
+  runs at Stop, after the user has read the message, so its rejection only goes to Claude and the log.
+  Not when stop.py asked in the same feedback for a held-back message in full: that answer is shown.
 - Fails open: any error shows the original text.
 Nothing is printed except the hook's JSON answer.
 """
@@ -22,7 +25,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from docket_lib import (HIDDEN, SESSION_ID, Paths, buffer_path, load_display, load_state, read_input,
+from docket_lib import (HIDDEN, SESSION_ID, Paths, answers_judge, buffer_path, load_display, load_state, read_input,
                         save_display)
 from stop import GATED_MODES, WATERMARK, content_problems, lines_of
 
@@ -40,6 +43,8 @@ def main():
         return 0
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
+    if os.path.isfile(paths.config) and answers_judge(hook_input.get("transcript_path")):
+        return show(HIDDEN)  # the acknowledgement of a judge verdict: the user has read the message it answers
     mode = load_state(paths, session_id).get("mode", "none")
     if mode not in GATED_MODES or not os.path.isfile(paths.config):
         return 0

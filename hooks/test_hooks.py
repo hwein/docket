@@ -508,7 +508,7 @@ class DisplayGate(Project):
         self.assertEqual(self.record()["hidden"], [])
 
     def test_held_back_message_is_asked_for_even_on_a_second_pass(self):
-        # Another Stop hook (the judge) may have sent Claude back already; the user still has seen nothing.
+        # A second pass (stop_hook_active) changes nothing: the user still has seen nothing.
         self.set_state(mode="concept")
         broken = f"Fixed in a1b2c3d4e.\n{hstamp()}"
         self.assertEqual(self.display(broken), self.HIDDEN)
@@ -930,6 +930,115 @@ class Violations(Project):
         self.set_state(mode="sealed", spec=SPEC)
         self.tool("Read", file_path=f"{self.p}/README.md")
         self.assertFalse((self.work / "metrics").exists())
+
+
+class JudgeLog(Project):
+    """The judge runs at Stop, after the user read the message: its rejection goes to Claude, which answers
+    `[docket] noted`; the gate hides that answer, stop.py lets it through and counts the verdict."""
+
+    PROMPT = "[You judge the final message of an assistant before a human reads it. Hook input JSON: $ARGUMENTS ...]"
+    TAIL = " The user has read your message and will not see your answer to this; answer with exactly the line `[docket] noted`."
+    HIDDEN = "​"
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.tmp / "transcript.jsonl"
+
+    def add(self, *entries):
+        with self.path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry) + "\n")
+
+    def summary(self, at, reason=None):
+        errors = [f"{self.PROMPT}: {reason}{self.TAIL}"] if reason else []
+        return {"type": "system", "subtype": "stop_hook_summary", "timestamp": at, "hookErrors": errors}
+
+    def feedback(self, reason, extra=""):
+        text = f"Stop hook feedback:\n{extra}{self.PROMPT}: {reason}{self.TAIL}"
+        return {"type": "user", "timestamp": "2026-11-05T21:58:53Z", "message": {"role": "user", "content": text}}
+
+    def said(self, text):
+        return {"type": "assistant", "timestamp": "2026-11-05T21:58:44Z",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+
+    def display(self, delta):
+        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "m9",
+                                                         "index": 0, "final": True, "delta": delta,
+                                                         "transcript_path": str(self.path)}, self.p)
+        self.assertEqual(code, 0, err)
+        return json.loads(out)["hookSpecificOutput"]["displayContent"] if out.strip() else None
+
+    def stop_with(self, message, active=False):
+        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
+                                    "stop_hook_active": active, "transcript_path": str(self.path)}, self.p)
+
+    def test_acknowledgement_is_hidden_passed_and_the_verdict_counted_once(self):
+        self.set_state(mode="concept")
+        reason = ('no-source "The transfer set is now the five" | promise "I will report the result when it" | '
+                  'no-source "The check is still running"')
+        self.add({"type": "user", "timestamp": "2026-11-05T21:57:00Z", "message": {"role": "user", "content": "go on"}},
+                 self.said(f"The transfer set is now the five specs.\n{hstamp()}"),
+                 self.feedback(reason), self.summary("2026-11-05T21:58:53Z", reason))
+        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
+        code, err, _ = self.stop_with("[docket] noted", active=True)
+        self.assertEqual(code, 0, err)
+        counts = json.loads((self.work / "metrics" / "session.violations.json").read_text("utf-8"))
+        self.assertEqual(counts, {"judge-no-source": 2, "judge-promise": 1})
+        self.assertEqual(self.log().count(" judge "), 1)
+        self.assertNotIn("noted", self.log().split(" judge ")[1])  # the request to acknowledge is not logged
+        self.assertNotIn("stop-forced", self.log())
+        # Stops after it read only what is new.
+        self.stop_with(f"Next answer.\n{hstamp()}")
+        self.assertEqual(self.log().count(" judge "), 1)
+
+    def test_acknowledgement_is_hidden_in_every_mode_of_a_set_up_project(self):
+        self.set_state(mode="none")
+        self.add(self.feedback('self "Sorry for the delay"'))
+        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
+        self.assertEqual(self.stop_with("[docket] noted", active=True)[0], 0)
+        (self.work / "DOCKET.md").unlink()
+        self.assertIsNone(self.display("[docket] noted"))
+
+    def test_answer_to_a_held_back_message_is_shown(self):
+        self.set_state(mode="concept")
+        self.add(self.feedback('promise "I will"', extra="[docket] Your last message was held back and never shown "
+                                                         "to the user: no hedge words. Write it again in full.\n"))
+        message = f"It works.\n{hstamp()}"
+        self.assertEqual(self.display(message), message)
+
+    def test_messages_after_a_user_turn_or_a_tool_call_are_judged_as_usual(self):
+        self.set_state(mode="concept")
+        self.add(self.feedback('promise "I will"'),
+                 {"type": "user", "message": {"role": "user", "content": "und jetzt?"}})
+        message = f"It works.\n{hstamp()}"
+        self.assertEqual(self.display(message), message)
+        self.add(self.feedback('promise "I will"'),
+                 {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "x"}]}})
+        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
+
+    def test_acknowledgement_does_not_end_a_sealed_run(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, _ = self.stop_with("[docket] noted")
+        self.assertEqual(code, 2)
+        self.assertIn("terminal", err)
+
+    def test_older_judge_verdicts_are_counted_too(self):
+        # luradb-web-client, 2026-11-05: the judge before the acknowledgement asked for correction lines.
+        self.set_state(mode="concept")
+        self.add({"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-05T21:58:53Z",
+                  "hookErrors": [f'{self.PROMPT}: Sentence "I will report the result" is a promise about the '
+                                 "assistant's next action. The user has already read the message: do not repeat it."]})
+        self.stop_with(f"Fine.\n{hstamp()}")
+        counts = json.loads((self.work / "metrics" / "session.violations.json").read_text("utf-8"))
+        self.assertEqual(counts, {"judge-promise": 1})
+
+    def test_template_asks_for_the_acknowledgement(self):
+        template = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))
+        prompt = template["hooks"]["Stop"][0]["hooks"][0]["prompt"]
+        self.assertIn("`[docket] noted`", prompt)
+        self.assertNotIn("impossible", prompt)  # experiment 9: with it the verdict never reaches the transcript
+        self.assertNotIn("Korrektur", prompt)
+        self.assertNotIn("]: ", prompt)  # the reason is what follows the quoted prompt's first "]: "
 
 
 class CiHash(Project):

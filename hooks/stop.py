@@ -1,4 +1,6 @@
-"""Stop hook, layer 1 (deterministic). Layer 2 is the prompt-type judge in hooks.json.
+"""Stop hook, layer 1 (deterministic). Layer 2 is the prompt-type judge (templates/judge-hook.json): its
+rejection goes to Claude, which answers `[docket] noted`; the display gate hides that answer, this hook lets it
+through and counts the judge's verdicts from the transcript.
 
 sealed:  the final message is one of DOCKET DELIVERED | BLOCKED | DISSENT <spec-id>, the docket
          exists with no open point, the last line is a fresh stamp. On success the session
@@ -21,9 +23,9 @@ from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (CONCEPT_ID, SPEC_ID, Paths, config_values, load_state, log_event, log_lines, log_time,
-                        message_text, point_counts, read_input, refuse, release_lock, save_display, save_state,
-                        set_context, set_spec_state, settled_display, transcript_blocks)
+from docket_lib import (CONCEPT_ID, JUDGE_ACK, SPEC_ID, Paths, collect_judge, config_values, load_state, log_event,
+                        log_lines, log_time, message_text, point_counts, read_input, refuse, release_lock, save_display,
+                        save_state, set_context, set_spec_state, settled_display, transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
 STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
@@ -59,6 +61,8 @@ def main():
     if mode == "none" and not os.path.isfile(paths.config):
         return 0  # project not set up: the hooks only observe
     set_context(paths, state.get("spec", ""))
+    if os.path.isfile(paths.config):
+        collect_judge(paths, session_id, state, hook_input.get("transcript_path"))
     text = message_text(hook_input)
     if text is None:
         return 0
@@ -72,9 +76,11 @@ def main():
         save_display(paths, session_id, display)
         return refuse("[docket] Your last message was held back and never shown to the user: " + "; ".join(held)
                       + ". Write it again in full, corrected, and end it with the stamp line fetched now. This "
-                      "overrides any instruction in this feedback to send correction lines only.")
+                      "overrides any instruction in this feedback to send correction lines or `[docket] noted` only.")
 
-    if mode == "none":
+    if is_judge_ack(text) and mode not in ("sealed", "rewrite"):
+        problems = []  # the acknowledgement of a judge verdict; the display gate hid it
+    elif mode == "none":
         # No command active, but the project is set up: the stamp is a rule of every session.
         problems = watermark_problems(lines_of(text))
     elif mode in ("sealed", "rewrite"):
@@ -116,6 +122,12 @@ def main():
     return refuse("[docket] The user has already read your last message: do not repeat or rewrite it. It broke: "
                   + "; ".join(problems) + ". Answer with one line `[docket] Korrektur: <the corrected sentence>` "
                   "per broken rule, in the language of the message, then the stamp line fetched now, nothing else.")
+
+
+def is_judge_ack(text):
+    lines = lines_of(text)
+    return bool(lines) and lines[0].lower().rstrip(".") == JUDGE_ACK and all(
+        line.lower().rstrip(".") == JUDGE_ACK or WATERMARK.match(line) for line in lines)
 
 
 def lines_of(text):

@@ -446,6 +446,112 @@ def message_text(hook_input, transcript_key="transcript_path"):
     return last_assistant_text(hook_input.get(transcript_key))
 
 
+# --- judge -------------------------------------------------------------------
+# The judge (templates/judge-hook.json) is a prompt hook at Stop: it runs after the user has read the message.
+# A rejection goes back to Claude, which answers with the line `[docket] noted`; the display gate hides that
+# answer and stop.py lets it through. The verdict is counted from the transcript's hook records.
+# Experiment 9: with `impossible: true` the verdict never reaches the transcript, so it could not be counted.
+JUDGE_PROMPT = "[You judge the final message"  # how Claude Code quotes the judge's prompt in front of its reason
+JUDGE_ACK = "[docket] noted"
+JUDGE_TAGS = ("no-source", "questions", "options", "manual-task", "conditional", "promise", "self", "identifier",
+              "is-not-should")
+HELD_BACK = "held back and never shown"  # stop.py's request for a full rewrite: that answer is always shown
+TAIL_BYTES = 262144
+
+
+def judge_verdicts(transcript_path, since=""):
+    """(reasons, last): the judge's reasons recorded after the ISO timestamp `since` (stop_hook_summary,
+    hookErrors "[<prompt>]: <reason>"), and the timestamp of the last summary read."""
+    reasons, last = [], ""
+    for entry in transcript_entries(transcript_path):
+        if entry.get("type") != "system" or entry.get("subtype") != "stop_hook_summary" or entry.get("isSidechain"):
+            continue
+        stamp = str(entry.get("timestamp") or "")
+        if not stamp or stamp <= since:
+            continue
+        last = max(last, stamp)
+        for error in entry.get("hookErrors") or []:
+            error = str(error)
+            if error.startswith(JUDGE_PROMPT) and "]: " in error:
+                reason = " ".join(error.split("]: ", 1)[1].split())
+                reasons.append(re.split(r"\s*The user has (?:already )?read", reason)[0].strip())
+    return reasons, last
+
+
+def judge_tags(reason):
+    """The rule tags of a verdict: the first word of each ` | `-separated entry; otherwise any tag named."""
+    tags = []
+    for entry in reason.split("|"):
+        words = entry.strip().split()
+        tag = words[0].strip("`\"':,.").lower() if words else ""
+        if tag in JUDGE_TAGS:
+            tags.append(tag)
+    if not tags:  # free text (the judge before the tags): the rules as the prompt words them
+        lowered = reason.lower()
+        tags = [tag for tag, pattern in JUDGE_PHRASES if re.search(pattern, lowered)]
+    return tags
+
+
+JUDGE_PHRASES = (("no-source", r"without (a )?source|no source|not a result with (a )?source"),
+                 ("questions", r"more than one question"), ("options", r"options? without"),
+                 ("manual-task", r"manual task"), ("conditional", r"conditional"), ("promise", r"promise"),
+                 ("self", r"apolog|justification|effort|time spent"), ("identifier", r"identifier"),
+                 ("is-not-should", r"what is\b|currently behaves"))
+
+
+def collect_judge(paths, session_id, state, transcript_path):
+    """Counts and logs the judge's verdicts since the last call; state["judge_seen"] marks how far."""
+    reasons, last = judge_verdicts(transcript_path, state.get("judge_seen", ""))
+    if not last:
+        return
+    state["judge_seen"] = last
+    save_state(paths, session_id, state)
+    doc_id = state.get("spec", "")
+    for reason in reasons:
+        log_event(paths, session_id, doc_id, "judge", reason[:120])
+        for tag in judge_tags(reason) or ["unnamed"]:
+            record_violation(paths, doc_id, f"judge {tag}")
+
+
+def answers_judge(transcript_path):
+    """True when the newest text of the user's side is the judge's feedback and no request to write a held-back
+    message again: the message being displayed is the acknowledgement, and the user has already read the
+    message it answers."""
+    for entry in reversed(transcript_entries(transcript_path, tail=True)):
+        if entry.get("type") != "user" or entry.get("isSidechain"):
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list):
+            if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+                continue  # the answer's own tool calls
+            content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        return content.lstrip().startswith("Stop hook feedback") and JUDGE_PROMPT in content and HELD_BACK not in content
+    return False
+
+
+def transcript_entries(transcript_path, tail=False):
+    try:
+        with open(transcript_path, "rb") as handle:
+            if tail:
+                handle.seek(0, os.SEEK_END)
+                handle.seek(max(0, handle.tell() - TAIL_BYTES))
+            raw = handle.read().decode("utf-8", errors="ignore")
+    except (OSError, TypeError, ValueError):
+        return []
+    entries = []
+    for line in raw.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue  # also the first, cut line of a tail
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
 CONTEXT = {}
 
 
