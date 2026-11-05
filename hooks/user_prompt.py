@@ -13,7 +13,7 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import SPEC_ID, Paths, load_state, log_event, read_input, refuse, save_state
+from docket_lib import SPEC_ID, Paths, load_state, lock_holder, log_event, read_input, refuse, save_state, take_lock
 
 IMPLEMENT = re.compile(r"^/implement\b(?P<rest>.*)$", re.DOTALL)
 COMMANDS = {
@@ -67,13 +67,18 @@ def main():
         if not found:
             return refuse("[docket] /implement needs a spec id (s-xxxxxxxx). Run /docket to see the register.")
         spec_id = found.group(0)
-        if state.get("mode") == "sealed" and state.get("spec") != spec_id:
+        if state.get("mode") in ("sealed", "rewrite") and state.get("spec") != spec_id:
             return refuse(f"[docket] This session is sealed on {state.get('spec')}. Finish it or run /docket stop.")
+        holder = lock_holder(paths, spec_id)
+        if holder and holder != session_id and held_by_live_session(paths, holder, spec_id):
+            return refuse(f"[docket] {spec_id} is sealed in session {holder[:8]}. Finish or /docket stop it there; "
+                          f"the lock is {paths.lock_file(spec_id)}.")
+        take_lock(paths, spec_id, session_id)
         state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False})
         save_state(paths, session_id, state)
         log_event(paths, session_id, spec_id, "sealed")
     elif lowered.startswith("/docket stop"):
-        if state.get("mode") == "sealed":
+        if state.get("mode") in ("sealed", "rewrite"):
             state["stop_requested"] = True
             save_state(paths, session_id, state)
             log_event(paths, session_id, state.get("spec", ""), "stop-requested")
@@ -85,13 +90,13 @@ def main():
     else:
         for command, mode in COMMANDS.items():
             if lowered.startswith(command):
-                if state.get("mode") == "sealed":
+                if state.get("mode") in ("sealed", "rewrite"):
                     return refuse(f"[docket] Sealed on {state.get('spec')}: finish it or run /docket stop first.")
                 state.update({"mode": mode, "spec": ""})
                 save_state(paths, session_id, state)
                 break
         else:
-            if state.get("mode") == "sealed" and not command_line:
+            if state.get("mode") in ("sealed", "rewrite") and not command_line:
                 store_inbox(paths, state.get("spec", ""), text)
                 log_event(paths, session_id, state.get("spec", ""), "inbox")
                 return refuse("[docket] Noted for the next checkpoint; the orchestrator reads the inbox between "
@@ -111,6 +116,12 @@ def main():
     if lines:
         print("\n".join(lines))
     return 0
+
+
+def held_by_live_session(paths, holder, spec_id):
+    """A lock counts only while its session's state still says sealed on that spec; stale locks are taken over."""
+    other = load_state(paths, holder)
+    return other.get("mode") in ("sealed", "rewrite") and other.get("spec") == spec_id
 
 
 HARNESS_BLOCK = re.compile(r"<(system-reminder|task-notification|side-sessions-event|cross-session-message)\b[^>]*>.*?</\1>",

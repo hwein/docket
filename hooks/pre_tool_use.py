@@ -17,7 +17,7 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import Paths, absolute, frontmatter, load_state, read_input, refuse, save_state, under
+from docket_lib import Paths, absolute, frontmatter, load_state, log_event, read_input, refuse, save_state, under
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 READ_TOOLS = {"Read", "Grep", "Glob"}
@@ -57,12 +57,22 @@ def main():
         missing = [p for p in paths.required_reading() if p not in state.get("read", [])]
         return refuse("[docket] Required reading first, completely with Read: " + ", ".join(missing))
 
-    if mode == "sealed" and tool == "AskUserQuestion":
+    if mode in ("sealed", "rewrite") and tool == "AskUserQuestion":
         return refuse("[docket] The spec is sealed: no questions. Take the default, write a 'deviation' line "
                       "into the docket, continue. Only DOCKET BLOCKED or DOCKET DISSENT reach the user.")
 
     if mode == "closed" and tool in WRITE_TOOLS | {"Agent"}:
         return refuse("[docket] The implementation is closed. Answer from the docket; a new command opens the next mode.")
+
+    # Rewrite is a visible event: spawning the conceptor in a sealed run opens that one spec for it.
+    if tool == "Agent" and "conceptor" in str(tool_input.get("subagent_type", "")).lower():
+        if mode == "sealed":
+            state.update({"mode": "rewrite", "rewrite": state.get("spec", "")})
+            save_state(paths, session_id, state)
+            log_event(paths, session_id, state.get("spec", ""), "rewrite", "conceptor spawned")
+            return 0
+        if mode == "rewrite":
+            return refuse("[docket] A rewrite is already running; wait for the conceptor to return.")
 
     if tool in ("Bash", "PowerShell"):
         command = tool_input.get("command")
@@ -156,7 +166,7 @@ def spec_rule(path, mode, state, tool):
 
 def docket_rule(path, mode, state, tool, paths):
     name = posixpath.basename(path)
-    if mode != "sealed":
+    if mode not in ("sealed", "rewrite"):
         return refuse("[docket] Dockets are written during a sealed implementation only.")
     spec_id = state.get("spec", "")
     if not name.lower().startswith(spec_id.lower()):

@@ -31,13 +31,15 @@ feasibility against the code; spec against concept and earlier specs; the projec
 They may contradict each other and you. Each finding becomes one line in the docket's refinement section,
 closed by you: adopted / rejected with reason / dissent.
 
-A finding that a code location refutes (a wrong technical assumption in the spec) is a rewrite: set the session to
-rewrite mode by spawning the `conceptor` agent with the finding and the exact spec section; the hook opens that one
-spec for it; the conceptor records date, reason and change in the spec's Rewrite section. Exchange with the
-conceptor is bilateral and bounded (three rounds): it accepts or returns open questions. No agreement →
-`DOCKET DISSENT` with both positions, one sentence each with source, in everyday words. A finding that is a
-judgment with effect for users or operators is never a rewrite: it becomes a `[~]` deviation after implementation
-with the spec's wording implemented as written.
+A finding that a code location refutes (a wrong technical assumption in the spec) is a rewrite: spawn the
+`conceptor` agent (subagent type `docket:conceptor`) with the finding and the exact spec section. The hook switches
+the session to rewrite mode on that spawn and logs it; only then is that one spec writable, and only until the
+conceptor returns (the hook freezes it again and logs `rewrite-done`). The conceptor records date, reason and
+change in the spec's Rewrite section. Exchange with the conceptor is bilateral and bounded (three rounds, each a
+new spawn with the previous answer): it accepts or returns open questions. No agreement → `DOCKET DISSENT` with
+both positions, one sentence each with source, in everyday words. A finding that is a judgment with effect for
+users or operators is never a rewrite: it becomes a `[~]` deviation after implementation with the spec's wording
+implemented as written. Spawn no other agent while a rewrite runs.
 
 ## 2. Pre-registration
 
@@ -52,8 +54,11 @@ DOCKET.md marks complex starts at opus). Briefing: spec path and point number, d
 quoted from DOCKET.md and CONTRIBUTING.md, at most three orchestrator hints, the report format (facts with source,
 `Unverified:` line). While an agent runs you change nothing in the repo.
 
-After each return: read the diff completely, run the check from DOCKET.md yourself, compare with the acceptance
-line. Green: `fixer` flips the point to `[x]` and appends the evidence line (command → result, commit in words).
+After each return: read the diff completely, run the check from DOCKET.md yourself (verbatim as registered; the
+Stop hook refuses DOCKET DELIVERED unless the check ran after the last agent returned), compare with the acceptance
+line. Green: `fixer` flips the point to `[x]` and appends the evidence line (command → result, commit in words);
+the hook logs every flip. Cite locations as `path/file.ext:line` relative to the repo; the Stop hook verifies
+each one exists.
 Not green: rework with a fresh implementer, at most three rounds; two failures at the same gate mean the shared
 assumption is named and checked before round three. After round three: `[~]` with the deviation line, continue
 with the next point.
@@ -64,8 +69,9 @@ set (LOG line `stop-requested`), end with `DOCKET BLOCKED <id>` and the reason "
 
 ## 4. Close
 
-Reference update: for every file the spec names, an implementer updates it; the docket records `updated` or
-`not needed: reason`. Merge and push per CONTRIBUTING.md; CI state belongs to the pushed hash and is read by you.
+Reference update: for every file the spec names, an implementer updates it; the docket records `updated <file>` or
+`<file>: not needed, <reason>`. The Stop hook checks both: every named file is accounted for, and an `updated` file
+has changed since sealing. Merge and push per CONTRIBUTING.md; CI state belongs to the pushed hash and is read by you.
 Metrics to `metrics/<spec id>.json` via `fixer`: rounds per point, model per round, refinement findings, inbox notes.
 
 ## 5. Terminal message (the only message)

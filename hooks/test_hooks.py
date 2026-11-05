@@ -359,5 +359,208 @@ class HumanStop(Project):
         self.assertEqual(self.stop("anything goes here? really? a1b2c3d4e")[0], 0)
 
 
+class Rewrite(Project):
+    def test_conceptor_spawn_opens_rewrite_and_return_closes_it(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, _ = self.tool("Agent", subagent_type="docket:conceptor", prompt="rewrite section 3")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["mode"], "rewrite")
+        self.assertEqual(self.state()["rewrite"], SPEC)
+        self.assertIn("rewrite", self.log())
+        self.assertEqual(self.tool("Edit", file_path=str(self.spec))[0], 0)  # the frozen spec is open now
+        self.assertEqual(self.tool("AskUserQuestion", questions=[])[0], 2)
+        code, _, _ = run_hook("subagent_stop.py", {"session_id": SID, "cwd": self.p, "stop_hook_active": False,
+                                                   "last_assistant_message": "Rewrote section 3.\nUnverified: none"}, self.p)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertIn("rewrite-done", self.log())
+        self.assertEqual(self.tool("Edit", file_path=str(self.spec))[0], 2)  # frozen again
+
+    def test_other_agents_do_not_open_rewrite(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.tool("Agent", subagent_type="docket:refiner", prompt="angle")
+        self.assertEqual(self.state()["mode"], "sealed")
+
+
+class PointEvents(Project):
+    def post(self, path):
+        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
+                                             "tool_input": {"file_path": str(path)}}, self.p)
+
+    def test_flips_are_logged(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("| 1 | a | `x` | [ ] |\n| 2 | b | `y` | [ ] |\n", "utf-8")
+        self.tool("Edit", file_path=str(self.docket))
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [~] |\n- deviation: b differs\n", "utf-8")
+        self.assertEqual(self.post(self.docket)[0], 0)
+        self.assertIn("point-delivered", self.log())
+        self.assertIn("deviation", self.log())
+
+
+class ReadyGate(Project):
+    def post(self, path):
+        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
+                                             "tool_input": {"file_path": str(path)}}, self.p)
+
+    def spec_text(self, criterion, answer, reference):
+        return (f"---\nid: {SPEC}\nstate: ready\n---\n# Login\n\n## Goal (WHAT)\n\nUsers can log in.\n\n"
+                f"## Points\n\n| # | Point | Done criterion |\n|---|---|---|\n| 1 | login | {criterion} |\n\n"
+                f"## Reference update\n\n| File | Change |\n|---|---|\n{reference}\n\n"
+                f"## User decisions\n\n| Question | Recommendation | Answer (date) |\n|---|---|---|\n| Keep 512? | yes | {answer} |\n")
+
+    def test_complete_spec_passes_and_logs_ready_once(self):
+        self.set_state(mode="spec")
+        self.spec.write_text(self.spec_text("`cargo test` → `3 passed`", "yes (2026-11-05)", "| docs/auth.md | login section |"), "utf-8")
+        code, err, _ = self.post(self.spec)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.log().count(" ready "), 1)
+        self.post(self.spec)
+        self.assertEqual(self.log().count(" ready "), 1)
+
+    def test_gaps_demote_to_draft(self):
+        self.set_state(mode="spec")
+        self.spec.write_text(self.spec_text("works", "", ""), "utf-8")
+        code, err, _ = self.post(self.spec)
+        self.assertEqual(code, 2)
+        for fragment in ("criterion", "user decision open", "Reference update"):
+            self.assertIn(fragment, err)
+        self.assertIn("state: draft", self.spec.read_text("utf-8"))
+        self.assertNotIn(" ready ", self.log())
+
+
+class WorkDirGit(Project):
+    def test_log_lines_become_commits_when_work_dir_is_a_repo(self):
+        subprocess.run(["git", "-C", str(self.work), "init", "-q"], check=True)
+        self.prompt(f"/implement {SPEC}")
+        out = subprocess.run(["git", "-C", str(self.work), "log", "--oneline"], capture_output=True, text=True).stdout
+        self.assertIn(f"sealed {SPEC}", out)
+
+    def test_no_commits_without_a_repo(self):
+        self.prompt(f"/implement {SPEC}")
+        self.assertFalse((self.work / ".git").exists())
+
+
+class Locks(Project):
+    def test_second_session_is_refused_while_first_is_sealed(self):
+        self.prompt(f"/implement {SPEC}")
+        self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)
+        code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-2", "cwd": self.p,
+                                                   "prompt": f"/implement {SPEC}"}, self.p)
+        self.assertEqual(code, 2)
+        self.assertIn("sealed in session", err)
+
+    def test_stale_lock_is_taken_over_and_released_on_close(self):
+        (self.work / "locks").mkdir()
+        (self.work / "locks" / SPEC).write_text("dead-session", "utf-8")
+        code, _, _ = self.prompt(f"/implement {SPEC}")
+        self.assertEqual(code, 0)
+        self.docket.write_text("- [x] point 1\n", "utf-8")
+        self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertFalse((self.work / "locks" / SPEC).exists())
+
+
+class Provenance(Project):
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.docket.write_text("- [x] point 1: `cargo test` → 3 passed\n", "utf-8")
+        self.transcript = self.tmp / "transcript.jsonl"
+
+    def write_transcript(self, blocks):
+        lines = []
+        for role, block in blocks:
+            lines.append(json.dumps({"type": role, "message": {"content": [block]}}))
+        self.transcript.write_text("\n".join(lines) + "\n", "utf-8")
+
+    def stop_t(self, message):
+        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
+                                    "stop_hook_active": False, "transcript_path": str(self.transcript)}, self.p)
+
+    def test_check_after_last_agent_return_passes(self):
+        self.write_transcript([
+            ("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {"prompt": "x"}}),
+            ("user", {"type": "tool_result", "tool_use_id": "a1", "content": "done"}),
+            ("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}}),
+        ])
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertEqual(code, 0, err)
+
+    def test_check_before_last_agent_return_is_refused(self):
+        self.write_transcript([
+            ("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}}),
+            ("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {"prompt": "x"}}),
+            ("user", {"type": "tool_result", "tool_use_id": "a1", "content": "done"}),
+        ])
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("before the last agent returned", err)
+
+    def test_check_never_run_is_refused_but_blocked_passes(self):
+        self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 2)
+        self.assertEqual(self.stop_t(f"DOCKET BLOCKED {SPEC}\nno docker\n{stamp()}")[0], 0)
+
+    def test_cited_location_must_exist(self):
+        self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
+        (self.root / "src").mkdir()
+        (self.root / "src" / "auth.rs").write_text("a\nb\nc\n", "utf-8")
+        self.docket.write_text("- [x] point 1: `cargo test` → 3 passed, see src/auth.rs:2\n", "utf-8")
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("- [x] point 1: see src/auth.rs:40 and src/gone.rs:1\n", "utf-8")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("src/gone.rs:1", err)
+        self.assertIn("src/auth.rs:40", err)
+
+    def test_reference_update_must_be_accounted_for(self):
+        self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
+        self.spec.write_text(f"---\nid: {SPEC}\nstate: ready\n---\n## Reference update\n\n| File | Change |\n|---|---|\n"
+                             "| docs/auth.md | login |\n| README.md | none |\n", "utf-8")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("docs/auth.md", err)
+        self.docket.write_text("- [x] point 1\n- updated docs/auth.md\n- README.md: not needed, unchanged\n", "utf-8")
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "auth.md").write_text("login\n", "utf-8")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.assertEqual(code, 0, err)
+
+    def test_placeholder_check_is_not_a_check(self):
+        (self.work / "DOCKET.md").write_text("| check | `<command that exits 0>` | |\n", "utf-8")
+        self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+
+    def test_stale_stamp_sets_degraded(self):
+        self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
+        self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(-30)}")
+        self.assertTrue(self.state()["degraded"])
+
+
+class StartSummary(Project):
+    def test_sealed_start_names_points_and_last_log_line(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("- [x] a\n- [~] b\n- [ ] c\n", "utf-8")
+        (self.work / "LOG.md").write_text(f"2026-11-05T10:00:00Z  {SPEC}  sealed             session=abc\n", "utf-8")
+        code, _, out = run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "resume"}, self.p)
+        self.assertEqual(code, 0)
+        self.assertIn("1 delivered, 1 deviations, 1 open", out)
+        self.assertIn("Last LOG line", out)
+
+    def test_interrupted_run_is_named_in_a_new_session(self):
+        (self.work / "LOG.md").write_text(f"2026-11-05T10:00:00Z  {SPEC}  sealed             session=abc\n", "utf-8")
+        _, _, out = run_hook("session_start.py", {"session_id": "fresh-1", "cwd": self.p, "source": "startup"}, self.p)
+        self.assertIn(f"without a terminal state: {SPEC}", out)
+
+
+class SelfTalk(Project):
+    def test_apologies_and_effort_rejected(self):
+        self.set_state(mode="concept")
+        code, err, _ = self.stop("Sorry, this took me two hours.")
+        self.assertEqual(code, 2)
+        self.assertIn("yourself", err)
+
+
 if __name__ == "__main__":
     unittest.main()

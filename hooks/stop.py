@@ -16,7 +16,8 @@ from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import CONCEPT_ID, SPEC_ID, Paths, load_state, log_event, message_text, read_input, refuse, save_state
+from docket_lib import (CONCEPT_ID, SPEC_ID, Paths, config_values, load_state, log_event, log_lines, log_time,
+                        message_text, read_input, refuse, release_lock, save_state, transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
 STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})\s*$", re.IGNORECASE)
@@ -27,6 +28,9 @@ OPTIONS = re.compile(r"\b(option [a-c1-3]\b|alternatively|or alternatively|alter
 ROADMAP = re.compile(r"\b(next,? i will|afterwards i will|then i will|als n[äa]chstes werde ich|danach werde ich|"
                      r"i'll (then|now)|let me know|sag bescheid)\b", re.IGNORECASE)
 PROPOSAL = re.compile(r"\b(i suggest|i propose|should we|shall i|vorschlag|soll ich|wollen wir)\b", re.IGNORECASE)
+SELF = re.compile(r"\b(sorry|apologi[sz]e|my mistake|my fault|took me|i spent|this took|hours of work|"
+                  r"entschuldig\w*|tut mir leid|mein fehler|leider)\b", re.IGNORECASE)
+FILE_LINE = re.compile(r"(?<![\w/:])((?:[\w.-]+/)*[\w.-]+\.[a-z]{1,5}):(\d{1,6})\b", re.IGNORECASE)
 TOLERANCE = timedelta(minutes=5)
 MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 8, "sealed": 25}
 
@@ -44,13 +48,16 @@ def main():
         return 0
     second_pass = bool(hook_input.get("stop_hook_active"))
 
-    if mode == "sealed":
+    if mode in ("sealed", "rewrite"):
         if hook_input.get("background_tasks"):
             return 0  # the turn resumes when the background agent reports; not a terminal moment
-        problems = sealed_problems(text, state, paths)
+        problems = sealed_problems(text, state, paths, hook_input)
         if not problems:
             close(paths, session_id, state, text)
             return 0
+        if any("stamp is" in problem for problem in problems):
+            state.update({"degraded": True, "read": []})  # a lost watermark means the rules blurred
+            save_state(paths, session_id, state)
     elif mode == "closed":
         problems = closed_problems(text)
     else:
@@ -69,7 +76,7 @@ def lines_of(text):
     return [line.rstrip() for line in text.strip().splitlines() if line.strip()]
 
 
-def sealed_problems(text, state, paths):
+def sealed_problems(text, state, paths, hook_input):
     lines = lines_of(text)
     problems = []
     spec_id = state.get("spec", "")
@@ -91,9 +98,11 @@ def sealed_problems(text, state, paths):
         except OSError:
             body = ""
         open_points = len(re.findall(r"(?<!`)\[ \](?!`)", body))
-        if open_points and head and head.group(1).upper() == "DELIVERED":
+        if open_points and delivered:
             problems.append(f"{open_points} docket point(s) still open `[ ]`; each needs `[x]` with evidence "
                             "or `[~]` with a deviation line")
+        if delivered:
+            problems += provenance_problems(body, spec_id, paths, hook_input)
     stamp = STAMP.match(lines[-1]) if lines else None
     if stamp is None:
         problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM <spec-id>` with the current time, fetched now")
@@ -113,6 +122,87 @@ def sealed_problems(text, state, paths):
     return problems
 
 
+def provenance_problems(body, spec_id, paths, hook_input):
+    """The evidence standard, checked at the one moment it matters: DOCKET DELIVERED.
+
+    1. The project's check (DOCKET.md `check`) ran in this session after the last agent returned.
+    2. Every file:line the docket cites exists and has that many lines.
+    3. Every reference doc the spec names is marked in the docket as updated (and the file changed
+       after sealing) or as not needed.
+    """
+    problems = []
+    check = config_values(paths).get("check", "")
+    blocks = transcript_blocks(hook_input.get("transcript_path"))
+    if check and blocks:
+        agent_ids = {b.get("id") for _, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
+                     and b.get("name") == "Agent"}
+        last_return = max((i for i, role, b in blocks if role == "user" and b.get("type") == "tool_result"
+                           and b.get("tool_use_id") in agent_ids), default=-1)
+        last_check = max((i for i, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
+                          and b.get("name") in ("Bash", "PowerShell")
+                          and check in str((b.get("input") or {}).get("command", ""))), default=-1)
+        if last_check < 0:
+            problems.append(f"the check `{check}` never ran in this session; run it yourself and cite its result line")
+        elif last_return > last_check:
+            problems.append(f"the check `{check}` last ran before the last agent returned; run it again yourself")
+    missing = []
+    for match in FILE_LINE.finditer(body):
+        rel, line = match.group(1), int(match.group(2))
+        candidates = [posixpath.join(paths.root, rel), posixpath.join(paths.work, rel), rel]
+        found = next((c for c in candidates if os.path.isfile(c)), None)
+        if found is None:
+            missing.append(f"{rel}:{line}")
+            continue
+        try:
+            with open(found, encoding="utf-8", errors="ignore") as handle:
+                count = sum(1 for _ in handle)
+        except OSError:
+            continue
+        if line > count:
+            missing.append(f"{rel}:{line} (file has {count} lines)")
+    if missing:
+        problems.append("cited locations that do not exist: " + ", ".join(sorted(set(missing))[:6]))
+    problems += reference_problems(body, spec_id, paths)
+    return problems
+
+
+def reference_problems(body, spec_id, paths):
+    spec = paths.spec_file(spec_id)
+    if not spec:
+        return []
+    try:
+        with open(spec, encoding="utf-8-sig", errors="ignore") as handle:
+            text = handle.read()
+    except OSError:
+        return []
+    match = re.search(r"^##\s+Reference update\b.*?$(.*?)(?=^##\s|\Z)", text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    if not match:
+        return []
+    files = []
+    for line in match.group(1).splitlines():
+        cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")] if line.strip().startswith("|") else []
+        if len(cells) >= 2 and cells[0] and cells[0].lower() not in ("file", "none") and not re.fullmatch(r":?-+:?", cells[0]):
+            files.append(cells[0])
+    sealed_at = max((log_time(line) or 0 for line in log_lines(paths, spec_id) if " sealed " in line), default=0)
+    problems = []
+    lowered = body.lower()
+    for name in files:
+        key = name.lower()
+        updated = re.search(r"updated\s+`?" + re.escape(key), lowered)
+        not_needed = re.search(r"not needed[^\n]*" + re.escape(key), lowered) or re.search(
+            re.escape(key) + r"[^\n]*not needed", lowered)
+        if not updated and not not_needed:
+            problems.append(f"reference doc {name} named in the spec is neither `updated` nor `not needed: reason` in the docket")
+            continue
+        if updated:
+            path = next((c for c in (posixpath.join(paths.root, name), name) if os.path.isfile(c)), None)
+            if path is None:
+                problems.append(f"reference doc {name} is marked updated but does not exist")
+            elif sealed_at and os.path.getmtime(path) < sealed_at:
+                problems.append(f"reference doc {name} is marked updated but has not changed since sealing")
+    return problems
+
+
 def close(paths, session_id, state, text):
     lines = lines_of(text)
     head = TERMINAL.match(lines[0])
@@ -120,6 +210,7 @@ def close(paths, session_id, state, text):
     state["mode"] = "closed"
     state["terminal"] = kind
     save_state(paths, session_id, state)
+    release_lock(paths, state.get("spec", ""))
     log_event(paths, session_id, state.get("spec", ""), kind, "closed")
 
 
@@ -141,6 +232,8 @@ def human_problems(text, mode):
         problems.append("no option menus: give the recommendation")
     if ROADMAP.search(text):
         problems.append("no promises about what you will do next")
+    if SELF.search(text):
+        problems.append("no sentences about yourself, your effort or apologies: name the error once, correct it, go on")
     return problems
 
 

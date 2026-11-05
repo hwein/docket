@@ -117,6 +117,26 @@ class Paths:
     def docket_file(self, spec_id):
         return find_document(self.dockets, spec_id)
 
+    def lock_file(self, spec_id):
+        return posixpath.join(self.work, "locks", spec_id)
+
+
+def config_values(paths):
+    """The Configuration table of DOCKET.md as {key: value}; backticks stripped."""
+    values = {}
+    try:
+        with open(paths.config, encoding="utf-8-sig", errors="ignore") as handle:
+            for line in handle:
+                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                if len(cells) >= 2 and cells[0] and not cells[0].startswith("-") and cells[0].lower() != "key":
+                    value = cells[1].strip("`").strip()
+                    if value.startswith("<"):
+                        value = ""  # template placeholder, not configured
+                    values.setdefault(cells[0].lower(), value)
+    except OSError:
+        pass
+    return values
+
 
 def find_document(directory, doc_id):
     """The one file under <directory>/<topic>/ whose name starts with the id."""
@@ -205,6 +225,97 @@ def log_event(paths, session_id, doc_id, event, note=""):
         os.makedirs(paths.work, exist_ok=True)
         with open(paths.log, "a", encoding="utf-8", newline="\n") as handle:
             handle.write(line + "\n")
+    except OSError:
+        pass
+    commit_work_dir(paths, f"{event} {doc_id or ''}".strip())
+
+
+def log_lines(paths, doc_id=None):
+    """LOG lines, oldest first, optionally only those of one document."""
+    try:
+        with open(paths.log, encoding="utf-8-sig", errors="ignore") as handle:
+            lines = [line.rstrip("\n") for line in handle if line.strip()]
+    except OSError:
+        return []
+    if doc_id:
+        lines = [line for line in lines if f"  {doc_id} " in line or f"  {doc_id}\t" in line]
+    return lines
+
+
+def log_has(paths, doc_id, event):
+    return any(f" {event} " in line + " " for line in log_lines(paths, doc_id))
+
+
+def log_time(line):
+    """The UTC epoch of a LOG line, or None."""
+    try:
+        return time.mktime(time.strptime(line[:20], "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+    except ValueError:
+        return None
+
+
+def commit_work_dir(paths, message):
+    """The work dir keeps its own history: every LOG line is a commit when the work dir is a git
+    repository of its own (the home default always is; a work dir inside the project is not)."""
+    work = paths.work
+    try:
+        if under(work, posixpath.join(home(), ".docket")) and not os.path.isdir(posixpath.join(work, ".git")):
+            subprocess.run(["git", "-C", work, "init", "-q"], capture_output=True, timeout=15)
+        if not os.path.isdir(posixpath.join(work, ".git")):
+            return
+        subprocess.run(["git", "-C", work, "add", "-A"], capture_output=True, timeout=15)
+        subprocess.run(["git", "-C", work, "-c", "user.name=docket", "-c", "user.email=docket@localhost",
+                        "commit", "-q", "-m", message], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+# --- transcript --------------------------------------------------------------
+
+def transcript_blocks(transcript_path):
+    """(index, role, block) for every content block of the main line of a transcript, in order."""
+    try:
+        with open(transcript_path, encoding="utf-8", errors="ignore") as handle:
+            lines = handle.readlines()
+    except (OSError, TypeError):
+        return []
+    blocks = []
+    for index, line in enumerate(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("type") not in ("assistant", "user") or entry.get("isSidechain"):
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    blocks.append((index, entry["type"], block))
+    return blocks
+
+
+def lock_holder(paths, spec_id):
+    try:
+        with open(paths.lock_file(spec_id), encoding="utf-8-sig") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def take_lock(paths, spec_id, session_id):
+    try:
+        os.makedirs(posixpath.dirname(paths.lock_file(spec_id)), exist_ok=True)
+        with open(paths.lock_file(spec_id), "w", encoding="utf-8") as handle:
+            handle.write(session_id or "")
+    except OSError:
+        pass
+
+
+def release_lock(paths, spec_id):
+    try:
+        os.remove(paths.lock_file(spec_id))
     except OSError:
         pass
 

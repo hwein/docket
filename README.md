@@ -14,8 +14,12 @@ by the team and read by you.
   checks the orchestrator runs itself, and exactly one final message. After that the session is `closed` and
   answers only from the docket.
 - **Freedom in the how, duty to leave a trail.** Hooks check provenance, form and state, never content. Specs freeze
-  at `ready`; dockets are append-only; the LOG is written by hooks only, so it cannot be made up. Finished specs
-  are not a reference source: the docs say what IS, specs say what SHOULD.
+  at `ready` (a gate checks every point has a verifiable criterion and no user decision is open); dockets are
+  append-only; the LOG is written by hooks only (sealed, rewrite, every point delivered or deviated, delivered /
+  blocked / dissent), so it cannot be made up; in the default work dir every LOG line is a git commit. `DOCKET
+  DELIVERED` passes only when the project's check ran after the last agent returned, every cited `file:line`
+  exists, and every reference doc the spec names is updated or accounted for. Finished specs are not a reference
+  source: the docs say what IS, specs say what SHOULD.
 - **Two registers.** Reports to the orchestrator are dense and carry an `Unverified:` line. Messages to you are
   short and plain: a deterministic parser plus a small judge model (installed per project by `/docket init`) reject hashes, ids, hedges, option menus,
   promises and manual tasks assigned to you, and the message is rewritten before you see it.
@@ -52,7 +56,7 @@ Then, in a project: `/docket init`.
 commands/   concept, spec, implement, docket (register, init, stop, status)
 agents/     conceptor, refiner, implementer, fixer
 hooks/      hooks.json + Python hooks (state, write rights, append-only, stop grammar, judge prompt), tests
-templates/  DOCKET.md, concept.md, spec.md, docket.md
+templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, check.py, judge-hook.json
 ```
 
 Run the hook tests with `python hooks/test_hooks.py -v`.

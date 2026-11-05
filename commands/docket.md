@@ -28,7 +28,10 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    normal, verbose > 15 %; existing section markers); forbidden paths and content (.gitignore, guard hooks,
    CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules).
    Also: existing CLAUDE.md, AGENTS.md, CONTRIBUTING.md, hooks, commands, skills, permissions; a check script with
-   exit code and one result line.
+   exit code and one result line. For every existing hook, command or skill, say what it does in one line and
+   whether the plugin does the same (write guard on specs, timestamp check, report limit, read redirect,
+   required reading, mode switch): a duplicate gets one card, replace (project hook disabled in the diff) or keep
+   (both run).
 2. Compare findings with each other and with the framework rules. Three classes: unambiguous (one finding, no
    objection), ambiguous or contradictory, silent.
 3. Interview: unambiguous findings are listed once ("adopted, source") and confirmed in one go at the end.
@@ -41,6 +44,10 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    project's `.claude/settings.json` (the judge is a per-project opt-in, so it never runs in projects that did not ask). Existing CLAUDE.md, AGENTS.md or CONTRIBUTING.md receive the
    decisions where they already treat the topic, otherwise as a marked section; no existing sentence changes before
    the user decided the contradiction. Missing files of those three are created only on explicit wish.
+   Without a check script that exits non-zero on failure and prints one result line, the diff adds
+   `${CLAUDE_PLUGIN_ROOT}/templates/check.py` as `scripts/check.py` with the project's commands filled in, and
+   registers it as `check`. When the work dir is the home default, the hooks keep it under its own git history
+   (`git init` on the first LOG line); for `docket/` inside the repo or a second repo, the diff says which.
    New repo: `git init`, remote (existing / create via `gh repo create` / none), all eleven questions.
 5. Show the diff, wait for the go, write, one LOG line. Re-runs show only findings whose fingerprint moved.
 
