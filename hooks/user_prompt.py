@@ -14,7 +14,7 @@ import time
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (SPEC_ID, Paths, load_state, lock_holder, log_event, read_input, refuse, save_state,
-                        set_context, take_lock, violations_line)
+                        set_context, set_spec_state, take_lock, violations_line)
 
 IMPLEMENT = re.compile(r"^/implement\b(?P<rest>.*)$", re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
@@ -42,6 +42,8 @@ REMINDERS = {
                "propose nothing, start nothing. A new command opens the next mode."),
     "none": "",
 }
+WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock now, "
+             "never remembered; the hook refuses the message otherwise.")
 
 
 def ambition():
@@ -86,6 +88,7 @@ def main():
         state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False})
         save_state(paths, session_id, state)
         log_event(paths, session_id, spec_id, "sealed")
+        set_spec_state(paths, spec_id, "in-progress")
         feedback = violations_line(paths, spec_id)
     elif lowered.startswith("/docket stop"):
         if state.get("mode") in ("sealed", "rewrite"):
@@ -123,6 +126,7 @@ def main():
         lines.append(f"[docket] Mode {mode}" + (f", spec {state['spec']}" if state.get("spec") else "")
                      + ". " + REMINDERS.get(mode, ""))
         lines.append(ambition())
+        lines.append("[docket] " + WATERMARK)
     if feedback:
         lines.append(feedback)
     if state.get("degraded") and os.path.isfile(paths.config):

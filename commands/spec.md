@@ -43,3 +43,5 @@ or an earlier ready spec is asked again.
 Set `state: ready` only when: every point has a verifiable criterion, the reference-update section is filled,
 no user decision is open, and the goal cites no hypothetical state. From then on the file is frozen; the hook
 enforces it. Report in one sentence: the spec title is ready, and the one thing the user has to decide, if any.
+Every message to the user ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock at the
+moment of writing; the hook refuses a message without it or with a stale one.

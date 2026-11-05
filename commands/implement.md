@@ -96,4 +96,6 @@ stamp: YYYY-MM-DD HH:MM <spec id> <delivered>/<points>
 
 The stamp is fetched from the clock at the moment of writing, never remembered, and ends with the docket's counts
 (`[x]` boxes / all points) read from the docket, not remembered. The hook refuses the message otherwise and closes
-the session on success; afterwards you answer only from the docket.
+the session on success; afterwards you answer only from the docket. A message that ends a turn while agents still
+run in the background (a wait) also ends with `stamp: YYYY-MM-DD HH:MM`. The spec's own state follows the run:
+the hooks set `in-progress` on sealing, `done` on DELIVERED, `ready` again after BLOCKED or DISSENT.

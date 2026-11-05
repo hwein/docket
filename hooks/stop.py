@@ -18,11 +18,12 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (CONCEPT_ID, SPEC_ID, Paths, config_values, load_state, log_event, log_lines, log_time,
                         message_text, point_counts, read_input, refuse, release_lock, save_state, set_context,
-                        transcript_blocks)
+                        set_spec_state, transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
 STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
                    re.IGNORECASE)
+WATERMARK = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?!\d)", re.IGNORECASE)
 HASH = re.compile(r"(?<![0-9a-zA-Z/])[0-9a-f]{7,40}(?![0-9a-zA-Z])")
 CI_LINE = re.compile(r"\bCI\b[^\n]*", re.IGNORECASE)
 HEDGES = re.compile(r"\b(probably|likely|seems?|appears?|presumably|i think|i believe|might|vermutlich|"
@@ -54,18 +55,20 @@ def main():
 
     if mode in ("sealed", "rewrite"):
         if hook_input.get("background_tasks"):
-            return 0  # the turn resumes when the background agent reports; not a terminal moment
-        problems = sealed_problems(text, state, paths, hook_input)
-        if not problems:
-            close(paths, session_id, state, text)
-            return 0
-        if any("stamp is" in problem for problem in problems):
-            state.update({"degraded": True, "read": []})  # a lost watermark means the rules blurred
-            save_state(paths, session_id, state)
+            # The turn resumes when the background agent reports; not a terminal moment, but still a message.
+            problems = watermark_problems(lines_of(text))
+        else:
+            problems = sealed_problems(text, state, paths, hook_input)
+            if not problems:
+                close(paths, session_id, state, text)
+                return 0
     elif mode == "closed":
         problems = closed_problems(text)
     else:
         problems = human_problems(text, mode)
+    if any("stamp is" in problem for problem in problems):
+        state.update({"degraded": True, "read": []})  # a lost watermark means the rules blurred
+        save_state(paths, session_id, state)
 
     if not problems:
         return 0
@@ -112,6 +115,7 @@ def sealed_problems(text, state, paths, hook_input):
     if stamp is None:
         problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM <spec-id> <delivered>/<points>` with the "
                         "current time, fetched now, and the docket's counts")
+        problems += [p for p in watermark_problems(lines) if "minutes off" in p or "not a valid" in p]
     else:
         # The stamp carries the state of the acceptance list: delivered/points as the docket shows them.
         if counts is not None:
@@ -122,16 +126,9 @@ def sealed_problems(text, state, paths, hook_input):
             elif (int(stamp.group(7)), int(stamp.group(8))) != (counts["x"], total):
                 problems.append(f"the stamp says {stamp.group(7)}/{stamp.group(8)} but the docket shows "
                                 f"{counts['x']}/{total} delivered/points: the stamp is read from the docket, not remembered")
-        try:
-            when = datetime(*(int(stamp.group(i)) for i in range(1, 6)))
-            deviation = abs(datetime.now() - when)
-            if deviation > TOLERANCE:
-                problems.append(f"the stamp is {round(deviation.total_seconds() / 60)} minutes off the real time: "
-                                "fetch the time, do not remember it; then check whether other rules blurred too")
-        except ValueError:
-            problems.append("the stamp is not a valid date and time")
         if stamp.group(6).lower() != spec_id.lower():
             problems.append("the stamp names another spec")
+        problems += watermark_problems(lines)
     if len(lines) > MAX_LINES["sealed"]:
         problems.append(f"at most {MAX_LINES['sealed']} lines")
     return problems
@@ -247,6 +244,26 @@ def reference_problems(body, spec_id, paths):
     return problems
 
 
+def watermark_problems(lines, require_spec=None):
+    """Every message in every mode ends with a stamp fetched from the clock: `stamp: YYYY-MM-DD HH:MM`
+    (sealed runs add the spec id and the docket counts). A stale stamp means the rules blurred."""
+    problems = []
+    stamp = WATERMARK.match(lines[-1]) if lines else None
+    if stamp is None:
+        problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM` with the current time, fetched now"
+                        + (f" (sealed: `stamp: YYYY-MM-DD HH:MM {require_spec} <delivered>/<points>`)" if require_spec else ""))
+        return problems
+    try:
+        when = datetime(*(int(stamp.group(i)) for i in range(1, 6)))
+        deviation = abs(datetime.now() - when)
+        if deviation > TOLERANCE:
+            problems.append(f"the stamp is {round(deviation.total_seconds() / 60)} minutes off the real time: "
+                            "fetch the time, do not remember it; then check whether other rules blurred too")
+    except ValueError:
+        problems.append("the stamp is not a valid date and time")
+    return problems
+
+
 def close(paths, session_id, state, text):
     lines = lines_of(text)
     head = TERMINAL.match(lines[0])
@@ -255,12 +272,20 @@ def close(paths, session_id, state, text):
     state["terminal"] = kind
     save_state(paths, session_id, state)
     release_lock(paths, state.get("spec", ""))
+    # The spec's own state follows the terminal state: done when delivered, ready again otherwise.
+    set_spec_state(paths, state.get("spec", ""), "done" if kind == "delivered" else "ready")
     log_event(paths, session_id, state.get("spec", ""), kind, "closed")
+
+
+def without_stamp(text):
+    lines = lines_of(text)
+    return "\n".join(lines[:-1]) if lines and WATERMARK.match(lines[-1]) else text
 
 
 def human_problems(text, mode):
     lines = lines_of(text)
-    problems = []
+    problems = watermark_problems(lines)
+    text = without_stamp(text)
     if len(lines) > MAX_LINES.get(mode, 30):
         problems.append(f"at most {MAX_LINES.get(mode, 30)} lines; extensive findings go into a file")
     if HASH.search(text):
@@ -283,7 +308,8 @@ def human_problems(text, mode):
 
 def closed_problems(text):
     lines = lines_of(text)
-    problems = []
+    problems = watermark_problems(lines)
+    text = without_stamp(text)
     if len(lines) > MAX_LINES["closed"]:
         problems.append(f"closed state: at most {MAX_LINES['closed']} lines, answer from the docket only")
     if "?" in text:

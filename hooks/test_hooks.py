@@ -26,6 +26,11 @@ def run_hook(script, payload, project_dir):
     return result.returncode, result.stderr.decode("utf-8", "replace"), result.stdout.decode("utf-8", "replace")
 
 
+def hstamp(minutes_off=0):
+    when = datetime.now() + timedelta(minutes=minutes_off)
+    return f"stamp: {when:%Y-%m-%d %H:%M}"
+
+
 def stamp(minutes_off=0, counts="1/1"):
     when = datetime.now() + timedelta(minutes=minutes_off)
     return f"stamp: {when:%Y-%m-%d %H:%M} {SPEC}" + (f" {counts}" if counts else "")
@@ -348,7 +353,7 @@ class SealedStop(Project):
         self.assertEqual(self.state()["terminal"], "blocked")
 
     def test_background_agent_running_is_not_a_terminal_moment(self):
-        code, _, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": "waiting for the fixer",
+        code, _, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": f"waiting for the fixer\n{hstamp()}",
                                           "stop_hook_active": False, "background_tasks": [{"id": "a1"}]}, self.p)
         self.assertEqual(code, 0)
         self.assertEqual(self.state()["mode"], "sealed")
@@ -362,24 +367,45 @@ class SealedStop(Project):
 class HumanStop(Project):
     def test_hashes_ids_hedges_options_rejected(self):
         self.set_state(mode="concept")
-        code, err, _ = self.stop(f"Fixed in a1b2c3d4e. It probably works. Option A: keep it. Option B: drop it. See {SPEC}.")
+        code, err, _ = self.stop(f"Fixed in a1b2c3d4e. It probably works. Option A: keep it. Option B: drop it. See {SPEC}.\n{hstamp()}")
         self.assertEqual(code, 2)
         for fragment in ("hashes", "ids", "hedge", "option"):
             self.assertIn(fragment, err)
 
     def test_two_questions_rejected(self):
         self.set_state(mode="spec")
-        self.assertEqual(self.stop("Keep the default? Or change it?")[0], 2)
+        self.assertEqual(self.stop(f"Keep the default? Or change it?\n{hstamp()}")[0], 2)
 
     def test_clean_message_passes(self):
         self.set_state(mode="concept")
-        code, err, _ = self.stop("The default stays at 512 (config_reference.md). Keep it?")
+        code, err, _ = self.stop(f"The default stays at 512 (config_reference.md). Keep it?\n{hstamp()}")
         self.assertEqual(code, 0, err)
 
     def test_closed_rejects_proposals(self):
         self.set_state(mode="closed", spec=SPEC)
-        self.assertEqual(self.stop("The fix is in. I suggest we also remove the switch.")[0], 2)
-        self.assertEqual(self.stop("The fix is in, delivered as written in the docket.")[0], 0)
+        self.assertEqual(self.stop(f"The fix is in. I suggest we also remove the switch.\n{hstamp()}")[0], 2)
+        self.assertEqual(self.stop(f"The fix is in, delivered as written in the docket.\n{hstamp()}")[0], 0)
+
+    def test_every_message_needs_a_fresh_stamp(self):
+        self.set_state(mode="concept")
+        code, err, _ = self.stop("The default stays at 512 (config_reference.md).")
+        self.assertEqual(code, 2)
+        self.assertIn("stamp", err)
+        code, err, _ = self.stop(f"The default stays at 512 (config_reference.md).\n{hstamp(-40)}")
+        self.assertEqual(code, 2)
+        self.assertIn("minutes off", err)
+        self.assertTrue(self.state()["degraded"])
+        self.set_state(mode="closed", spec=SPEC)
+        self.assertEqual(self.stop("Delivered as written in the docket.")[0], 2)
+        self.assertEqual(self.stop(f"Delivered as written in the docket.\n{hstamp()}")[0], 0)
+
+    def test_background_wait_needs_a_stamp_too(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": "waiting for the fixer",
+                                            "stop_hook_active": False, "background_tasks": [{"id": "a1"}]}, self.p)
+        self.assertEqual(code, 2)
+        self.assertIn("stamp", err)
+        self.assertEqual(self.state()["mode"], "sealed")
 
     def test_none_mode_is_silent(self):
         self.assertEqual(self.stop("anything goes here? really? a1b2c3d4e")[0], 0)
@@ -469,6 +495,19 @@ class ReadyGate(Project):
             self.assertIn(fragment, err)
         self.assertIn("state: draft", self.spec.read_text("utf-8"))
         self.assertNotIn(" ready ", self.log())
+
+
+class SpecState(Project):
+    def test_spec_state_follows_the_run(self):
+        self.spec.write_text(f"---\nid: {SPEC}\nstate: ready          # draft | ready\n---\n# Login\n", "utf-8")
+        self.prompt(f"/implement {SPEC}")
+        self.assertIn("state: in-progress          # draft | ready", self.spec.read_text("utf-8"))
+        self.docket.write_text("- [x] point 1\n", "utf-8")
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\n{stamp()}")[0], 0)
+        self.assertIn("state: ready", self.spec.read_text("utf-8"))
+        self.set_state(mode="sealed", spec=SPEC)
+        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+        self.assertIn("state: done", self.spec.read_text("utf-8"))
 
 
 class WorkDirGit(Project):
@@ -769,7 +808,7 @@ class StartSummary(Project):
 class SelfTalk(Project):
     def test_apologies_and_effort_rejected(self):
         self.set_state(mode="concept")
-        code, err, _ = self.stop("Sorry, this took me two hours.")
+        code, err, _ = self.stop(f"Sorry, this took me two hours.\n{hstamp()}")
         self.assertEqual(code, 2)
         self.assertIn("yourself", err)
 

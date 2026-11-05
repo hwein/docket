@@ -22,8 +22,9 @@ by the team and read by you.
   exists, every reference doc the spec names is updated or accounted for, every CI hash is reachable from HEAD
   and was pushed, and the stamp carries the docket's delivered/points count. Project rules from `DOCKET.md`
   (`push_branch`, `commit_regex`, `forbidden_paths`, `forbidden_commands`) are enforced on every shell command
-  and write. Every refusal is counted per rule and shown again at the next run of that spec. Finished specs are
-  not a reference source: the docs say what IS, specs say what SHOULD.
+  and write. Every refusal is counted per rule and shown again at the next run of that spec. Every message in
+  every mode ends with a stamp fetched from the clock; a stale stamp marks the session degraded. Finished specs
+  are not a reference source: the docs say what IS, specs say what SHOULD.
 - **Two registers.** Reports to the orchestrator are dense and carry an `Unverified:` line. Messages to you are
   short and plain: a deterministic parser plus a small judge model (installed per project by `/docket init`) reject hashes, ids, hedges, option menus,
   promises and manual tasks assigned to you, and the message is rewritten before you see it.

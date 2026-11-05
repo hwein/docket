@@ -63,3 +63,8 @@ In a sealed run: the hook records the request; the orchestrator ends at the next
 ## `status`
 
 One line: mode, spec, open points of the current docket, last LOG line.
+
+## Every message
+
+Ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock at the moment of writing, in every
+mode; the hook refuses a message without it or with a stale one.

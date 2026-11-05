@@ -177,6 +177,23 @@ def frontmatter(path):
     return fields
 
 
+def set_spec_state(paths, spec_id, new_state):
+    """The spec's frontmatter state follows the run: in-progress on sealing, done on delivery, ready again
+    after blocked or dissent. Written by hooks only; the comment behind the value stays."""
+    path = paths.spec_file(spec_id)
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8-sig") as handle:
+            text = handle.read()
+        text, n = re.subn(r"^(state:\s*)\S+", lambda m: m.group(1) + new_state, text, count=1, flags=re.MULTILINE)
+        if n:
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+    except OSError:
+        pass
+
+
 # --- session state -----------------------------------------------------------
 
 def state_path(paths, session_id):

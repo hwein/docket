@@ -46,4 +46,6 @@ ask the one question. The user's word settles it; record it in the follow-up spe
 - Ids: `c-` or `s-` plus eight hex digits from SHA-256 over topic, title and creation time. Ids never appear in text
   to the user; name the title.
 
-Date and time are fetched, never remembered, whenever a document gets a date.
+Date and time are fetched, never remembered, whenever a document gets a date. Every message to the user ends
+with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock at the moment of writing; the hook
+refuses a message without it or with a stale one (a stale stamp means the rules blurred: required reading again).
