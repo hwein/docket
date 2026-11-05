@@ -123,4 +123,15 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.1. Every command has run end to end in a toy project; not yet used on a real codebase.
+0.2.2, an early stage of development, already in use in several repositories.
+
+docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
+`/docket:init` shows every change it would make to the repo as a diff and writes only after your `go`. Much of
+it is yours to set: branch, commit form, forbidden paths and commands, whether the work dir sits in the repo,
+whether the judge hook runs.
+
+No warranty. AI makes mistakes, a run that checks itself included. Use docket only where you can verify that
+the result is correct.
+
+docket is deliberately not built to save tokens, nor to spend them. It is built for autonomy and for less
+cognitive load on your side.
