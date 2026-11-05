@@ -43,7 +43,7 @@ REMINDERS = {
     "none": "",
 }
 WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock now, "
-             "never remembered; the hook refuses the message otherwise.")
+             "never remembered; the hook refuses the message otherwise. Sent back: answer with the stamp line alone.")
 
 
 def ambition():
@@ -126,6 +126,7 @@ def main():
         lines.append(f"[docket] Mode {mode}" + (f", spec {state['spec']}" if state.get("spec") else "")
                      + ". " + REMINDERS.get(mode, ""))
         lines.append(ambition())
+    if mode != "none" or os.path.isfile(paths.config):
         lines.append("[docket] " + WATERMARK)
     if feedback:
         lines.append(feedback)

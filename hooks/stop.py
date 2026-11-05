@@ -45,15 +45,18 @@ def main():
     session_id = hook_input.get("session_id")
     state = load_state(paths, session_id)
     mode = state.get("mode", "none")
-    if mode == "none":
-        return 0
+    if mode == "none" and not os.path.isfile(paths.config):
+        return 0  # project not set up: the hooks only observe
     set_context(paths, state.get("spec", ""))
     text = message_text(hook_input)
     if text is None:
         return 0
     second_pass = bool(hook_input.get("stop_hook_active"))
 
-    if mode in ("sealed", "rewrite"):
+    if mode == "none":
+        # No command active, but the project is set up: the stamp is a rule of every session.
+        problems = watermark_problems(lines_of(text))
+    elif mode in ("sealed", "rewrite"):
         if hook_input.get("background_tasks"):
             # The turn resumes when the background agent reports; not a terminal moment, but still a message.
             problems = watermark_problems(lines_of(text))
@@ -75,6 +78,11 @@ def main():
     if second_pass:
         log_event(paths, session_id, state.get("spec", ""), "stop-forced", "; ".join(problems)[:120])
         return 0
+    only_stamp = all("stamp" in problem for problem in problems)
+    if only_stamp:
+        # The message itself stands; only the watermark is missing or stale. Never repeat the message.
+        return refuse("[docket] " + "; ".join(problems) + ". Fetch the time now and end the turn with the stamp "
+                      "line alone, nothing else.")
     return refuse("[docket] Rewrite your last message before it is delivered: " + "; ".join(problems)
                   + ". Then end the turn with the rewritten message only.")
 

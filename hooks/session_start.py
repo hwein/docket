@@ -36,6 +36,9 @@ def main():
     if os.path.isfile(paths.config):
         lines.append("[docket] Required reading before any other action, each file completely with Read: "
                      + ", ".join(required) + ". Until then writes, shell commands and agents are refused.")
+        lines.append("[docket] Rule of every session here: each message ends with the line `stamp: YYYY-MM-DD HH:MM`, "
+                     "the time fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
+                     "When it sends you back, answer with the stamp line alone, never repeat the message.")
     else:
         lines.append(f"[docket] No DOCKET.md at {paths.work}. Run /docket init to set this project up; "
                      "until then the docket hooks only observe.")

@@ -407,8 +407,29 @@ class HumanStop(Project):
         self.assertIn("stamp", err)
         self.assertEqual(self.state()["mode"], "sealed")
 
-    def test_none_mode_is_silent(self):
+    def test_none_mode_needs_only_the_stamp_once_the_project_is_set_up(self):
+        code, err, _ = self.stop("anything goes here? really? a1b2c3d4e")
+        self.assertEqual(code, 2)
+        self.assertIn("stamp line alone", err)
+        self.assertNotIn("hashes", err)
+        self.assertEqual(self.stop(f"anything goes here? really? a1b2c3d4e\n{hstamp()}")[0], 0)
+
+    def test_none_mode_is_silent_without_docket_md(self):
+        (self.work / "DOCKET.md").unlink()
         self.assertEqual(self.stop("anything goes here? really? a1b2c3d4e")[0], 0)
+
+    def test_missing_stamp_asks_for_the_stamp_line_alone(self):
+        self.set_state(mode="concept")
+        code, err, _ = self.stop("The default stays at 512 (config_reference.md).")
+        self.assertEqual(code, 2)
+        self.assertIn("stamp line alone", err)
+        self.assertNotIn("Rewrite your last message", err)
+
+    def test_rule_is_announced_at_start_and_on_every_prompt(self):
+        _, _, out = run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
+        self.assertIn("stamp line alone", out)
+        _, _, out = self.prompt("how are the tests?")
+        self.assertIn("stamp:", out)
 
 
 class Rewrite(Project):

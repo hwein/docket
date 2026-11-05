@@ -36,7 +36,8 @@ Hooks check provenance, form and state, never content.
 - `DOCKET DELIVERED` passes only if the check ran after the last agent returned, every cited `file:line`
   exists, and every reference doc the spec names is updated or accounted for.
 - Project rules from `DOCKET.md` (branch, commit form, forbidden paths and commands) apply to every command.
-- Every message ends with a time stamp fetched from the clock. No hashes, ids or hedges reach you.
+- Every message in every session of the project ends with a time stamp fetched from the clock. No hashes, ids
+  or hedges reach you.
 
 ## Install
 
