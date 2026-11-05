@@ -66,9 +66,12 @@ def main():
         return refuse("[docket] Required reading first, completely with Read: " + ", ".join(missing))
 
     # Modes are switched by the user's command, never by the model invoking the command itself.
-    if tool == "Skill" and str(tool_input.get("skill", "")).lower().startswith("docket:"):
-        return refuse("[docket] /concept, /spec, /implement and /docket are the user's commands: they switch the mode "
-                      "only when the user types them. Say which command comes next and end the turn.")
+    skill = str(tool_input.get("skill", "")).lower()
+    if tool == "Skill" and skill.startswith("docket:"):
+        typed = str(state.get("last_command", ""))
+        if not typed.startswith("/" + skill.split(":", 1)[1]):
+            return refuse("[docket] /concept, /spec, /implement and /docket are the user's commands: they switch the mode "
+                          "only when the user types them. Say which command comes next and end the turn.")
 
     if mode in ("sealed", "rewrite") and tool == "AskUserQuestion":
         return refuse("[docket] The spec is sealed: no questions. Take the default, write a 'deviation' line "

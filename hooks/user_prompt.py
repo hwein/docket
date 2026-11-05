@@ -65,6 +65,10 @@ def main():
     # A command may sit on its own line below a preamble (sessions started by another session).
     command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")
     lowered = command_line.lower()
+    if lowered.startswith(("/concept", "/spec", "/implement", "/docket")):
+        # The model may expand this one command through the Skill tool; pre_tool_use checks against it.
+        state["last_command"] = lowered.split("\n")[0][:80]
+        save_state(paths, session_id, state)
 
     implement = IMPLEMENT.match(command_line)
     if implement:

@@ -186,11 +186,15 @@ class WriteRights(Project):
         self.assertEqual(self.tool("Write", file_path=str(self.work / "concepts" / "core" / "c-0000ffff.md"), content="x")[0], 0)
 
     def test_model_may_not_invoke_docket_commands_itself(self):
-        self.set_state(mode="concept")
+        self.prompt("/concept a done command")
         code, err, _ = self.tool("Skill", skill="docket:spec")
         self.assertEqual(code, 2)
         self.assertIn("user", err)
+        self.assertEqual(self.tool("Skill", skill="docket:concept")[0], 0)  # the one the user typed
         self.assertEqual(self.tool("Skill", skill="anthropic-skills:pdf")[0], 0)
+        self.prompt("/docket status")
+        self.assertEqual(self.tool("Skill", skill="docket:docket")[0], 0)
+        self.assertEqual(self.tool("Skill", skill="docket:concept")[0], 2)
 
     def test_template_state_comment_is_ignored(self):
         self.set_state(mode="spec")
