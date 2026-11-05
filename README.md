@@ -1,7 +1,9 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-  <img alt="docket" src="assets/logo-light.svg">
-</picture>
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img alt="docket" src="assets/logo-light.svg">
+  </picture>
+</p>
 
 
 Spec in, docket out. A Claude Code plugin that separates thinking from building and makes the building verifiable.
