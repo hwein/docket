@@ -145,6 +145,9 @@ def table_rows(block):
     return rows
 
 
+TEMPLATE_GOAL = "One paragraph: what users or operators get, and why now."
+
+
 def ready_problems(text):
     problems = []
     points = [row for row in table_rows(section(text, "Points")) if row and row[0].lower() != "#"]
@@ -163,8 +166,9 @@ def ready_problems(text):
     rows = [row for row in table_rows(reference) if row and row[0].lower() != "file"]
     if not rows and not re.search(r"\bnone\b", reference, re.IGNORECASE):
         problems.append("Reference update section empty: name the reference docs that change, or `none` with the reason")
-    if re.search(r"<[a-z][^>]*>", section(text, "Goal")):
-        problems.append("Goal still holds template placeholders")
+    goal = section(text, "Goal")
+    if not goal.strip() or TEMPLATE_GOAL in goal or re.search(r"^#\s*<Title>", text, re.MULTILINE):
+        problems.append("Goal still holds the template text")
     return problems
 
 

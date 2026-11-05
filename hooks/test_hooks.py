@@ -417,6 +417,23 @@ class ReadyGate(Project):
         self.post(self.spec)
         self.assertEqual(self.log().count(" ready "), 1)
 
+    def test_angle_brackets_in_goal_prose_are_not_placeholders(self):
+        self.set_state(mode="spec")
+        text = self.spec_text("`python greet.py World` → `hello, World`", "yes (2026-11-05)", "| README.md | Files |")
+        self.spec.write_text(text.replace("Users can log in.", "greet.py prints `hello, <name>` for the given <name>."), "utf-8")
+        code, err, _ = self.post(self.spec)
+        self.assertEqual(code, 0, err)
+
+    def test_template_goal_demotes(self):
+        self.set_state(mode="spec")
+        text = self.spec_text("`cargo test` → `3 passed`", "yes (2026-11-05)", "| docs/auth.md | login section |")
+        for goal in ("", "One paragraph: what users or operators get, and why now."):
+            self.spec.write_text(text.replace("Users can log in.", goal), "utf-8")
+            code, err, _ = self.post(self.spec)
+            self.assertEqual(code, 2, goal)
+            self.assertIn("template text", err)
+            self.set_state(mode="spec")
+
     def test_gaps_demote_to_draft(self):
         self.set_state(mode="spec")
         self.spec.write_text(self.spec_text("works", "", ""), "utf-8")
