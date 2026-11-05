@@ -6,6 +6,31 @@ A **delivery docket** is the slip that travels with a shipment and proves what w
 gets one docket: a pre-registered list of what counts as done, filled with evidence, append-only, written by the
 team and read by you.
 
+## What it is for
+
+Long, autonomous implementation runs. You think with the model until the WHAT is agreed, write it down as a
+spec, then hand it over: one sealed session runs for hours, spawns its own agents, verifies its own work and
+ends with one message. docket exists so that such a run can be trusted without watching it: the rules are
+enforced by hooks, not by prompts, and the docket shows what was done, with evidence you can check.
+
+It is not a chat assistant for quick edits. The modes before the run are short; the run itself is long.
+
+## The ideal workflow
+
+1. **Once per project:** `/docket:docket init`. The repo is audited, you answer only what it cannot answer,
+   `DOCKET.md` holds the result. From here every session carries the project's rules.
+2. **Think:** `/docket:concept`. One idea at a time, one question at most. Finished dockets are weighed here;
+   what differs from a spec is decided here, not patched later.
+3. **Decide:** `/docket:spec`. The agreed WHAT becomes a spec: points with done criteria a script can check,
+   your decisions closed with one word each, reference docs named. Then it is `ready` and frozen.
+4. **Leave:** `/docket:implement <id>`. The session seals. Refinement, pre-registered docket, one implementer
+   per point, checks run by the orchestrator, commits per the project's rules. Your messages wait in the inbox;
+   `/docket:docket stop` ends the run cleanly. Nothing asks you anything until the docket is written.
+5. **Read:** one message, `DOCKET DELIVERED`, `DOCKET BLOCKED` or `DOCKET DISSENT`, in plain words. The docket
+   has the evidence. What deviated goes back to step 2.
+
+Several specs can wait as `ready`; several sessions can run on different specs at once, each locked to its own.
+
 ## Commands
 
 Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`, `/docket:docket init`.
