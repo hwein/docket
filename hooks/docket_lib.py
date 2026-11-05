@@ -215,10 +215,15 @@ def load_state(paths, session_id):
 
 
 def save_state(paths, session_id, state):
+    """Atomic: SessionStart and UserPromptSubmit can run at the same moment on a session's first prompt;
+    two writers on one file left a truncated JSON once, and a state that does not parse reads as mode none."""
     try:
         os.makedirs(paths.state_dir, exist_ok=True)
-        with open(state_path(paths, session_id), "w", encoding="utf-8", newline="\n") as handle:
+        target = state_path(paths, session_id)
+        temp = f"{target}.{os.getpid()}.tmp"
+        with open(temp, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(state, handle, indent=1)
+        os.replace(temp, target)
         prune_states(paths.state_dir)
     except OSError:
         pass

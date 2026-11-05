@@ -510,6 +510,25 @@ class SpecState(Project):
         self.assertIn("state: done", self.spec.read_text("utf-8"))
 
 
+class HookOwnedFiles(Project):
+    def test_state_locks_and_violations_are_hook_owned(self):
+        self.set_state(mode="spec")
+        state_file = self.root / ".claude" / "docket" / f"state-{SID}.json"
+        code, err, _ = self.tool("Write", file_path=str(state_file), content="{}")
+        self.assertEqual(code, 2)
+        self.assertIn("hooks only", err)
+        self.assertEqual(self.tool("Edit", file_path=str(self.work / "locks" / SPEC), old_string="a", new_string="b")[0], 2)
+        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.violations.json"), content="{}")[0], 2)
+        self.set_state(mode="sealed", spec=SPEC)
+        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.json"), content="{}")[0], 0)
+
+    def test_save_state_is_atomic_and_leaves_no_temp_files(self):
+        self.prompt("/concept")
+        folder = self.root / ".claude" / "docket"
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), [f"state-{SID}.json"])
+        self.assertEqual(self.state()["mode"], "concept")
+
+
 class WorkDirGit(Project):
     def test_log_lines_become_commits_when_work_dir_is_a_repo(self):
         subprocess.run(["git", "-C", str(self.work), "init", "-q"], check=True)

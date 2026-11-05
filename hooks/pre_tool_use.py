@@ -130,6 +130,10 @@ def main():
     if path.lower() == paths.log.lower():
         return refuse("[docket] LOG.md is written by the hooks only.")
 
+    if under(path, paths.state_dir) or under(path, posixpath.join(paths.work, "locks")) or path.lower().endswith(".violations.json"):
+        return refuse("[docket] Session state, locks and violation counts are written by the hooks only; "
+                      "a mode changes through the user's command, never by editing the state file.")
+
     forbidden = forbidden_path(path, config.get("forbidden_paths", ""), paths)
     if forbidden:
         return refuse(f"[docket] {forbidden} is a forbidden path per DOCKET.md (forbidden_paths); nothing is written there.")
