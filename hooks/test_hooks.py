@@ -396,6 +396,19 @@ class HumanStop(Project):
         for fragment in ("hashes", "ids", "hedge", "option"):
             self.assertIn(fragment, err)
 
+    def test_hex_inside_paths_and_ids_is_not_a_hash(self):
+        # The diff message in luradb-web-client was sent back for a Windows scratchpad path (2026-11-05).
+        self.set_state(mode="init")
+        path = (r"C:\Users\heiko\AppData\Local\Temp\claude\257f88f23acc5a93"
+                r"\ddeb9c46-306b-47e4-8033-820e5e176cee\scratchpad\final\docket-init.diff")
+        for text in (f"Diff: {path}", "Port 1234567 stays open.", "The file was effaced.", "See 469f289a.txt."):
+            code, err, _ = self.stop(f"{text}\n{hstamp()}")
+            self.assertEqual(code, 0, f"{text}: {err}")
+        for text in ("Fixed in a1b2c3d4e.", "Merged (469f289) today.", "Merged `469f289`."):
+            code, err, _ = self.stop(f"{text}\n{hstamp()}")
+            self.assertEqual(code, 2, text)
+            self.assertIn("hashes", err)
+
     def test_two_questions_rejected(self):
         self.set_state(mode="spec")
         self.assertEqual(self.stop(f"Keep the default? Or change it?\n{hstamp()}")[0], 2)
@@ -454,6 +467,111 @@ class HumanStop(Project):
         self.assertIn("stamp line alone", out)
         _, _, out = self.prompt("how are the tests?")
         self.assertIn("stamp:", out)
+
+
+class DisplayGate(Project):
+    """message_display.py holds a broken message back before the user sees it; stop.py asks for it again."""
+
+    HIDDEN = "​"
+
+    def display(self, delta, final=True, message_id="m1", index=0):
+        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "hook_event_name": "MessageDisplay",
+                                                         "turn_id": "t1", "message_id": message_id, "index": index,
+                                                         "final": final, "delta": delta}, self.p)
+        self.assertEqual(code, 0, err)
+        return json.loads(out)["hookSpecificOutput"]["displayContent"] if out.strip() else None
+
+    def record(self):
+        path = self.root / ".claude" / "docket" / f"display-{SID}.json"
+        return json.loads(path.read_text("utf-8")) if path.exists() else {}
+
+    def test_clean_message_is_shown_whole(self):
+        self.set_state(mode="concept")
+        text = f"The default stays at 512 (config_reference.md).\n{hstamp()}"
+        self.assertEqual(self.display(text), text)
+        self.assertEqual(self.stop(text)[0], 0)
+
+    def test_broken_message_is_held_back_and_written_again_once(self):
+        self.set_state(mode="init")
+        broken = f"It probably works.\n{hstamp()}"
+        self.assertEqual(self.display(broken), self.HIDDEN)
+        code, err, _ = self.stop(broken)
+        self.assertEqual(code, 2)
+        self.assertIn("held back and never shown", err)
+        self.assertIn("in full", err)
+        self.assertNotIn("already read", err)
+        self.assertTrue(self.record()["retry"])
+        # The answer to the refusal is shown even when it still breaks a rule, and the second pass lets it through.
+        self.assertIsNone(self.display(f"It probably works, again.\n{hstamp()}", message_id="m2"))
+        self.assertEqual(self.stop(f"It probably works, again.\n{hstamp()}", active=True)[0], 0)
+        self.assertFalse(self.record()["retry"])
+        self.assertEqual(self.record()["hidden"], [])
+
+    def test_held_back_message_is_asked_for_even_on_a_second_pass(self):
+        # Another Stop hook (the judge) may have sent Claude back already; the user still has seen nothing.
+        self.set_state(mode="concept")
+        broken = f"Fixed in a1b2c3d4e.\n{hstamp()}"
+        self.assertEqual(self.display(broken), self.HIDDEN)
+        code, err, _ = self.stop(broken, active=True)
+        self.assertEqual(code, 2)
+        self.assertIn("held back", err)
+
+    def test_message_without_stamp_is_shown_and_corrected_by_lines(self):
+        # Text between tool calls has no stamp and no Stop sees it: it is never held back.
+        self.set_state(mode="concept")
+        broken = "It probably works."
+        self.assertEqual(self.display(broken), broken)
+        code, err, _ = self.stop(broken)
+        self.assertEqual(code, 2)
+        self.assertIn("already read", err)
+        self.assertIn("[docket] Korrektur:", err)
+        self.assertNotIn("Write it again", err)
+        self.assertIsNone(self.display(f"[docket] Korrektur: It works (tests 3 passed).\n{hstamp()}", message_id="m2"))
+
+    def test_shown_message_with_a_broken_rule_gets_correction_lines(self):
+        # Without the gate (a client that ignores MessageDisplay) the message is on the screen.
+        self.set_state(mode="spec")
+        code, err, _ = self.stop(f"Keep the default? Or change it?\n{hstamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("do not repeat or rewrite it", err)
+        self.assertNotIn("held back", err)
+
+    def test_missing_stamp_alone_never_holds_back(self):
+        self.set_state(mode="concept")
+        text = f"The default stays at 512 (config_reference.md).\n{hstamp(-40)}"
+        self.assertEqual(self.display(text), text)
+        code, err, _ = self.stop(text)
+        self.assertIn("stamp line alone", err)
+        self.assertTrue(self.record()["retry"])
+
+    def test_batches_are_held_until_the_last_one(self):
+        self.set_state(mode="concept")
+        self.assertEqual(self.display("The default stays at 512\n", final=False), self.HIDDEN)
+        self.assertIn("m1", self.record()["pending"])
+        last = f"(config_reference.md).\n{hstamp()}"
+        self.assertEqual(self.display(last, index=1), "The default stays at 512\n" + last)
+        self.assertEqual(self.record()["pending"], {})
+
+    def test_mode_none_and_sealed_are_not_gated(self):
+        self.assertIsNone(self.display(f"It probably works.\n{hstamp()}"))
+        self.set_state(mode="sealed", spec=SPEC)
+        self.assertIsNone(self.display(f"It probably works.\n{hstamp()}", message_id="m2"))
+
+    def test_project_without_docket_md_is_not_gated(self):
+        (self.work / "DOCKET.md").unlink()
+        self.set_state(mode="concept")
+        self.assertIsNone(self.display(f"It probably works.\n{hstamp()}"))
+
+    def test_a_new_prompt_settles_the_record(self):
+        self.set_state(mode="concept")
+        self.display(f"It probably works.\n{hstamp()}")
+        self.assertEqual(len(self.record()["hidden"]), 1)
+        self.prompt("how are the tests?")
+        self.assertEqual(self.record(), {"hidden": [], "pending": {}, "retry": False})
+
+    def test_broken_input_fails_open(self):
+        code, _, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "../x"}, self.p)
+        self.assertEqual((code, out.strip()), (0, ""))
 
 
 class Rewrite(Project):

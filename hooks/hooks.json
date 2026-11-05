@@ -67,6 +67,17 @@
           }
         ]
       }
+    ],
+    "MessageDisplay": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(command -v python || command -v python3); \"$p\" \"${CLAUDE_PLUGIN_ROOT}/hooks/message_display.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

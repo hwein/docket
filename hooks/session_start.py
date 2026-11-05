@@ -38,7 +38,8 @@ def main():
                      + ", ".join(required) + ". Until then writes, shell commands and agents are refused.")
         lines.append("[docket] Rule of every session here: each message ends with the line `stamp: YYYY-MM-DD HH:MM`, "
                      "the time fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
-                     "When it sends you back, answer with the stamp line alone, never repeat the message.")
+                     "When it sends you back, do exactly what it asks: the stamp line alone, or correction lines; "
+                     "repeat a message only when the hook says it was held back and never shown.")
     else:
         lines.append(f"[docket] No DOCKET.md at {paths.work}. Run /docket:init to set this project up; "
                      "until then the docket hooks only observe.")

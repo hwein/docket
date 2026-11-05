@@ -229,6 +229,65 @@ def save_state(paths, session_id, state):
         pass
 
 
+# --- display gate ------------------------------------------------------------
+# The MessageDisplay hook holds a message back before the user sees it; the Stop hook then asks for it
+# again. Both meet in one record per session: `hidden` (messages held back since the last Stop),
+# `retry` (after a refusal every message is shown until a Stop lets one through), `pending`
+# (messages whose last batch has not arrived yet).
+
+HIDDEN = "​"  # a zero-width space: an empty displayContent shows the original in the desktop app (exp6)
+PENDING_MAX_AGE = 60
+
+
+def display_path(paths, session_id):
+    if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
+        session_id = "shared"
+    return posixpath.join(paths.state_dir, f"display-{session_id}.json")
+
+
+def buffer_path(paths, session_id, message_id):
+    return display_path(paths, session_id)[:-len(".json")] + f"-{message_id}.txt"
+
+
+def load_display(paths, session_id):
+    try:
+        with open(display_path(paths, session_id), encoding="utf-8-sig") as handle:
+            record = json.load(handle)
+        if isinstance(record, dict):
+            record.setdefault("hidden", [])
+            record.setdefault("pending", {})
+            record.setdefault("retry", False)
+            return record
+    except (OSError, ValueError):
+        pass
+    return {"hidden": [], "pending": {}, "retry": False}
+
+
+def save_display(paths, session_id, record):
+    try:
+        os.makedirs(paths.state_dir, exist_ok=True)
+        target = display_path(paths, session_id)
+        temp = f"{target}.{os.getpid()}.tmp"
+        with open(temp, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(record, handle, indent=1)
+        os.replace(temp, target)
+    except OSError:
+        pass
+
+
+def settled_display(paths, session_id, wait=3.0):
+    """The record once no message is half-displayed: a Stop can arrive while the last batch of a long
+    message is still on its way (terminal client); it waits for that batch, at most `wait` seconds."""
+    deadline = time.time() + wait
+    while True:
+        record = load_display(paths, session_id)
+        now = time.time()
+        pending = {k: v for k, v in record["pending"].items() if isinstance(v, (int, float)) and now - v < PENDING_MAX_AGE}
+        if not pending or now >= deadline:
+            return record
+        time.sleep(0.1)
+
+
 def prune_states(directory, max_age_days=14):
     now = time.time()
     try:

@@ -14,8 +14,8 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (SPEC_ID, Paths, load_state, lock_holder, log_event, read_input, refuse, save_state,
-                        set_context, set_spec_state, take_lock, violations_line)
+from docket_lib import (SPEC_ID, Paths, display_path, load_state, lock_holder, log_event, read_input, refuse, save_display,
+                        save_state, set_context, set_spec_state, take_lock, violations_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
@@ -42,7 +42,8 @@ REMINDERS = {
     "none": "",
 }
 WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock now, "
-             "never remembered; the hook refuses the message otherwise. Sent back: answer with the stamp line alone.")
+             "never remembered; the hook refuses the message otherwise. Sent back: do exactly what the hook asks "
+             "(the stamp line alone, or correction lines); repeat a message only when it says it was held back.")
 
 
 def ambition():
@@ -62,6 +63,9 @@ def main():
     text = strip_harness_blocks(prompt).strip()
     if not text:
         return 0  # only harness notifications (task results, session notes): not user text
+    # A new turn of the user: what the display gate held back or let through in the last one is settled.
+    if os.path.isfile(display_path(paths, session_id)):
+        save_display(paths, session_id, {"hidden": [], "pending": {}, "retry": False})
     feedback = ""
     # A command may sit on its own line below a preamble (sessions started by another session).
     command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")

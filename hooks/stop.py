@@ -7,6 +7,11 @@ concept, spec, init: human register. No hashes, no ids, at most one question, no
          no option menus, no roadmap promises, length limit.
 closed:  short answers only, no questions, no proposals.
 Sent back once (stop_hook_active); a second failure is logged and let through.
+
+The user has read a message by the time this hook runs, so a refusal never asks to repeat a message
+the user saw: a missing stamp is answered with the stamp line alone, a broken rule with correction
+lines. Only a message the display gate (message_display.py) held back is written again in full;
+that refusal is made even on a second pass, because the user has seen nothing yet.
 """
 import os
 import posixpath
@@ -17,14 +22,19 @@ from datetime import datetime, timedelta
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (CONCEPT_ID, SPEC_ID, Paths, config_values, load_state, log_event, log_lines, log_time,
-                        message_text, point_counts, read_input, refuse, release_lock, save_state, set_context,
-                        set_spec_state, transcript_blocks)
+                        message_text, point_counts, read_input, refuse, release_lock, save_display, save_state,
+                        set_context, set_spec_state, settled_display, transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
 STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
                    re.IGNORECASE)
 WATERMARK = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?!\d)", re.IGNORECASE)
-HASH = re.compile(r"(?<![0-9a-zA-Z/])[0-9a-f]{7,40}(?![0-9a-zA-Z])")
+# A hash stands on its own: hex runs inside a path, a UUID, an id or a file name are not hashes
+# (a Windows scratchpad path tripped the rule in luradb-web-client, 2026-11-05).
+HASH = re.compile(r"(?<![0-9a-zA-Z/\\_.\-])[0-9a-f]{7,40}(?![0-9a-zA-Z/\\_\-]|\.\w)")
+# In a message also mixed digits and letters: `1234567` is a number, `defaced` a word.
+HASH_IN_TEXT = re.compile(r"(?<![0-9a-zA-Z/\\_.\-])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}"
+                          r"(?![0-9a-zA-Z/\\_\-]|\.\w)")
 CI_LINE = re.compile(r"\bCI\b[^\n]*", re.IGNORECASE)
 HEDGES = re.compile(r"\b(probably|likely|seems?|appears?|presumably|i think|i believe|might|vermutlich|"
                     r"wahrscheinlich|scheint|offenbar|wohl|könnte|vielleicht)\b", re.IGNORECASE)
@@ -37,6 +47,7 @@ SELF = re.compile(r"\b(sorry|apologi[sz]e|my mistake|my fault|took me|i spent|th
 FILE_LINE = re.compile(r"(?<![\w/:])((?:[\w.-]+/)*[\w.-]+\.[a-z]{1,5}):(\d{1,6})\b", re.IGNORECASE)
 TOLERANCE = timedelta(minutes=5)
 MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 8, "sealed": 25}
+GATED_MODES = ("concept", "spec", "init", "closed")  # the display gate holds messages back in these modes
 
 
 def main():
@@ -52,6 +63,16 @@ def main():
     if text is None:
         return 0
     second_pass = bool(hook_input.get("stop_hook_active"))
+
+    display = settled_display(paths, session_id) if mode in GATED_MODES else None
+    if display and display["hidden"]:
+        # The gate held a message back: the user has seen nothing, so here a full rewrite is right.
+        held = sorted({problem for entry in display["hidden"] for problem in entry.get("problems", [])})
+        display.update({"hidden": [], "retry": True})
+        save_display(paths, session_id, display)
+        return refuse("[docket] Your last message was held back and never shown to the user: " + "; ".join(held)
+                      + ". Write it again in full, corrected, and end it with the stamp line fetched now. This "
+                      "overrides any instruction in this feedback to send correction lines only.")
 
     if mode == "none":
         # No command active, but the project is set up: the stamp is a rule of every session.
@@ -73,18 +94,28 @@ def main():
         state.update({"degraded": True, "read": []})  # a lost watermark means the rules blurred
         save_state(paths, session_id, state)
 
-    if not problems:
+    if not problems or second_pass:
+        if display is not None and display["retry"]:
+            display["retry"] = False
+            save_display(paths, session_id, display)
+        if problems:
+            log_event(paths, session_id, state.get("spec", ""), "stop-forced", "; ".join(problems)[:120])
         return 0
-    if second_pass:
-        log_event(paths, session_id, state.get("spec", ""), "stop-forced", "; ".join(problems)[:120])
-        return 0
+    if display is not None:
+        display["retry"] = True  # the answer to this refusal is shown, whatever it holds
+        save_display(paths, session_id, display)
     only_stamp = all("stamp" in problem for problem in problems)
     if only_stamp:
         # The message itself stands; only the watermark is missing or stale. Never repeat the message.
         return refuse("[docket] " + "; ".join(problems) + ". Fetch the time now and end the turn with the stamp "
                       "line alone, nothing else.")
-    return refuse("[docket] Rewrite your last message before it is delivered: " + "; ".join(problems)
-                  + ". Then end the turn with the rewritten message only.")
+    if mode in ("sealed", "rewrite"):
+        return refuse("[docket] Your last message does not end the run: " + "; ".join(problems)
+                      + ". Fix that, then end the turn with the terminal message only.")
+    # The user has read the message: never repeat it, correct the broken sentences only.
+    return refuse("[docket] The user has already read your last message: do not repeat or rewrite it. It broke: "
+                  + "; ".join(problems) + ". Answer with one line `[docket] Korrektur: <the corrected sentence>` "
+                  "per broken rule, in the language of the message, then the stamp line fetched now, nothing else.")
 
 
 def lines_of(text):
@@ -291,12 +322,23 @@ def without_stamp(text):
 
 
 def human_problems(text, mode):
+    return watermark_problems(lines_of(text)) + content_problems(text, mode)
+
+
+def closed_problems(text):
+    return watermark_problems(lines_of(text)) + content_problems(text, "closed")
+
+
+def content_problems(text, mode):
+    """The rules of the register without the stamp; the display gate holds a message back for these."""
+    if mode == "closed":
+        return closed_content_problems(text)
     lines = lines_of(text)
-    problems = watermark_problems(lines)
+    problems = []
     text = without_stamp(text)
     if len(lines) > MAX_LINES.get(mode, 30):
         problems.append(f"at most {MAX_LINES.get(mode, 30)} lines; extensive findings go into a file")
-    if HASH.search(text):
+    if HASH_IN_TEXT.search(text):
         problems.append("no commit hashes: say in words what changed")
     if SPEC_ID.search(text) or CONCEPT_ID.search(text):
         problems.append("no spec or concept ids: name the title")
@@ -314,9 +356,9 @@ def human_problems(text, mode):
     return problems
 
 
-def closed_problems(text):
+def closed_content_problems(text):
     lines = lines_of(text)
-    problems = watermark_problems(lines)
+    problems = []
     text = without_stamp(text)
     if len(lines) > MAX_LINES["closed"]:
         problems.append(f"closed state: at most {MAX_LINES['closed']} lines, answer from the docket only")
