@@ -126,7 +126,7 @@ Tests: `python hooks/test_hooks.py`.
 0.2.2, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
-`/docket:init` shows every change it would make to the repo as a diff and writes only after your `go`. Much of
+`/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of
 it is yours to set: branch, commit form, forbidden paths and commands, whether the work dir sits in the repo,
 whether the judge hook runs.
 
