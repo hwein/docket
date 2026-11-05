@@ -34,9 +34,9 @@ Several specs can wait as `ready`; several sessions can run on different specs a
 ```mermaid
 flowchart LR
     init["/docket:docket init<br/>once per project<br/>DOCKET.md"]
-    concept["/docket:concept<br/>think, one idea at a time<br/>minutes"]
+    concept["/docket:concept<br/>think with you<br/>short, interactive"]
     spec["/docket:spec<br/>points + done criteria<br/>state: ready, frozen"]
-    subgraph run ["/docket:implement &lt;id&gt; · sealed · hours, no questions"]
+    subgraph run ["/docket:implement &lt;id&gt; · sealed · long, unattended, no questions"]
         direction LR
         refine["3 refiners"] --> register["docket<br/>pre-registered"]
         register --> points["implementer<br/>per point"]
