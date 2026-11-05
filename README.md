@@ -8,15 +8,17 @@ team and read by you.
 
 ## Commands
 
+Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`, `/docket:docket init`.
+
 | Command | Mode | What happens |
 |---|---|---|
-| `/docket init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
-| `/concept` | concept | Thinks with you. One idea per message, one question at most. |
-| `/spec` | spec | Turns the agreed WHAT into a spec with checkable done criteria, then `ready`. |
-| `/implement <id>` | sealed | Runs the spec autonomously and ends with exactly one message. |
-| `/docket` | | The register: concepts, specs, dockets, last LOG lines. |
-| `/docket status` | | One line: mode, spec, open points, last LOG line. |
-| `/docket stop` | | Ends a sealed run at the next checkpoint. |
+| `/docket:docket init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
+| `/docket:concept` | concept | Thinks with you. One idea per message, one question at most. |
+| `/docket:spec` | spec | Turns the agreed WHAT into a spec with checkable done criteria, then `ready`. |
+| `/docket:implement <id>` | sealed | Runs the spec autonomously and ends with exactly one message. |
+| `/docket:docket` | | The register: concepts, specs, dockets, last LOG lines. |
+| `/docket:docket status` | | One line: mode, spec, open points, last LOG line. |
+| `/docket:docket stop` | | Ends a sealed run at the next checkpoint. |
 
 ## How a sealed run works
 
@@ -48,7 +50,7 @@ claude plugin marketplace add /path/to/docket
 claude plugin install docket@docket-local
 ```
 
-Then, in a project: `/docket init`.
+Then, in a project: `/docket:docket init`.
 
 ## Where things live
 

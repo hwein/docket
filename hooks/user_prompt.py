@@ -66,6 +66,9 @@ def main():
     feedback = ""
     # A command may sit on its own line below a preamble (sessions started by another session).
     command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")
+    # Plugin commands are typed with the plugin namespace: /docket:concept, /docket:implement <id>,
+    # /docket:docket init. The hooks work on the short form.
+    command_line = re.sub(r"^/docket:", "/", command_line, flags=re.IGNORECASE)
     lowered = command_line.lower()
     if lowered.startswith(("/concept", "/spec", "/implement", "/docket")):
         # The model may expand this one command through the Skill tool; pre_tool_use checks against it.

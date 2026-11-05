@@ -112,6 +112,18 @@ class ModeSwitch(Project):
         self.assertEqual(code, 2)
         self.assertIn("spec id", err)
 
+    def test_namespaced_commands_are_the_same_commands(self):
+        code, _, _ = self.prompt(f"/docket:implement {SPEC}")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertEqual(self.state()["last_command"], f"/implement {SPEC}")
+        self.assertEqual(self.tool("Skill", skill="docket:implement")[0], 0)
+        self.set_state(mode="none")
+        self.prompt("/docket:concept the next step")
+        self.assertEqual(self.state()["mode"], "concept")
+        self.prompt("/docket:docket init")
+        self.assertEqual(self.state()["mode"], "init")
+
     def test_concept_and_spec_modes(self):
         self.prompt("/concept")
         self.assertEqual(self.state()["mode"], "concept")
