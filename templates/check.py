@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The project's check: one command, one result line, exit code 0 only when everything passed.
 
-/docket init copies this file into the project (e.g. scripts/check.py) and fills COMMANDS.
+/docket:init copies this file into the project (e.g. scripts/check.py) and fills COMMANDS.
 The orchestrator runs it after every implementer return; the Stop hook refuses DOCKET DELIVERED
 unless it ran after the last agent returned. Keep the result line short: it is quoted as evidence.
 """

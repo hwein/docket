@@ -68,9 +68,9 @@ def main():
     # Modes are switched by the user's command, never by the model invoking the command itself.
     skill = str(tool_input.get("skill", "")).lower()
     if tool == "Skill" and skill.startswith("docket:"):
-        typed = str(state.get("last_command", ""))
-        if not typed.startswith("/" + skill.split(":", 1)[1]):
-            return refuse("[docket] /concept, /spec, /implement and /docket are the user's commands: they switch the mode "
+        typed = str(state.get("last_command", "")).split()
+        if not typed or typed[0] != "/" + skill:
+            return refuse("[docket] The /docket: commands are the user's commands: they switch the mode "
                           "only when the user types them. Say which command comes next and end the turn.")
 
     if mode in ("sealed", "rewrite") and tool == "AskUserQuestion":
@@ -144,7 +144,7 @@ def main():
     if path.lower() == paths.config.lower():
         if mode in ("concept", "init", "none"):
             return 0
-        return refuse("[docket] DOCKET.md changes only in concept mode or through /docket init.")
+        return refuse("[docket] DOCKET.md changes only in concept mode or through /docket:init.")
 
     if under(path, paths.concepts):
         if mode in ("concept", "init"):

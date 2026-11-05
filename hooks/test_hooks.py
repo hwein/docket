@@ -95,7 +95,7 @@ class SessionStart(Project):
         (self.work / "DOCKET.md").unlink()
         code, err, out = run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
         self.assertEqual(code, 0)
-        self.assertIn("/docket:docket init", out)
+        self.assertIn("/docket:init", out)
 
 
 class ModeSwitch(Project):
@@ -116,13 +116,24 @@ class ModeSwitch(Project):
         code, _, _ = self.prompt(f"/docket:implement {SPEC}")
         self.assertEqual(code, 0)
         self.assertEqual(self.state()["mode"], "sealed")
-        self.assertEqual(self.state()["last_command"], f"/implement {SPEC}")
+        self.assertEqual(self.state()["last_command"], f"/docket:implement {SPEC}")
         self.assertEqual(self.tool("Skill", skill="docket:implement")[0], 0)
         self.set_state(mode="none")
         self.prompt("/docket:concept the next step")
         self.assertEqual(self.state()["mode"], "concept")
-        self.prompt("/docket:docket init")
+        self.prompt("/docket:init")
         self.assertEqual(self.state()["mode"], "init")
+
+    def test_builtin_init_and_status_are_not_docket_commands(self):
+        self.prompt("/init")
+        self.assertNotEqual(self.state().get("mode"), "init")
+        self.prompt(f"/docket:implement {SPEC}")
+        code, _, _ = self.prompt("/status")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertEqual(self.state()["last_command"], f"/docket:implement {SPEC}")
+        self.prompt("/stop")
+        self.assertFalse(self.state().get("stop_requested"))
 
     def test_concept_and_spec_modes(self):
         self.prompt("/concept")
@@ -151,7 +162,7 @@ class ModeSwitch(Project):
 
     def test_docket_stop_sets_flag(self):
         self.prompt(f"/implement {SPEC}")
-        code, _, _ = self.prompt("/docket stop")
+        code, _, _ = self.prompt("/docket:stop")
         self.assertEqual(code, 0)
         self.assertTrue(self.state()["stop_requested"])
 
@@ -209,8 +220,9 @@ class WriteRights(Project):
         self.assertIn("user", err)
         self.assertEqual(self.tool("Skill", skill="docket:concept")[0], 0)  # the one the user typed
         self.assertEqual(self.tool("Skill", skill="anthropic-skills:pdf")[0], 0)
-        self.prompt("/docket status")
-        self.assertEqual(self.tool("Skill", skill="docket:docket")[0], 0)
+        self.prompt("/docket:status")
+        self.assertEqual(self.tool("Skill", skill="docket:status")[0], 0)
+        self.assertEqual(self.tool("Skill", skill="docket:stop")[0], 2)
         self.assertEqual(self.tool("Skill", skill="docket:concept")[0], 2)
 
     def test_template_state_comment_is_ignored(self):
@@ -760,7 +772,7 @@ class ProjectRules(Project):
 
 class InitApproval(Project):
     def test_init_writes_only_after_go(self):
-        self.prompt("/docket init")
+        self.prompt("/docket:init")
         self.assertEqual(self.state()["mode"], "init")
         code, err, _ = self.tool("Write", file_path=str(self.work / "DOCKET.md"), content="# DOCKET")
         self.assertEqual(code, 2)
@@ -774,7 +786,7 @@ class InitApproval(Project):
         self.assertEqual(self.tool("Write", file_path=f"{self.p}/CONTRIBUTING.md", content="x")[0], 0)
 
     def test_other_text_is_not_a_go(self):
-        self.prompt("/docket init")
+        self.prompt("/docket:init")
         self.prompt("go on with the audit, I will decide later")
         self.assertFalse(self.state().get("init_approved"))
 

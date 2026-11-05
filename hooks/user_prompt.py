@@ -1,6 +1,7 @@
 """UserPromptSubmit hook.
 
-Switches the session mode on /concept, /spec, /implement <id>, /docket init, /docket stop.
+Switches the session mode on /docket:concept, /docket:spec, /docket:implement <id>, /docket:init,
+/docket:stop.
 In sealed mode, free text does not reach the model: it is stored in the inbox and the
 prompt is blocked (exit 2 shows the notice to the user). Every turn gets a two-line
 mode reminder as additional context.
@@ -16,13 +17,11 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (SPEC_ID, Paths, load_state, lock_holder, log_event, read_input, refuse, save_state,
                         set_context, set_spec_state, take_lock, violations_line)
 
-IMPLEMENT = re.compile(r"^/implement\b(?P<rest>.*)$", re.DOTALL)
+COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
-COMMANDS = {
-    "/concept": "concept",
-    "/spec": "spec",
-    "/docket init": "init",
-}
+COMMANDS = ("concept", "spec", "implement", "init", "stop", "status", "register")
+# Claude Code has no built-in of these names, so they also count without the namespace; /init and /status do not.
+BARE = ("concept", "spec", "implement")
 
 REMINDERS = {
     "concept": ("You are the thinking partner, not the executor. One idea per message, one question at most; "
@@ -66,26 +65,23 @@ def main():
     feedback = ""
     # A command may sit on its own line below a preamble (sessions started by another session).
     command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")
-    # Plugin commands are typed with the plugin namespace: /docket:concept, /docket:implement <id>,
-    # /docket:docket init. The hooks work on the short form.
-    command_line = re.sub(r"^/docket:", "/", command_line, flags=re.IGNORECASE)
-    lowered = command_line.lower()
-    if lowered.startswith(("/concept", "/spec", "/implement", "/docket")):
+    name, rest = parse_command(command_line)
+    if name:
         # The model may expand this one command through the Skill tool; pre_tool_use checks against it.
-        state["last_command"] = lowered.split("\n")[0][:80]
+        state["last_command"] = f"/docket:{name}{rest}".lower().split("\n")[0][:80]
         save_state(paths, session_id, state)
 
-    implement = IMPLEMENT.match(command_line)
-    if implement:
-        found = SPEC_ID.search(implement.group("rest"))
+    if name == "implement":
+        found = SPEC_ID.search(rest)
         if not found:
-            return refuse("[docket] /implement needs a spec id (s-xxxxxxxx). Run /docket to see the register.")
+            return refuse("[docket] /docket:implement needs a spec id (s-xxxxxxxx). Run /docket:register to see "
+                          "the register.")
         spec_id = found.group(0)
         if state.get("mode") in ("sealed", "rewrite") and state.get("spec") != spec_id:
-            return refuse(f"[docket] This session is sealed on {state.get('spec')}. Finish it or run /docket stop.")
+            return refuse(f"[docket] This session is sealed on {state.get('spec')}. Finish it or run /docket:stop.")
         holder = lock_holder(paths, spec_id)
         if holder and holder != session_id and held_by_live_session(paths, holder, spec_id):
-            return refuse(f"[docket] {spec_id} is sealed in session {holder[:8]}. Finish or /docket stop it there; "
+            return refuse(f"[docket] {spec_id} is sealed in session {holder[:8]}. Finish or /docket:stop it there; "
                           f"the lock is {paths.lock_file(spec_id)}.")
         take_lock(paths, spec_id, session_id)
         state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False})
@@ -93,35 +89,31 @@ def main():
         log_event(paths, session_id, spec_id, "sealed")
         set_spec_state(paths, spec_id, "in-progress")
         feedback = violations_line(paths, spec_id)
-    elif lowered.startswith("/docket stop"):
+    elif name == "stop":
         if state.get("mode") in ("sealed", "rewrite"):
             state["stop_requested"] = True
             save_state(paths, session_id, state)
             log_event(paths, session_id, state.get("spec", ""), "stop-requested")
-    elif lowered.startswith("/docket"):
-        for command, mode in COMMANDS.items():
-            if lowered.startswith(command):
-                state.update({"mode": mode, "spec": "", "init_approved": False})
-                save_state(paths, session_id, state)
+    elif name == "init":
+        state.update({"mode": "init", "spec": "", "init_approved": False})
+        save_state(paths, session_id, state)
+    elif name in ("status", "register"):
+        pass  # read-only: no mode change
     elif state.get("mode") == "init" and GO.match(text):
         # The diff is approved on the user's one word; only now may init write project files.
         state["init_approved"] = True
         save_state(paths, session_id, state)
         log_event(paths, session_id, "", "init-approved")
-    else:
-        for command, mode in COMMANDS.items():
-            if lowered.startswith(command):
-                if state.get("mode") in ("sealed", "rewrite"):
-                    return refuse(f"[docket] Sealed on {state.get('spec')}: finish it or run /docket stop first.")
-                state.update({"mode": mode, "spec": ""})
-                save_state(paths, session_id, state)
-                break
-        else:
-            if state.get("mode") in ("sealed", "rewrite") and not command_line:
-                store_inbox(paths, state.get("spec", ""), text)
-                log_event(paths, session_id, state.get("spec", ""), "inbox")
-                return refuse("[docket] Noted for the next checkpoint; the orchestrator reads the inbox between "
-                              "points. Use /docket stop to end the run.")
+    elif name in ("concept", "spec"):
+        if state.get("mode") in ("sealed", "rewrite"):
+            return refuse(f"[docket] Sealed on {state.get('spec')}: finish it or run /docket:stop first.")
+        state.update({"mode": name, "spec": ""})
+        save_state(paths, session_id, state)
+    elif state.get("mode") in ("sealed", "rewrite") and not command_line:
+        store_inbox(paths, state.get("spec", ""), text)
+        log_event(paths, session_id, state.get("spec", ""), "inbox")
+        return refuse("[docket] Noted for the next checkpoint; the orchestrator reads the inbox between "
+                      "points. Use /docket:stop to end the run.")
 
     mode = state.get("mode", "none")
     lines = []
@@ -141,6 +133,17 @@ def main():
     if lines:
         print("\n".join(lines))
     return 0
+
+
+def parse_command(line):
+    """(name, rest) of a docket command typed as /docket:<name>, or ("", "") for anything else."""
+    found = COMMAND.match(line)
+    if not found:
+        return "", ""
+    name = found.group("name").lower()
+    if name not in COMMANDS or not (found.group("namespace") or name in BARE):
+        return "", ""
+    return name, found.group("rest")
 
 
 def held_by_live_session(paths, holder, spec_id):

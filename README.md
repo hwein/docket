@@ -23,7 +23,7 @@ It is not a chat assistant for quick edits. The modes before the run are short; 
 
 ## The ideal workflow
 
-1. **Once per project:** `/docket:docket init`. The repo is audited, you answer only what it cannot answer,
+1. **Once per project:** `/docket:init`. The repo is audited, you answer only what it cannot answer,
    `DOCKET.md` holds the result. From here every session carries the project's rules.
 2. **Think:** `/docket:concept`. One idea at a time, one question at most. Finished dockets are weighed here;
    what differs from a spec is decided here, not patched later.
@@ -31,7 +31,7 @@ It is not a chat assistant for quick edits. The modes before the run are short; 
    your decisions closed with one word each, reference docs named. Then it is `ready` and frozen.
 4. **Leave:** `/docket:implement <id>`. The session seals. Refinement, pre-registered docket, one implementer
    per point, checks run by the orchestrator, commits per the project's rules. Your messages wait in the inbox;
-   `/docket:docket stop` ends the run cleanly. Nothing asks you anything until the docket is written.
+   `/docket:stop` ends the run cleanly. Nothing asks you anything until the docket is written.
 5. **Read:** one message, `DOCKET DELIVERED`, `DOCKET BLOCKED` or `DOCKET DISSENT`, in plain words. The docket
    has the evidence. What deviated goes back to step 2.
 
@@ -39,7 +39,7 @@ Several specs can wait as `ready`; several sessions can run on different specs a
 
 ```mermaid
 flowchart LR
-    init["/docket:docket init<br/>once per project<br/>DOCKET.md"]
+    init["/docket:init<br/>once per project<br/>DOCKET.md"]
     concept["/docket:concept<br/>think with you<br/>short, interactive"]
     spec["/docket:spec<br/>points + done criteria<br/>state: ready, frozen"]
     subgraph run ["/docket:implement &lt;id&gt; · sealed · long, unattended, no questions"]
@@ -54,22 +54,22 @@ flowchart LR
     init --> concept --> spec --> run
     run --> docket
     docket -- "deviations" --> concept
-    inbox["your messages → inbox<br/>/docket:docket stop"] -.-> run
+    inbox["your messages → inbox<br/>/docket:stop"] -.-> run
 ```
 
 ## Commands
 
-Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`, `/docket:docket init`.
+Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`, `/docket:init`.
 
 | Command | Mode | What happens |
 |---|---|---|
-| `/docket:docket init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
+| `/docket:init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
 | `/docket:concept` | concept | Thinks with you. One idea per message, one question at most. |
 | `/docket:spec` | spec | Turns the agreed WHAT into a spec with checkable done criteria, then `ready`. |
 | `/docket:implement <id>` | sealed | Runs the spec autonomously and ends with exactly one message. |
-| `/docket:docket` | | The register: concepts, specs, dockets, last LOG lines. |
-| `/docket:docket status` | | One line: mode, spec, open points, last LOG line. |
-| `/docket:docket stop` | | Ends a sealed run at the next checkpoint. |
+| `/docket:register` | | The register: concepts, specs, dockets, last LOG lines. |
+| `/docket:status` | | One line: mode, spec, open points, last LOG line. |
+| `/docket:stop` | | Ends a sealed run at the next checkpoint. |
 
 ## How a sealed run works
 
@@ -101,19 +101,19 @@ claude plugin marketplace add /path/to/docket
 claude plugin install docket@docket-local
 ```
 
-Then, in a project: `/docket:docket init`.
+Then, in a project: `/docket:init`.
 
 ## Where things live
 
 - Plugin: this repository. Nothing is copied into your project.
 - Project: `.claude/docket/` for session state (gitignored).
 - Work dir with `DOCKET.md`, `specs/`, `dockets/`, `LOG.md`: `~/.docket/<repo key>/` by default, with its own
-  git history. `/docket init` offers `docket/` inside the repo instead.
+  git history. `/docket:init` offers `docket/` inside the repo instead.
 
 ## Layout
 
 ```
-commands/   concept, spec, implement, docket
+commands/   concept, spec, implement, init, register, status, stop
 agents/     conceptor, refiner, implementer, fixer
 hooks/      hooks.json, Python hooks, tests
 templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, check.py, judge-hook.json
@@ -123,4 +123,4 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.1.3. Every command has run end to end in a toy project; not yet used on a real codebase.
+0.2.0. Every command has run end to end in a toy project; not yet used on a real codebase.

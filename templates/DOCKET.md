@@ -7,7 +7,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 
 | Key | Value | Source |
 |---|---|---|
-| work_dir | `<path>` | /docket init |
+| work_dir | `<path>` | /docket:init |
 | topics | `<topic1>, <topic2>` | folders under specs/ |
 | check | `<command that exits 0 and prints one result line, e.g. "tests 42 passed">` | |
 | reference_roots | `<docs/, README.md, ...>` (what IS; specs say what SHOULD) | |
@@ -45,7 +45,7 @@ Project rules that replace a framework rule ("project wins"), each with its sour
 
 ## Audit
 
-Fingerprints of the rules /docket init has seen, so a re-run shows only what moved.
+Fingerprints of the rules /docket:init has seen, so a re-run shows only what moved.
 
 | File | Rule (first words) | Fingerprint | Decision |
 |---|---|---|---|

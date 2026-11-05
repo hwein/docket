@@ -1,20 +1,8 @@
 ---
-description: "The docket register, project setup and run control: /docket (register), /docket init (audit and interview), /docket stop (end a sealed run), /docket status."
-argument-hint: "[init | stop | status]"
+description: "Project setup: audits the repo, interviews you only where it is silent, writes DOCKET.md after your go."
 ---
 
-# /docket
-
-Argument: `$ARGUMENTS`
-
-## No argument: the register
-
-Render the register from the files, never from memory: every concept, spec and docket under the work dir with
-title, topic, state and dependencies (`concept:`, `follows:`, `after`), plus the last ten LOG lines in words.
-Group by topic. Dependencies give a rough order, nothing more: never present the register as a roadmap and make
-no promises about what comes next. Ids are shown in the table only.
-
-## `init`: audit and interview
+# /docket:init
 
 Runs any time, never required. The repo is the first interview partner, the user the second: the user decides
 only where the repo is silent or contradicts itself. Nothing is written before the diff is approved.
@@ -54,15 +42,6 @@ only where the repo is silent or contradicts itself. Nothing is written before t
 5. Show the diff and ask for the go. The hook refuses every write to DOCKET.md, CONTRIBUTING.md, CLAUDE.md,
    AGENTS.md, .gitignore and settings files until the user answers with the one word `go` (or ok, yes, ja); that
    answer is logged as `init-approved`. Then write, one LOG line. Re-runs show only findings whose fingerprint moved.
-
-## `stop`
-
-In a sealed run: the hook records the request; the orchestrator ends at the next checkpoint with
-`DOCKET BLOCKED <id>` and the reason "stopped by user". Outside a sealed run: say in one sentence that nothing runs.
-
-## `status`
-
-One line: mode, spec, open points of the current docket, last LOG line.
 
 ## Every message
 

@@ -40,7 +40,7 @@ def main():
                      "the time fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
                      "When it sends you back, answer with the stamp line alone, never repeat the message.")
     else:
-        lines.append(f"[docket] No DOCKET.md at {paths.work}. Run /docket:docket init to set this project up; "
+        lines.append(f"[docket] No DOCKET.md at {paths.work}. Run /docket:init to set this project up; "
                      "until then the docket hooks only observe.")
     if mode in ("sealed", "rewrite"):
         lines.append(f"[docket] A sealed implementation of {spec_id} is in progress: {points_summary(paths, spec_id)}. "
