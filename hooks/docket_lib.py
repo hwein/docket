@@ -170,6 +170,7 @@ def frontmatter(path):
                     break
                 key, sep, value = line.partition(":")
                 if sep:
+                    value = re.sub(r"\s+#\s.*$", "", value)  # the template's `# draft | ready | ...` comment
                     fields[key.strip().lower()] = value.strip().strip("\"'")
     except OSError:
         pass

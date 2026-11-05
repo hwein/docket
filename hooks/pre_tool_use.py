@@ -1,7 +1,7 @@
 """PreToolUse hook, all tools.
 
 Write rights by state x path (roles are write rights, not sessions):
-- specs: writable in concept/spec/init while not Ready or Done; afterwards only in rewrite mode for that spec
+- specs: writable in spec mode while not Ready or Done; afterwards only in rewrite mode for that spec
 - dockets: only in sealed mode, only the session's own spec; Write creates the skeleton once, Edit appends
 - concepts and DOCKET.md: concept/init modes
 - LOG.md: never by a tool (hooks only)
@@ -64,6 +64,11 @@ def main():
     if state.get("degraded") and configured and tool in WRITE_TOOLS | {"Bash", "Agent", "PowerShell"}:
         missing = [p for p in paths.required_reading() if p not in state.get("read", [])]
         return refuse("[docket] Required reading first, completely with Read: " + ", ".join(missing))
+
+    # Modes are switched by the user's command, never by the model invoking the command itself.
+    if tool == "Skill" and str(tool_input.get("skill", "")).lower().startswith("docket:"):
+        return refuse("[docket] /concept, /spec, /implement and /docket are the user's commands: they switch the mode "
+                      "only when the user types them. Say which command comes next and end the turn.")
 
     if mode in ("sealed", "rewrite") and tool == "AskUserQuestion":
         return refuse("[docket] The spec is sealed: no questions. Take the default, write a 'deviation' line "
@@ -267,11 +272,13 @@ def spec_rule(path, mode, state, tool):
     if doc_state in FROZEN_STATES:
         return refuse(f"[docket] {name} is {doc_state} and frozen. A finding becomes a deviation line in the docket "
                       "or a new spec; a rewrite is a visible event through the conceptor in rewrite mode.")
-    if mode in ("concept", "spec", "init"):
+    if mode == "spec":
         return 0
     if mode == "sealed":
         return refuse("[docket] Sealed sessions never write specs; deviations go into the docket.")
-    return 0
+    if mode == "concept":
+        return refuse("[docket] Concept mode writes concepts, not specs: name the next spec and let the user run /spec.")
+    return refuse("[docket] Specs are written in spec mode only (/spec).")
 
 
 def docket_rule(path, mode, state, tool, paths):

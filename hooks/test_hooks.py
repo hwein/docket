@@ -177,6 +177,28 @@ class WriteRights(Project):
         code, err, _ = self.tool("Write", file_path=str(self.spec))
         self.assertEqual(code, 2)
 
+    def test_concept_mode_writes_no_specs(self):
+        self.set_state(mode="concept")
+        draft = self.work / "specs" / "core" / "s-0000ffff-draft.md"
+        code, err, _ = self.tool("Write", file_path=str(draft), content="---\nstate: draft\n---\n")
+        self.assertEqual(code, 2)
+        self.assertIn("/spec", err)
+        self.assertEqual(self.tool("Write", file_path=str(self.work / "concepts" / "core" / "c-0000ffff.md"), content="x")[0], 0)
+
+    def test_model_may_not_invoke_docket_commands_itself(self):
+        self.set_state(mode="concept")
+        code, err, _ = self.tool("Skill", skill="docket:spec")
+        self.assertEqual(code, 2)
+        self.assertIn("user", err)
+        self.assertEqual(self.tool("Skill", skill="anthropic-skills:pdf")[0], 0)
+
+    def test_template_state_comment_is_ignored(self):
+        self.set_state(mode="spec")
+        self.spec.write_text(f"---\nid: {SPEC}\nstate: ready          # draft | ready | in-progress\n---\n# Login\n", "utf-8")
+        code, err, _ = self.tool("Edit", file_path=str(self.spec))
+        self.assertEqual(code, 2)
+        self.assertIn("frozen", err)
+
     def test_docket_only_in_sealed_and_only_own(self):
         self.set_state(mode="concept")
         self.assertEqual(self.tool("Write", file_path=str(self.docket))[0], 2)
