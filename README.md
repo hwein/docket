@@ -2,43 +2,45 @@
 
 Spec in, docket out. A Claude Code plugin that separates thinking from building and makes the building verifiable.
 
-A **delivery docket** is the slip that travels with a shipment and proves what was delivered. Here, every spec gets
-exactly one docket: a pre-registered list of what counts as delivered, filled in with evidence, append-only, written
-by the team and read by you.
+A **delivery docket** is the slip that travels with a shipment and proves what was delivered. Here, every spec
+gets one docket: a pre-registered list of what counts as done, filled with evidence, append-only, written by the
+team and read by you.
 
-## What it does
+## Commands
 
-- **Three modes, one state machine.** `/concept` talks with you (one idea per message, one question at most).
-  `/spec` turns the agreed WHAT into a spec with done criteria a script can check. `/implement <id>` seals the spec
-  and runs autonomously: refinement from three angles, a pre-registered docket, implementer agents per point,
-  checks the orchestrator runs itself, and exactly one final message. After that the session is `closed` and
-  answers only from the docket.
-- **Freedom in the how, duty to leave a trail.** Hooks check provenance, form and state, never content. Specs freeze
-  at `ready` (a gate checks every point has a verifiable criterion and no user decision is open); dockets are
-  append-only; the LOG is written by hooks only (sealed, rewrite, every point delivered or deviated, delivered /
-  blocked / dissent), so it cannot be made up; in the default work dir every LOG line is a git commit. The first
-  implementer runs only once the docket is pre-registered and every refinement finding has a decision. `DOCKET
-  DELIVERED` passes only when the project's check ran after the last agent returned, every cited `file:line`
-  exists, every reference doc the spec names is updated or accounted for, every CI hash is reachable from HEAD
-  and was pushed, and the stamp carries the docket's delivered/points count. Project rules from `DOCKET.md`
-  (`push_branch`, `commit_regex`, `forbidden_paths`, `forbidden_commands`) are enforced on every shell command
-  and write. Every refusal is counted per rule and shown again at the next run of that spec. Every message in
-  every mode ends with a stamp fetched from the clock; a stale stamp marks the session degraded. Finished specs
-  are not a reference source: the docs say what IS, specs say what SHOULD.
-- **Two registers.** Reports to the orchestrator are dense and carry an `Unverified:` line. Messages to you are
-  short and plain: a deterministic parser plus a small judge model (installed per project by `/docket init`) reject hashes, ids, hedges, option menus,
-  promises and manual tasks assigned to you, and the message is rewritten before you see it.
-- **Your pace, not the model's.** During a sealed run your free text goes to an inbox the orchestrator reads
-  between points; `/docket stop` ends the run cleanly. No questions reach you until the docket is written.
-- **`/docket init` interviews the repo first, you second.** It gathers evidence for eleven questions about how
-  the repo is worked on (branches, commits, merges, gates, releases, storage, language, commenting, forbidden
-  content, external systems), asks you only where the repo is silent or contradicts itself, and writes `DOCKET.md`
-  plus, if you wish, CONTRIBUTING.md. Nothing is written before your `go`; the hook enforces that. Re-running it
-  shows only what moved.
+| Command | Mode | What happens |
+|---|---|---|
+| `/docket init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
+| `/concept` | concept | Thinks with you. One idea per message, one question at most. |
+| `/spec` | spec | Turns the agreed WHAT into a spec with checkable done criteria, then `ready`. |
+| `/implement <id>` | sealed | Runs the spec autonomously and ends with exactly one message. |
+| `/docket` | | The register: concepts, specs, dockets, last LOG lines. |
+| `/docket status` | | One line: mode, spec, open points, last LOG line. |
+| `/docket stop` | | Ends a sealed run at the next checkpoint. |
+
+## How a sealed run works
+
+1. Three refiner agents read the spec against the code, the concept and the project rules.
+2. A docket skeleton is pre-registered: one line per point with the evidence that will count.
+3. One implementer agent per point. The orchestrator reads every diff and runs the project check itself.
+4. Every delivered point gets its evidence line; what differs from the spec becomes a deviation line.
+5. The run ends with `DOCKET DELIVERED`, `DOCKET BLOCKED` or `DOCKET DISSENT`. The session is then closed.
+
+While it runs, your messages go to an inbox the orchestrator reads between points.
+
+## What the hooks enforce
+
+Hooks check provenance, form and state, never content.
+
+- Specs freeze at `ready`; the docket is append-only; `LOG.md` is written by hooks only.
+- `DOCKET DELIVERED` passes only if the check ran after the last agent returned, every cited `file:line`
+  exists, and every reference doc the spec names is updated or accounted for.
+- Project rules from `DOCKET.md` (branch, commit form, forbidden paths and commands) apply to every command.
+- Every message ends with a time stamp fetched from the clock. No hashes, ids or hedges reach you.
 
 ## Install
 
-Requires Python 3 on PATH (`python` or `python3`). Hooks are standard-library only.
+Requires Python 3 on PATH. Hooks use the standard library only.
 
 ```bash
 claude plugin marketplace add /path/to/docket
@@ -49,25 +51,22 @@ Then, in a project: `/docket init`.
 
 ## Where things live
 
-- The plugin: this repository, nothing is copied into your project.
-- Your project: `.claude/docket/` (session state, gitignored) and, only if the work dir is not the default,
-  `.claude/docket.json` pointing to it.
-- The work dir (`DOCKET.md`, `concepts/`, `specs/`, `dockets/`, `LOG.md`, `inbox/`, `metrics/`): by default
-  `~/.docket/<repo key>/` with its own git history, or `docket/` inside the repo, or a second repo. `/docket init`
-  asks.
+- Plugin: this repository. Nothing is copied into your project.
+- Project: `.claude/docket/` for session state (gitignored).
+- Work dir with `DOCKET.md`, `specs/`, `dockets/`, `LOG.md`: `~/.docket/<repo key>/` by default, with its own
+  git history. `/docket init` offers `docket/` inside the repo instead.
 
 ## Layout
 
 ```
-commands/   concept, spec, implement, docket (register, init, stop, status)
+commands/   concept, spec, implement, docket
 agents/     conceptor, refiner, implementer, fixer
-hooks/      hooks.json + Python hooks (state, write rights, append-only, stop grammar, judge prompt), tests
+hooks/      hooks.json, Python hooks, tests
 templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, check.py, judge-hook.json
 ```
 
-Run the hook tests with `python hooks/test_hooks.py -v`.
+Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.1.2. The hooks are tested (77 cases); `/implement` has run end to end in a toy project; `/docket init`,
-`/concept` and `/spec` are specifications of their interviews, not yet verified in a real project.
+0.1.2. Every command has run end to end in a toy project; not yet used on a real codebase.
