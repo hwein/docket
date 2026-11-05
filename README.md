@@ -3,6 +3,8 @@
   <img alt="docket" src="assets/logo-light.svg">
 </picture>
 
+#
+
 Spec in, docket out. A Claude Code plugin that separates thinking from building and makes the building verifiable.
 
 A **delivery docket** is the slip that travels with a shipment and proves what was delivered. Here, every spec
