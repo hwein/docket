@@ -95,7 +95,7 @@ class SessionStart(Project):
         (self.work / "DOCKET.md").unlink()
         code, err, out = run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
         self.assertEqual(code, 0)
-        self.assertIn("/docket init", out)
+        self.assertIn("/docket:docket init", out)
 
 
 class ModeSwitch(Project):

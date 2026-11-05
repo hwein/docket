@@ -72,4 +72,4 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.1.2. Every command has run end to end in a toy project; not yet used on a real codebase.
+0.1.3. Every command has run end to end in a toy project; not yet used on a real codebase.
