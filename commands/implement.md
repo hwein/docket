@@ -20,7 +20,9 @@ at the code or drop it. Nothing unverified reaches the docket's evidence section
 ## 0. Resume or start
 
 Required reading is enforced by the hook. If a docket for this spec exists and LOG.md shows no terminal line for
-it, this is a resume: read the docket and the last LOG lines, continue at the first open point. Otherwise start.
+it, or its last terminal line is `blocked` and the docket still has open points (a stop request, a blocker since
+resolved), this is a resume: read the docket and the last LOG lines, skip refinement and pre-registration, continue
+at the first open point; the docket stays append-only. Otherwise start.
 Preconditions: spec state `ready`, `git status` clean, branch per DOCKET.md / CONTRIBUTING.md. A failed
 precondition ends the run with `DOCKET BLOCKED`.
 

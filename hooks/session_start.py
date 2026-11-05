@@ -51,6 +51,10 @@ def main():
         if open_runs:
             lines.append("[docket] Sealed runs without a terminal state: " + ", ".join(open_runs)
                          + ". `/implement <id>` resumes one from its docket.")
+        stopped = stopped_runs(paths)
+        if stopped:
+            lines.append("[docket] Runs stopped with open points: " + ", ".join(f"{s} ({n} open)" for s, n in stopped)
+                         + ". `/implement <id>` resumes one at its first open point.")
     last = log_lines(paths)[-1:] if os.path.isfile(paths.config) else []
     if last:
         lines.append("[docket] Last LOG line: " + last[0])
@@ -85,6 +89,32 @@ def interrupted_runs(paths):
         elif event in TERMINAL_EVENTS:
             status[found.group(0)] = "closed"
     return sorted(spec for spec, value in status.items() if value == "open")
+
+
+def stopped_runs(paths):
+    """Specs whose last terminal line is `blocked` while their docket still has open `[ ]` points:
+    a stop request or a blocker ended the run, the work is resumable."""
+    last = {}
+    for line in log_lines(paths):
+        found = SPEC_ID.search(line)
+        parts = line.split()
+        if found and len(parts) > 2 and parts[2] in ("sealed",) + TERMINAL_EVENTS:
+            last[found.group(0)] = parts[2]
+    result = []
+    for spec_id, event in sorted(last.items()):
+        if event != "blocked":
+            continue
+        docket = paths.docket_file(spec_id)
+        if not docket:
+            continue
+        try:
+            with open(docket, encoding="utf-8-sig", errors="ignore") as handle:
+                open_points = point_counts(handle.read())[" "]
+        except OSError:
+            continue
+        if open_points:
+            result.append((spec_id, open_points))
+    return result
 
 
 if __name__ == "__main__":

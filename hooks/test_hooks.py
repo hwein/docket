@@ -818,6 +818,15 @@ class StartSummary(Project):
         self.assertIn("1 delivered, 1 deviations, 1 open", out)
         self.assertIn("Last LOG line", out)
 
+    def test_stopped_run_with_open_points_is_resumable(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [ ] |\n| 3 | c | `z` | [ ] |\n", "utf-8")
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nstopped by user\n{stamp(counts='1/3')}")[0], 0)
+        _, _, out = run_hook("session_start.py", {"session_id": "other-session-9", "cwd": self.p, "source": "startup"}, self.p)
+        self.assertIn("stopped with open points", out)
+        self.assertIn(f"{SPEC} (2 open)", out)
+        self.assertNotIn("without a terminal state", out)
+
     def test_interrupted_run_is_named_in_a_new_session(self):
         (self.work / "LOG.md").write_text(f"2026-11-05T10:00:00Z  {SPEC}  sealed             session=abc\n", "utf-8")
         _, _, out = run_hook("session_start.py", {"session_id": "fresh-1", "cwd": self.p, "source": "startup"}, self.p)
