@@ -31,6 +31,26 @@ It is not a chat assistant for quick edits. The modes before the run are short; 
 
 Several specs can wait as `ready`; several sessions can run on different specs at once, each locked to its own.
 
+```mermaid
+flowchart LR
+    init["/docket:docket init<br/>once per project<br/>DOCKET.md"]
+    concept["/docket:concept<br/>think, one idea at a time<br/>minutes"]
+    spec["/docket:spec<br/>points + done criteria<br/>state: ready, frozen"]
+    subgraph run ["/docket:implement &lt;id&gt; · sealed · hours, no questions"]
+        direction LR
+        refine["3 refiners"] --> register["docket<br/>pre-registered"]
+        register --> points["implementer<br/>per point"]
+        points --> check["orchestrator runs<br/>the check"]
+        check --> points
+        check --> close["one message:<br/>DELIVERED · BLOCKED · DISSENT"]
+    end
+    docket[("docket<br/>evidence, append-only<br/>LOG by hooks only")]
+    init --> concept --> spec --> run
+    run --> docket
+    docket -- "deviations" --> concept
+    inbox["your messages → inbox<br/>/docket:docket stop"] -.-> run
+```
+
 ## Commands
 
 Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`, `/docket:docket init`.
