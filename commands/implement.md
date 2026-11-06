@@ -94,7 +94,7 @@ The user sees nothing you write during the run: the display hook replaces every 
 one with a status line of its own (title, points delivered, clock). Text between tool calls is for you, not for the
 user; keep it to a few words. The terminal message is read by someone who did not watch the run and does not
 know the plugin's words: no "point 3", "refiner", "fixer", "flip", "docket row", nothing about hooks. Exactly
-one message, at most 25 lines, in the language DOCKET.md sets (`language`), in everyday words, no hashes, no ids
+one message, at most 25 lines, in the language DOCKET.md sets (`user_language`), in everyday words, no hashes, no ids
 except the header and the stamp:
 
 ```

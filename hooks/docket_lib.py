@@ -159,9 +159,9 @@ def check_commands(paths):
 
 
 def language_code(paths):
-    """The language of every message to the user, DOCKET.md `language`: "de" or "en" ("" when unset).
+    """The language of every message to the user, DOCKET.md `user_language`: "de" or "en" ("" when unset).
     The hooks' own lines to the user (status line, closing line) follow it; the model is told the name."""
-    name = config_values(paths).get("language", "").lower()
+    name = config_values(paths).get("user_language", "").lower()
     if not name:
         return ""
     return "de" if name.startswith(("de", "ger")) else "en"
@@ -304,8 +304,8 @@ def language_problem(text, paths):
     other = "en" if code == "de" else "de"
     mine, theirs = len(WORDS[code].findall(prose)), len(WORDS[other].findall(prose))
     if theirs > mine:
-        name = config_values(paths).get("language", code)
-        return [f"the message is not in {name} (DOCKET.md `language`): write it in {name}; only `DOCKET …`, "
+        name = config_values(paths).get("user_language", code)
+        return [f"the message is not in {name} (DOCKET.md `user_language`): write it in {name}; only `DOCKET …`, "
                 f"`stamp:` and quoted commands keep their form"]
     return []
 

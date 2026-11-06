@@ -156,9 +156,9 @@ def main():
                      + ". " + REMINDERS.get(mode, ""))
         if mode != "concept":
             lines.append(ambition())  # in concept mode it pushed past the stop (legacy session 2026-11-05)
-        language = config_values(paths).get("language", "")
+        language = config_values(paths).get("user_language", "")
         if language:
-            lines.append(f"[docket] Every message to the user is written in {language} (DOCKET.md `language`); "
+            lines.append(f"[docket] Every message to the user is written in {language} (DOCKET.md `user_language`); "
                          "the hook refuses a message in another language. Agents are briefed in the language of the spec.")
     if name == "concept" and asks_for_specs(rest):
         lines.append(SPEC_REQUEST_LINE)  # with the command that carries the order; it stays in the context

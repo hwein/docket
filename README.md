@@ -91,7 +91,7 @@ Hooks check provenance, form and state, never content.
 
 - Specs freeze at `ready`; the docket is append-only; `LOG.md` is written by hooks only. A docket line that cites a
   `file:line` which does not exist is undone at once, so no citation has to be corrected in place later.
-- Every message to you is in the language `DOCKET.md` sets (`language`, question 12 of `/docket:init`: the author's language, not the repo's); a message in
+- Every message to you is in the language `DOCKET.md` sets (`user_language`, question 12 of `/docket:init`: the author's language, not the repo's); a message in
   another language is held back and written again.
 - `DOCKET DELIVERED` passes only if every command of the project's check (as many as the project has, listed in
   `DOCKET.md`) ran after the last agent returned and none failed, every cited `file:line` exists, and every

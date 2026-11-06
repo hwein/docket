@@ -46,7 +46,7 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    New repo: `git init`, remote (existing / create via `gh repo create` / none), all twelve questions.
    Questions 1, 2, 10 and 11 also become the configuration keys `push_branch`, `commit_regex`, `forbidden_paths`
    and `forbidden_commands` (regexes and globs the hooks enforce); a pipe inside a regex is written `\|`.
-   Question 12 becomes `language`: the language of every message to the user in every mode; the hooks write
+   Question 12 becomes `user_language`: the language of every message to the user in every mode; the hooks write
    their own lines to the user (status line of a sealed run, closing line) in it and refuse a message in another
    language.
 5. Show the diff and ask for the go. The hook refuses every write to DOCKET.md, CONTRIBUTING.md, CLAUDE.md,

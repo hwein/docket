@@ -1574,7 +1574,7 @@ class SealedGate(Project):
         self.docket.write_text("| 1 | login | `cargo test` | [x] |\n| 2 | logout | `cargo test` | [~] |\n", "utf-8")
 
     def german_config(self):
-        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| language | `Deutsch` | |\n", "utf-8")
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
 
     def terminal(self, body="Login per Token: 1 of 2 points delivered, merged to next, run finished.\nNothing to do.",
                  counts="1/2"):
@@ -1650,11 +1650,11 @@ class SealedGate(Project):
 
 
 class Language(Project):
-    """0.2.9: DOCKET.md `language` is the language of every message to the user; the gate holds another back."""
+    """0.2.9: DOCKET.md `user_language` is the language of every message to the user; the gate holds another back."""
 
     def setUp(self):
         super().setUp()
-        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| language | `Deutsch` | |\n", "utf-8")
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
 
     def display(self, delta, message_id="m1"):
         code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": message_id,
