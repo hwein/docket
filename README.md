@@ -105,35 +105,25 @@ checkpoint.
 While it runs you see none of the orchestrator's messages, only the hook's status line (title, points delivered,
 clock); your own messages go to an inbox the orchestrator reads between points.
 
-## What the hooks enforce
+## What you can rely on
 
-Hooks check provenance, form and state, never content.
+- A spec that is `ready` does not change under you; a rewrite is a logged event.
+- `DOCKET DELIVERED` means: the project's own check ran green after the last agent, every cited location exists,
+  every reference doc the spec names is updated or accounted for.
+- The log is written by hooks, not by the model.
 
-- Specs freeze at `ready`; the docket is append-only; `LOG.md` is written by hooks only. A docket line that cites a
-  `file:line` which does not exist is undone at once, so no citation has to be corrected in place later.
-- Every message to you is in the language `DOCKET.md` sets (`user_language`, question 12 of `/docket:init`: the author's language, not the repo's); a message in
-  another language is held back and written again.
-- `DOCKET DELIVERED` passes only if every command of the project's check (as many as the project has, listed in
-  `DOCKET.md`) ran after the last agent returned and none failed, every cited `file:line` exists, and every
-  reference doc the spec names is updated or accounted for.
-- Project rules from `DOCKET.md` (branch, commit form, forbidden paths) apply to every command. A forbidden
-  command is not refused but put to you as a permission dialog: one click runs it once, and the LOG records the
-  grant. A sealed run has nobody to ask, so there it stays refused.
-- Every message in every session of the project ends with a time stamp; the hooks hand the time to the model with
-  every prompt and tool result, so no tool call is spent on it. No hashes, ids or hedges reach you, and a blocker
-  is said once: the same `Blocker` line twice in a row is refused. A blocker also ends the turn: until you answer,
-  nothing is written and no agent or workflow starts.
-- Each mode keeps to its work: concept mode writes concepts and `DOCKET.md`, any other write in the repo comes to you
-  as a permission dialog, and an order for specs given there is answered with `/docket:spec`. The question in the
-  desktop app's next-step box counts toward the one question, and a sealed run asks none there either. A quoted
-  hook answer must have come from a hook in this session.
-- The optional judge (a prompt hook, per project) checks the form of a message after you read it: one question
-  at most, no option menus, no manual tasks for you beyond the one step of a blocker, no promises, no self-talk.
-  Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts go to Claude and the
-  log, never to your screen: Claude answers them with silence.
-- docket adds no code to your repository. The judge entry `/docket:init` writes into `.claude/settings.json`
-  follows the plugin: every session start brings it to the installed version, so an update needs no second init; a
-  judge you changed stays as it is.
+## When docket interrupts you
+
+- A permission dialog: a command from `forbidden_commands`, or a write outside the current mode's files. One click
+  runs it once; a sealed run has nobody to ask and refuses.
+- A blocker: one line that names what only you can do. Nothing happens until you answer.
+
+## What you see
+
+- During a run: one status line (spec, points delivered, time). At the end: one message per spec, in your language.
+- Never: hashes, ids, hedges, intermediate states, the judge's verdicts.
+
+How the hooks do this: [HOOKS.md](HOOKS.md).
 
 ## Install
 
@@ -172,6 +162,7 @@ commands/   concept, spec, implement, init, register, status, stop
 agents/     conceptor, refiner, implementer, fixer
 hooks/      hooks.json, Python hooks, tests
 templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, judge-hook.json
+HOOKS.md    how the hooks enforce the rules
 ```
 
 Tests: `python hooks/test_hooks.py`.
