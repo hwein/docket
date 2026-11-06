@@ -64,7 +64,8 @@ def main():
     if mode in ("sealed", "rewrite"):
         lines.append(f"[docket] A sealed implementation of {spec_id} is in progress: {points_summary(paths, spec_id)}. "
                      f"Continue from the docket at {paths.docket_file(spec_id) or paths.dockets} "
-                     f"and the last lines of {paths.log}.")
+                     f"and the last lines of {paths.log}."
+                     + (f" Queued after it: {', '.join(state['queue'])}." if state.get("queue") else ""))
         feedback = violations_line(paths, spec_id)
         if feedback:
             lines.append(feedback)

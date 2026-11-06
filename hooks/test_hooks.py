@@ -116,20 +116,22 @@ class ModeSwitch(Project):
         self.assertIn("sealed", self.log())
         self.assertIn("Mode sealed", out)
 
-    def test_implement_without_id_is_refused(self):
+    def test_implement_without_id_and_without_a_ready_spec_is_refused(self):
+        self.spec.write_text(f"---\nid: {SPEC}\nstate: draft\n---\n# Login\n", "utf-8")
         code, err, _ = self.prompt("/implement")
         self.assertEqual(code, 2)
-        self.assertIn("spec id", err)
+        self.assertIn("No ready spec", err)
 
-    def test_implement_with_several_ids_is_refused_and_names_them(self):
+    def test_implement_with_several_ids_seals_the_first_and_queues_the_rest(self):
         # luradb-web-client 2026-11-06: five ids in one call, the first was sealed, the other four vanished unnamed.
-        code, err, _ = self.prompt(f"/docket:implement {SPEC},s-aaaa1111,s-bbbb2222")
-        self.assertEqual(code, 2)
-        self.assertIn("one spec per run", err)
-        self.assertIn(f"{SPEC}, s-aaaa1111, s-bbbb2222", err)
-        self.assertIn(f"/docket:implement {SPEC}", err)
-        self.assertEqual(self.state().get("mode", "none"), "none")
-        self.assertNotIn("sealed", self.log())
+        code, err, out = self.prompt(f"/docket:implement {SPEC},s-aaaa1111 s-bbbb2222")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["spec"], SPEC)
+        self.assertEqual(self.state()["queue"], ["s-aaaa1111", "s-bbbb2222"])
+        self.assertIn("Queued after this spec, in order: s-aaaa1111, s-bbbb2222", out)
+        self.assertIn("queued", self.log())
+        for spec in (SPEC, "s-aaaa1111", "s-bbbb2222"):
+            self.assertEqual((self.work / "locks" / spec).read_text("utf-8"), SID)
 
     def test_namespaced_commands_are_the_same_commands(self):
         code, _, _ = self.prompt(f"/docket:implement {SPEC}")
@@ -1734,6 +1736,115 @@ class CitationsAtWrite(Project):
         code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works.\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 2)
         self.assertIn("src/auth.rs:9", err)
+
+
+class Series(Project):
+    """0.2.9: several specs are a series in one session, each with its own docket and terminal message, as the
+    author's orchestrate-execution runs them. luradb-web-client 2026-11-06: five ids, the first sealed, four lost."""
+
+    def spec_file(self, spec_id, title, state="ready", follows="", concept="", created="2026-11-01"):
+        path = self.work / "specs" / "core" / f"{spec_id}-{title.lower()}.md"
+        path.write_text(f"---\nid: {spec_id}\ntitle: {title}\nstate: {state}\nconcept: {concept}\nfollows: {follows}\n"
+                        f"created: {created}\n---\n# {title}\n", "utf-8")
+        return path
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\nconcept: c-11112222\nfollows:\ncreated: 2026-11-01\n---\n# Login\n", "utf-8")
+        self.spec_file("s-aaaa1111", "Logout", follows=SPEC, concept="c-11112222", created="2026-11-02")
+        self.spec_file("s-bbbb2222", "Profile", concept="c-33334444", created="2026-11-03")
+        self.spec_file("s-cccc3333", "Done", state="done", created="2026-10-01")
+
+    def stop_at(self, message, active=False):
+        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
+                                    "stop_hook_active": active}, self.p)
+
+    def terminal(self, spec_id, kind="DELIVERED", title="Login"):
+        when = datetime.now()
+        return (f"DOCKET {kind} {spec_id}\n{title}: delivered, run finished.\nNothing to do.\n"
+                f"stamp: {when:%Y-%m-%d %H:%M} {spec_id} 1/1")
+
+    def test_no_argument_picks_the_next_ready_spec_whose_predecessors_are_done(self):
+        code, err, out = self.prompt("/docket:implement")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["spec"], SPEC)  # Logout follows Login; Profile is younger
+        self.assertEqual(self.state()["queue"], [])
+
+    def test_a_concept_runs_its_ready_specs_in_order(self):
+        code, err, out = self.prompt("/docket:implement c-11112222")
+        self.assertEqual(code, 0, err)
+        self.assertEqual((self.state()["spec"], self.state()["queue"]), (SPEC, ["s-aaaa1111"]))
+        self.assertIn("Queued after this spec, in order: s-aaaa1111", out)
+
+    def test_all_runs_every_ready_spec_in_implementation_order(self):
+        code, err, _ = self.prompt("/docket:implement --all")
+        self.assertEqual(code, 0, err)
+        self.assertEqual((self.state()["spec"], self.state()["queue"]), (SPEC, ["s-aaaa1111", "s-bbbb2222"]))
+
+    def test_a_successor_before_its_undone_predecessor_is_refused(self):
+        code, err, _ = self.prompt("/docket:implement s-aaaa1111")
+        self.assertEqual(code, 2)
+        self.assertIn(f"s-aaaa1111 follows {SPEC}, which is not done", err)
+        self.assertEqual(self.prompt(f"/docket:implement s-aaaa1111, {SPEC}")[0], 2)
+        self.assertEqual(self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")[0], 0)
+
+    def test_words_without_an_id_are_refused_with_the_forms(self):
+        code, err, _ = self.prompt("/docket:implement the login one")
+        self.assertEqual(code, 2)
+        self.assertIn("--all", err)
+
+    def test_delivered_seals_the_next_spec_in_this_session_and_blocks_the_stop(self):
+        self.prompt(f"/docket:implement {SPEC}, s-aaaa1111, s-bbbb2222")
+        self.docket.write_text("| 1 | login | x | [x] |\n", "utf-8")
+        code, err, out = self.stop_at(self.terminal(SPEC))
+        self.assertEqual(code, 0, err)
+        answer = json.loads(out)
+        self.assertEqual(answer["decision"], "block")
+        self.assertIn("sealed on s-aaaa1111", answer["reason"])
+        self.assertIn("queued after it: s-bbbb2222", answer["reason"])
+        self.assertIn("step 0", answer["reason"])
+        self.assertEqual(answer["systemMessage"], "[docket] Login: delivered 1/1, run finished, session closed. "
+                                                  "continuing in this session with s-aaaa1111 (Logout); after it s-bbbb2222.")
+        state = self.state()
+        self.assertEqual((state["mode"], state["spec"], state["queue"]), ("sealed", "s-aaaa1111", ["s-bbbb2222"]))
+        log = self.log()
+        self.assertIn(f"{SPEC}  delivered", log)
+        self.assertIn("s-aaaa1111  sealed", log)
+        self.assertIn("state: in-progress", (self.work / "specs" / "core" / "s-aaaa1111-logout.md").read_text("utf-8"))
+        self.assertIn("state: done", self.spec.read_text("utf-8"))
+        # The next spec's first Stop is a first pass although stop_hook_active is true: a broken message is refused.
+        code, err, _ = self.stop_at(f"Reading the spec.\n{hstamp()}", active=True)
+        self.assertEqual(code, 2)
+        self.assertIn("terminal state", err)
+        # A second refusal of the same spec is let through as before.
+        self.assertEqual(self.stop_at(f"still reading\n{hstamp()}", active=True)[0], 0)
+
+    def test_blocked_stops_the_series_and_names_the_rest(self):
+        self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
+        code, err, out = self.stop_at(f"DOCKET BLOCKED {SPEC}\nLogin: Docker is down.\nYou must start Docker.\n{stamp(counts='0/1')}")
+        self.assertEqual(code, 0, err)
+        answer = json.loads(out)
+        self.assertNotIn("decision", answer)
+        self.assertIn("not started: s-aaaa1111; give a new command", answer["systemMessage"])
+        self.assertEqual((self.state()["mode"], self.state()["queue"]), ("closed", []))
+        self.assertIn("queue-dropped", self.log())
+        self.assertFalse((self.work / "locks" / "s-aaaa1111").exists())
+
+    def test_stop_request_ends_the_series(self):
+        self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
+        self.prompt("/docket:stop")
+        self.docket.write_text("| 1 | login | x | [x] |\n", "utf-8")
+        code, err, out = self.stop_at(self.terminal(SPEC))
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("decision", json.loads(out))
+        self.assertEqual(self.state()["mode"], "closed")
+
+    def test_a_queued_spec_is_locked_against_other_sessions(self):
+        self.prompt(f"/docket:implement {SPEC}, s-bbbb2222")
+        code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-0002", "cwd": self.p,
+                                                   "prompt": "/docket:implement s-bbbb2222"}, self.p)
+        self.assertEqual(code, 2)
+        self.assertIn("is sealed in session", err)
 
 
 if __name__ == "__main__":

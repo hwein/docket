@@ -1,7 +1,9 @@
 """UserPromptSubmit hook.
 
-Switches the session mode on /docket:concept, /docket:spec, /docket:implement <id>, /docket:init,
-/docket:stop.
+Switches the session mode on /docket:concept, /docket:spec, /docket:implement, /docket:init, /docket:stop.
+/docket:implement takes a spec, a list of specs, a concept (its ready specs), --all or nothing (the next
+ready spec); several specs are a series: the first is sealed, the rest wait in the state's queue and the
+Stop hook seals each after the previous DOCKET DELIVERED (resolve_implement).
 In sealed mode, free text does not reach the model: it is stored in the inbox and the
 prompt is blocked (exit 2 shows the notice to the user). Every turn gets a two-line
 mode reminder as additional context.
@@ -14,9 +16,9 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (SPEC_ID, Paths, clock_line, config_values, display_path, load_state, lock_holder, log_event,
-                        read_input, refuse, save_display, save_state, set_context, set_spec_state, strip_harness_blocks,
-                        take_lock, violations_line)
+from docket_lib import (CONCEPT_ID, SPEC_ID, Paths, clock_line, config_values, display_path, load_state, lock_holder,
+                        log_event, open_predecessors, read_input, ready_specs, refuse, save_display, save_state,
+                        set_context, set_spec_state, strip_harness_blocks, take_lock, violations_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
@@ -98,26 +100,27 @@ def main():
         save_state(paths, session_id, state)
 
     if name == "implement":
-        found = list(dict.fromkeys(SPEC_ID.findall(rest)))
-        if not found:
-            return refuse("[docket] /docket:implement needs a spec id (s-xxxxxxxx). Run /docket:register to see "
-                          "the register.")
-        if len(found) > 1:
-            # luradb-web-client 2026-11-06: five ids in one call, the first was sealed, four vanished without a word.
-            return refuse(f"[docket] /docket:implement takes one spec per run; given: {', '.join(found)}. "
-                          f"Start with `/docket:implement {found[0]}`; the next one gets a run of its own in a new "
-                          "session once this one is closed.")
-        spec_id = found[0]
+        found, problem = resolve_implement(paths, rest)
+        if problem:
+            return refuse(problem)
+        # Several specs are a series: the first is sealed now, the rest follow in this session, one after another,
+        # each with its own docket and terminal message (luradb-web-client 2026-11-06: five ids in one call, the
+        # first was sealed, four vanished without a word).
+        spec_id, queue = found[0], found[1:]
         if state.get("mode") in ("sealed", "rewrite") and state.get("spec") != spec_id:
             return refuse(f"[docket] This session is sealed on {state.get('spec')}. Finish it or run /docket:stop.")
-        holder = lock_holder(paths, spec_id)
-        if holder and holder != session_id and held_by_live_session(paths, holder, spec_id):
-            return refuse(f"[docket] {spec_id} is sealed in session {holder[:8]}. Finish or /docket:stop it there; "
-                          f"the lock is {paths.lock_file(spec_id)}.")
-        take_lock(paths, spec_id, session_id)
-        state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False})
+        for candidate in found:
+            holder = lock_holder(paths, candidate)
+            if holder and holder != session_id and held_by_live_session(paths, holder, candidate):
+                return refuse(f"[docket] {candidate} is sealed in session {holder[:8]}. Finish or /docket:stop it "
+                              f"there; the lock is {paths.lock_file(candidate)}.")
+        for candidate in found:
+            take_lock(paths, candidate, session_id)
+        state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False, "queue": queue})
         save_state(paths, session_id, state)
         log_event(paths, session_id, spec_id, "sealed")
+        if queue:
+            log_event(paths, session_id, spec_id, "queued", ", ".join(queue))
         set_spec_state(paths, spec_id, "in-progress")
         feedback = violations_line(paths, spec_id)
     elif name == "stop":
@@ -154,6 +157,10 @@ def main():
     if mode != "none":
         lines.append(f"[docket] Mode {mode}" + (f", spec {state['spec']}" if state.get("spec") else "")
                      + ". " + REMINDERS.get(mode, ""))
+        if mode in ("sealed", "rewrite") and state.get("queue"):
+            lines.append("[docket] Queued after this spec, in order: " + ", ".join(state["queue"])
+                         + ". After its DOCKET DELIVERED the hook seals the next one in this session and tells you; "
+                         "until then it does not exist for you.")
         if mode != "concept":
             lines.append(ambition())  # in concept mode it pushed past the stop (legacy session 2026-11-05)
         language = config_values(paths).get("user_language", "")
@@ -177,6 +184,44 @@ def main():
     return 0
 
 
+def resolve_implement(paths, rest):
+    """The specs of an implement call, in run order, or a refusal.
+
+    `/docket:implement`            the next ready spec whose predecessors (`follows:`) are done
+    `/docket:implement c-xxxxxxxx` every ready spec of that concept, in implementation order
+    `/docket:implement s-a, s-b`   exactly these, in the given order
+    `/docket:implement --all`      every ready spec of the project, in implementation order
+    """
+    rest = (rest or "").strip()
+    ids = list(dict.fromkeys(s.lower() for s in SPEC_ID.findall(rest)))
+    concept = CONCEPT_ID.search(rest)
+    if ids:
+        chosen = ids
+    elif concept:
+        chosen = [s for s, _ in ready_specs(paths, concept.group(0))]
+        if not chosen:
+            return [], f"[docket] No spec of concept {concept.group(0)} is in state ready. Run /docket:register."
+    elif re.search(r"(^|\s)--all\b", rest):
+        chosen = [s for s, _ in ready_specs(paths)]
+        if not chosen:
+            return [], "[docket] No spec is in state ready. Run /docket:register."
+    elif not rest:
+        runnable = [s for s, _ in ready_specs(paths) if not open_predecessors(paths, [s])]
+        if not runnable:
+            return [], ("[docket] No ready spec whose predecessors are done. Run /docket:register, or name a spec: "
+                        "/docket:implement s-xxxxxxxx.")
+        chosen = runnable[:1]
+    else:
+        return [], ("[docket] /docket:implement takes a spec id (s-xxxxxxxx, several in order), a concept id "
+                    "(c-xxxxxxxx: its ready specs), --all (every ready spec) or nothing (the next ready spec). "
+                    "Run /docket:register to see the register.")
+    missing = open_predecessors(paths, chosen)
+    if missing:
+        return [], ("[docket] Not in order: " + "; ".join(f"{s} follows {p}, which is not done" for s, p in missing)
+                    + ". Run the predecessor first, or name it before its successor.")
+    return chosen, ""
+
+
 def parse_command(line):
     """(name, rest) of a docket command typed as /docket:<name>, or ("", "") for anything else."""
     found = COMMAND.match(line)
@@ -191,7 +236,8 @@ def parse_command(line):
 def held_by_live_session(paths, holder, spec_id):
     """A lock counts only while its session's state still says sealed on that spec; stale locks are taken over."""
     other = load_state(paths, holder)
-    return other.get("mode") in ("sealed", "rewrite") and other.get("spec") == spec_id
+    return other.get("mode") in ("sealed", "rewrite") and (other.get("spec") == spec_id
+                                                         or spec_id in (other.get("queue") or []))
 
 
 def store_inbox(paths, spec_id, text):

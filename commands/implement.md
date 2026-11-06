@@ -1,11 +1,20 @@
 ---
 description: "Implement mode: sealed, autonomous run of one ready spec. Refinement, pre-registered docket, implementer agents, checks you run yourself, one terminal message."
-argument-hint: "<spec id> (one spec per run)"
+argument-hint: "[spec id[, spec id ...] | concept id | --all]"
 ---
 
 # Implement mode (sealed)
 
-Spec: `$ARGUMENTS`
+Argument: `$ARGUMENTS`
+
+The hook resolved the argument and sealed the session on one spec; its `[docket] Mode sealed, spec s-…` line names
+it, and that is the spec of this run, whatever the argument says. Without an argument it is the next ready spec
+whose predecessors (`follows:`) are done; a concept id means every ready spec of that concept; several spec ids
+mean exactly these, in that order; `--all` every ready spec of the project. More than one spec is a series: the
+hook keeps the rest in a queue (named in every prompt), and after this spec's `DOCKET DELIVERED` it seals the next
+one in this session and tells you to start it from step 0. Until then the queued specs do not exist for you: you
+do not read them, plan for them or mention them. After `DOCKET BLOCKED` or `DOCKET DISSENT` the series stops and
+the hook names the specs not started.
 
 You are the orchestrator and team lead. You read, plan, brief, verify and decide. You never write code,
 tests or project files yourself; every file change goes to an `implementer` or `fixer` agent. The hook has

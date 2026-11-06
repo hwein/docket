@@ -32,7 +32,7 @@ from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, box_questions, check_comman
                         config_values, hook_outputs, language_problem, load_state, log_event, log_lines, log_time,
                         message_text, missing_citations, point_counts, previous_turn_texts, read_input, refuse,
                         release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
-                        spec_title, transcript_blocks)
+                        spec_title, take_lock, transcript_blocks, violations_line)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
 STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
@@ -88,7 +88,12 @@ def main():
     text = message_text(hook_input)
     if text is None:
         return 0
-    second_pass = bool(hook_input.get("stop_hook_active"))
+    # stop_hook_active stays true for the rest of a turn a Stop hook once blocked. A block that went on to the next
+    # queued spec is not a refusal of this message: the next spec's first Stop is a first pass.
+    advanced = state.pop("queue_advanced", False)
+    if advanced:
+        save_state(paths, session_id, state)
+    second_pass = bool(hook_input.get("stop_hook_active")) and not advanced
 
     display = settled_display(paths, session_id) if mode in GATED_MODES else None
     clock = state.get("clock", "")
@@ -114,14 +119,10 @@ def main():
         else:
             problems = sealed_problems(text, state, paths, hook_input)
             if not problems:
-                kind = close(paths, session_id, state, text)
                 if display is not None and display["retry"]:
                     display["retry"] = False
                     save_display(paths, session_id, display)
-                # The hook's own closing line to the user: what happened and what comes next, in the project's
-                # language (the user asked "ist alles fertig?" 32 minutes after DELIVERED, luradb-web-client 2026-11-06).
-                print(json.dumps({"systemMessage": closing_line(paths, state, kind)}))
-                return 0
+                return finish(paths, session_id, state, text)
     elif mode == "closed":
         problems = closed_problems(text, clock, paths)
     else:
@@ -452,6 +453,38 @@ def hook_quote_problems(text, transcript_path):
         return []
     return [f"`{missing[0][:50]}` is text from the hook's source, but no hook said it in this session: "
             "cite the file and line you read, not the hook"]
+
+
+def finish(paths, session_id, state, text):
+    """A terminal message was accepted. The spec closes; a queue continues in this session after DELIVERED (the
+    Stop is blocked with the order for the next spec), and is dropped after BLOCKED or DISSENT, named to the user.
+    Either way the hook adds its own closing line for the user, in the project's language."""
+    spec_id = state.get("spec", "")
+    queue = [s for s in (state.get("queue") or []) if s]
+    kind = close(paths, session_id, state, text)
+    if kind == "delivered" and queue and not state.get("stop_requested"):
+        following, rest = queue[0], queue[1:]
+        state.update({"mode": "sealed", "spec": following, "queue": rest, "queue_advanced": True, "terminal": ""})
+        save_state(paths, session_id, state)
+        take_lock(paths, following, session_id)
+        log_event(paths, session_id, following, "sealed", "from queue")
+        set_spec_state(paths, following, "in-progress")
+        reason = (f"[docket] {spec_id} is delivered and recorded. The session is now sealed on {following}"
+                  + (f"; queued after it: {', '.join(rest)}" if rest else "") + ". Start it from step 0 of the "
+                  "implement command: preconditions, refinement, pre-registration, points, close, one terminal message "
+                  f"`DOCKET DELIVERED {following}`. Nothing of {spec_id} is a fact for it unless you read it again. "
+                  + (violations_line(paths, following) or "")).rstrip()
+        print(json.dumps({"decision": "block", "reason": reason,
+                          "systemMessage": closing_line(paths, spec_id, kind, rest, continued=following)}))
+        return 0
+    if queue:
+        for dropped in queue:
+            release_lock(paths, dropped)
+        state["queue"] = []
+        save_state(paths, session_id, state)
+        log_event(paths, session_id, spec_id, "queue-dropped", ", ".join(queue))
+    print(json.dumps({"systemMessage": closing_line(paths, spec_id, kind, queue)}))
+    return 0
 
 
 def close(paths, session_id, state, text):

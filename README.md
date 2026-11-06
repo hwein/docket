@@ -66,10 +66,30 @@ Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`,
 | `/docket:init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
 | `/docket:concept` | concept | Thinks with you. One idea per message, one question at most. |
 | `/docket:spec` | spec | Turns the agreed WHAT into a spec with checkable done criteria, then `ready`. |
-| `/docket:implement <id>` | sealed | Runs one spec autonomously and ends with exactly one message; a second id is refused, the next spec gets a run of its own. |
+| `/docket:implement [...]` | sealed | Runs one spec or a series of specs autonomously, one message per spec (forms below). |
 | `/docket:register` | | The register: concepts, specs, dockets, last LOG lines. |
 | `/docket:status` | | One line: mode, spec, open points, last LOG line. |
 | `/docket:stop` | | Ends a sealed run at the next checkpoint. |
+
+## One spec or a series
+
+A concept ends in one spec or several, in an order (`follows:` in the spec's header). `/docket:implement` runs
+them the same way, one after another in one session, each with its own refinement, docket, merge and terminal
+message:
+
+| Call | Runs |
+|---|---|
+| `/docket:implement` | the next ready spec whose predecessors are done |
+| `/docket:implement s-1a2b3c4d` | this spec |
+| `/docket:implement s-1a2b3c4d, s-5e6f7a8b` | exactly these, in this order |
+| `/docket:implement c-9c8d7e6f` | every ready spec of this concept, in implementation order |
+| `/docket:implement --all` | every ready spec of the project, in implementation order |
+
+Implementation order: a spec after every spec it follows, otherwise by creation date. A call that would run a spec
+before an undone predecessor is refused and names the predecessor. After each `DOCKET DELIVERED` the hook seals
+the next spec of the series and tells you so in its closing line; after `DOCKET BLOCKED` or `DOCKET DISSENT` the
+series stops and the closing line names the specs not started. `/docket:stop` ends the series at the next
+checkpoint.
 
 ## How a sealed run works
 

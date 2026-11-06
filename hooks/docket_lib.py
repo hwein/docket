@@ -178,6 +178,9 @@ SAY = {
         "dissent": "Dissens bei {x}/{n}, Lauf beendet; die Entscheidung steht in der Nachricht darüber",
         "next": "Nächste Spec im Zustand ready: {spec} ({title}), in einer neuen Sitzung mit /docket:implement {spec}",
         "none_ready": "Keine weitere Spec im Zustand ready",
+        "continue": "Weiter in dieser Sitzung mit {spec} ({title}); danach noch {rest}",
+        "nothing_more": "nichts weiter",
+        "dropped": "Nicht gestartet: {specs}; dafür einen neuen Befehl geben",
     },
     "en": {
         "preparing": "preparing: the spec is read and checked against the code",
@@ -189,6 +192,9 @@ SAY = {
         "dissent": "dissent at {x}/{n}, run finished; the decision is in the message above",
         "next": "next spec in state ready: {spec} ({title}), in a new session with /docket:implement {spec}",
         "none_ready": "no further spec in state ready",
+        "continue": "continuing in this session with {spec} ({title}); after it {rest}",
+        "nothing_more": "nothing more",
+        "dropped": "not started: {specs}; give a new command for them",
     },
 }
 
@@ -202,8 +208,8 @@ def spec_title(paths, spec_id):
     return frontmatter(path).get("title", "") if path else ""
 
 
-def ready_specs(paths):
-    """(id, title) of every spec in state ready, by path."""
+def spec_records(paths):
+    """Frontmatter of every spec (id, title, state, follows, concept, created), by path."""
     found = []
     if not os.path.isdir(paths.specs):
         return found
@@ -214,9 +220,50 @@ def ready_specs(paths):
         for name in sorted(os.listdir(folder)):
             if name.lower().endswith(".md"):
                 fields = frontmatter(posixpath.join(folder, name))
-                if fields.get("state", "").lower() == "ready" and SPEC_ID.fullmatch(fields.get("id", "")):
-                    found.append((fields["id"], fields.get("title", "")))
+                if SPEC_ID.fullmatch(fields.get("id", "")):
+                    found.append({"id": fields["id"].lower(), "title": fields.get("title", ""),
+                                  "state": fields.get("state", "").lower(),
+                                  "follows": [s.lower() for s in SPEC_ID.findall(fields.get("follows", ""))],
+                                  "concept": (CONCEPT_ID.search(fields.get("concept", "")) or [None])[0]
+                                  if CONCEPT_ID.search(fields.get("concept", "")) else "",
+                                  "created": fields.get("created", "")})
     return found
+
+
+def in_order(records):
+    """Implementation order: a spec after every spec it follows; ties by created date, then by path."""
+    by_id = {r["id"]: r for r in records}
+    remaining = sorted(records, key=lambda r: (r["created"], r["id"]))
+    ordered, placed = [], set()
+    while remaining:
+        free = [r for r in remaining if all(f not in by_id or f in placed for f in r["follows"])]
+        pick = (free or remaining)[0]  # the oldest free spec; no free one is a cycle: go on in date order
+        ordered.append(pick)
+        placed.add(pick["id"])
+        remaining = [r for r in remaining if r["id"] != pick["id"]]
+    return ordered
+
+
+def ready_specs(paths, concept=""):
+    """(id, title) of every spec in state ready, in implementation order; only one concept's when given."""
+    records = [r for r in spec_records(paths) if r["state"] == "ready"
+               and (not concept or r["concept"].lower() == concept.lower())]
+    return [(r["id"], r["title"]) for r in in_order(records)]
+
+
+def open_predecessors(paths, spec_ids):
+    """For a run of the given specs in that order: every `follows:` spec that is neither done nor earlier in the
+    run, as (spec, predecessor)."""
+    states = {r["id"]: r for r in spec_records(paths)}
+    missing, earlier = [], set()
+    for spec_id in spec_ids:
+        record = states.get(spec_id.lower())
+        for predecessor in record["follows"] if record else []:
+            before = states.get(predecessor)
+            if predecessor not in earlier and before is not None and before["state"] not in ("done", "superseded"):
+                missing.append((spec_id, predecessor))
+        earlier.add(spec_id.lower())
+    return missing
 
 
 def docket_counts(paths, spec_id):
@@ -245,14 +292,20 @@ def status_line(paths, state):
     return f"[docket] {title}: {progress} · {say(paths, 'running')} · {state.get('clock', '')}".rstrip(" ·")
 
 
-def closing_line(paths, state, kind):
-    """The hook's own line after a terminal message: what happened and what comes next, in the project's language."""
-    spec_id = state.get("spec", "")
+def closing_line(paths, spec_id, kind, queue=(), continued=""):
+    """The hook's own line after a terminal message: what happened and what comes next, in the project's language.
+    `continued` is the queued spec the session goes on with; `queue` the ids still waiting (or dropped)."""
     counts = docket_counts(paths, spec_id) or {"x": 0, "~": 0, " ": 0}
     title = spec_title(paths, spec_id) or spec_id
     outcome = say(paths, kind, x=counts["x"], n=counts["x"] + counts["~"] + counts[" "], spec=spec_id)
-    following = [(s, t) for s, t in ready_specs(paths) if s.lower() != spec_id.lower()]
-    tail = say(paths, "next", spec=following[0][0], title=following[0][1]) if following else say(paths, "none_ready")
+    if continued:
+        rest = ", ".join(queue) if queue else say(paths, "nothing_more")
+        tail = say(paths, "continue", spec=continued, title=spec_title(paths, continued) or continued, rest=rest)
+    elif queue:
+        tail = say(paths, "dropped", specs=", ".join(queue))
+    else:
+        following = [(s, t) for s, t in ready_specs(paths) if s.lower() != spec_id.lower()]
+        tail = say(paths, "next", spec=following[0][0], title=following[0][1]) if following else say(paths, "none_ready")
     return f"[docket] {title}: {outcome}. {tail}."
 
 
