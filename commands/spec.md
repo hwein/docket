@@ -7,9 +7,11 @@ argument-hint: "[concept id | spec id | title]"
 
 Argument: `$ARGUMENTS`
 
-You bring one spec to `ready`. Semi-autonomous: everything technical is the team's decision and you take it;
-only what users or operators would notice goes to the user, one question at a time, answerable with one word,
-with a recommendation.
+You bring one spec to `ready`, or each spec of the order in turn when it names several (legacy specs to rewrite,
+for example). Semi-autonomous: everything technical is the team's decision and you take it; only what users or
+operators would notice goes to the user, one question at a time, answerable with one word, with a recommendation.
+A status flag on an old document (a legacy spec, an index line) points at its new spec, and is set only once that
+spec is `ready`.
 
 ## Start
 
@@ -43,9 +45,11 @@ or an earlier ready spec is asked again.
 - A command that matches `forbidden_commands` in DOCKET.md is not refused: the hook puts it to the user as a
   dialog, one click grants it once, the LOG records `ask` and `grant`. Run the command; never ask for it in prose.
 - A rule that blocks what the user explicitly asked for becomes a decision question about the rule (should it
-  fall? with recommendation and the rule's place in DOCKET.md), never a manual task for the user.
-- A blocker is said once, in one line starting with `Blocker`. Afterwards only new facts or the one line
-  `Blocker unverändert`; the hook refuses a blocker line that stood in the previous message.
+  fall? with recommendation and the rule's place in DOCKET.md), never a manual task for the user. A mode boundary
+  is not such a rule: code belongs to `/docket:implement`; name the command and end the turn.
+- A blocker is said once, in one line starting with `Blocker`, and ends the turn: until the user answers, the hook
+  refuses writes, agents and workflows. Afterwards only new facts or the one line `Blocker unverändert`; the hook
+  refuses a blocker line that stood in the previous message.
 - On `commit`, every change of the session goes in, plus the files the new content cites; changes in the working
   tree that are not the session's are named in one line, never left out silently.
 - A judge verdict (Stop hook feedback that quotes the judge's prompt) is answered with an empty turn: no text,

@@ -35,15 +35,22 @@ ask the one question. The user's word settles it; record it in the follow-up spe
 - When the user contradicts a recommendation, the next message is either the changed recommendation or the one
   sentence with a source that forbids it; if that sentence does not exist, the user's version is the recommendation.
 - The same cause for the second time is a finding: recommend the lasting fix, not the one-off.
-- Steps assigned to the user are decisions, never tasks. A step the team can run, the team runs.
+- Steps assigned to the user are decisions, never tasks. The one step only the user takes is typing the next
+  `/docket:` command: naming it ends the turn.
+- An order whose result belongs to another mode (specs: `/docket:spec`; code: `/docket:implement`) is answered with
+  that command, carrying the whole order, and the end of the turn. Nothing stands in for the result: no draft, no
+  concept file, no status flag on an old document.
 - A plan has no conditional steps ("if X still happens, then Y").
 - Extensive findings go into a file under `concepts/<topic>/` or the spec, not into the chat.
 - A command that matches `forbidden_commands` in DOCKET.md is not refused: the hook puts it to the user as a
   dialog, one click grants it once, the LOG records `ask` and `grant`. Run the command; never ask for it in prose.
 - A rule that blocks what the user explicitly asked for becomes a decision question about the rule (should it
-  fall? with recommendation and the rule's place in DOCKET.md), never a manual task for the user.
-- A blocker is said once, in one line starting with `Blocker`. Afterwards only new facts or the one line
-  `Blocker unverändert`; the hook refuses a blocker line that stood in the previous message.
+  fall? with recommendation and the rule's place in DOCKET.md), never a manual task for the user. A mode boundary
+  is not such a rule: it is answered with the command, as above.
+- A blocker is said once, in one line starting with `Blocker`, and ends the turn: until the user answers, the hook
+  refuses writes, agents and workflows. Afterwards only new facts or the one line `Blocker unverändert`; the hook
+  refuses a blocker line that stood in the previous message.
+- Concept mode writes concepts and DOCKET.md. A write anywhere else in the repo goes to the user as a dialog.
 - On `commit`, every change of the session goes in, plus the files the new content cites; changes in the working
   tree that are not the session's are named in one line, never left out silently.
 - A judge verdict (Stop hook feedback that quotes the judge's prompt) is answered with an empty turn: no text,
@@ -51,8 +58,10 @@ ask the one question. The user's word settles it; record it in the follow-up spe
 
 ## Writing
 
-- Large undertakings: a concept file from `${CLAUDE_PLUGIN_ROOT}/templates/concept.md` under `concepts/<topic>/c-<id>-<slug>.md`.
-- Everything that will be implemented: a spec. Hand over to `/spec` when the WHAT is agreed; `/spec` writes it.
+- A feature too large for one spec: a concept file from `${CLAUDE_PLUGIN_ROOT}/templates/concept.md` under
+  `concepts/<topic>/c-<id>-<slug>.md`.
+- Everything that will be implemented, and every order to write or rework specs: a spec, written by `/docket:spec`.
+  Name the command when the WHAT is agreed and end the turn.
 - Ids: `c-` or `s-` plus eight hex digits from SHA-256 over topic, title and creation time. Ids never appear in text
   to the user; name the title.
 

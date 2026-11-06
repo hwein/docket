@@ -2,7 +2,7 @@
 
 Every tool result carries the clock line `[docket] clock: YYYY-MM-DD HH:MM` as additional context once the
 project is set up: the stamp needs no tool call (M7). A shell command that matched forbidden_commands and ran
-was allowed by the user in the dialog: LOG `grant` (M1).
+was allowed by the user in the dialog: LOG `grant` (M1). So was a concept-mode write outside the work dir.
 
 Dockets are append-only: after an edit every previous line (snapshot taken in pre_tool_use) must
 still be there, in order. A violation is reported to the model with exit 2 and logged; the hook
@@ -25,6 +25,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (Paths, absolute, clock_line, config_values, frontmatter, load_state, log_event, log_has,
                         read_input, refuse, set_context, under)
 
+WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b|==)", re.IGNORECASE)
 
 
@@ -33,14 +34,19 @@ def main():
     tool_input = hook_input.get("tool_input") if isinstance(hook_input.get("tool_input"), dict) else {}
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
-    file_path = tool_input.get("file_path")
+    file_path = tool_input.get("file_path") or tool_input.get("notebook_path")
     result = 0
-    if isinstance(file_path, str) and file_path:
+    # Since PostToolUse runs for every tool (M7), the file checks run only after a write: a Read is no edit.
+    if hook_input.get("tool_name") in WRITE_TOOLS and isinstance(file_path, str) and file_path:
         path = absolute(file_path, paths.cwd)
         if under(path, paths.dockets):
             result = docket_check(path, paths, session_id)
         elif under(path, paths.specs):
             result = ready_gate(path, paths, session_id)
+        elif (under(path, paths.root) and not under(path, paths.work) and os.path.isfile(paths.config)
+              and load_state(paths, session_id).get("mode") == "concept"):
+            # pre_tool_use asked; the write ran, so the user allowed it in the dialog.
+            log_event(paths, session_id, "", "grant", "write " + path[len(paths.root):].lstrip("/")[:90])
     elif hook_input.get("tool_name") in ("Bash", "PowerShell"):
         log_grant(tool_input, paths, session_id)
     if result:

@@ -27,9 +27,9 @@ from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (CONCEPT_ID, JUDGE_ACK, SPEC_ID, Paths, collect_judge, config_values, load_state, log_event,
-                        log_lines, log_time, message_text, point_counts, previous_turn_texts, read_input, refuse,
-                        release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
+from docket_lib import (JUDGE_ACK, Paths, box_questions, collect_judge, config_values, hook_outputs, load_state,
+                        log_event, log_lines, log_time, message_text, point_counts, previous_turn_texts, read_input,
+                        refuse, release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
                         transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
@@ -42,6 +42,12 @@ HASH = re.compile(r"(?<![0-9a-zA-Z/\\_.\-])[0-9a-f]{7,40}(?![0-9a-zA-Z/\\_\-]|\.
 # In a message also mixed digits and letters: `1234567` is a number, `defaced` a word.
 HASH_IN_TEXT = re.compile(r"(?<![0-9a-zA-Z/\\_.\-])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}"
                           r"(?![0-9a-zA-Z/\\_\-]|\.\w)")
+# An id stands on its own as well: the id inside a file name or a link target is part of a path, the title is in
+# the text (legacy session 2026-11-05: a link to the concept file was held back and the link was lost).
+ID_IN_TEXT = re.compile(r"(?<![0-9a-zA-Z/\\_.\-])[cs]-[0-9a-f]{8}(?![0-9a-zA-Z_\-]|\.\w)")
+# A quoted hook answer: the quote in a line that names a hook.
+QUOTE = re.compile(r"[„“\"]([^„“”\"\n]{12,240})[“”\"]")
+HOOK_WORD = re.compile(r"\bhooks?\b", re.IGNORECASE)
 CI_LINE = re.compile(r"\bCI\b[^\n]*", re.IGNORECASE)
 HEDGES = re.compile(r"\b(probably|likely|seems?|appears?|presumably|i think|i believe|might|vermutlich|"
                     r"wahrscheinlich|scheint|offenbar|wohl|könnte|vielleicht)\b", re.IGNORECASE)
@@ -105,7 +111,9 @@ def main():
     elif mode == "closed":
         problems = closed_problems(text, clock)
     else:
-        problems = human_problems(text, mode, clock) + repeat_problems(text, hook_input.get("transcript_path"))
+        transcript = hook_input.get("transcript_path")
+        problems = (human_problems(text, mode, clock) + repeat_problems(text, transcript)
+                    + box_problems(text, transcript) + hook_quote_problems(text, transcript))
     if any("stamp is" in problem for problem in problems):
         state.update({"degraded": True, "read": []})  # a lost watermark means the rules blurred
         save_state(paths, session_id, state)
@@ -356,6 +364,57 @@ def repeat_problems(text, transcript_path):
             "after that only new facts or the one line `Blocker unverändert`"]
 
 
+def prose_of(text):
+    """The text without URLs and code: a ? there asks nothing."""
+    return re.sub(r"`[^`\n]*`|https?://\S+", "", text)
+
+
+def box_problems(text, transcript_path):
+    """The next-step box of the desktop app asks a question the judge never sees: it counts toward the one
+    question. Legacy session 2026-11-05: the box asked about the test server, the text opened a second approval."""
+    asks = box_questions(transcript_path)
+    if not asks:
+        return []
+    if len(asks) > 1 or "?" in prose_of(without_stamp(text)):
+        return [f"at most one question: the next-step box already asks `{asks[-1][:60]}`; the text asks nothing more"]
+    return []
+
+
+def hook_source():
+    """The text of docket's own hooks, whitespace-normalised: what a hook can say."""
+    here = posixpath.dirname(os.path.abspath(__file__).replace("\\", "/"))
+    parts = []
+    for name in sorted(os.listdir(here)):
+        if name.endswith(".py") and not name.startswith("test_"):
+            try:
+                with open(posixpath.join(here, name), encoding="utf-8", errors="ignore") as handle:
+                    parts.append(handle.read())
+            except OSError:
+                pass
+    return " ".join(" ".join(parts).split())
+
+
+def hook_quote_problems(text, transcript_path):
+    """A hook answer is quoted only when a hook gave it in this session. Legacy session 2026-11-05: the model read
+    the refusal text in the hook's source with Grep and told the user twice that the hook had answered so."""
+    # A line that cites file and line names the source it read: that is the rule, not a breach of it.
+    quotes = [" ".join(q.split()) for line in lines_of(without_stamp(text))
+              if HOOK_WORD.search(line) and not FILE_LINE.search(line) for q in QUOTE.findall(line)]
+    quotes = [q for q in quotes if len(q.split()) >= 3]
+    if not quotes:
+        return []
+    source = hook_source()
+    claimed = [q for q in quotes if q in source]
+    if not claimed:
+        return []
+    heard = hook_outputs(transcript_path)
+    missing = [q for q in claimed if q not in heard]
+    if not missing:
+        return []
+    return [f"`{missing[0][:50]}` is text from the hook's source, but no hook said it in this session: "
+            "cite the file and line you read, not the hook"]
+
+
 def close(paths, session_id, state, text):
     lines = lines_of(text)
     head = TERMINAL.match(lines[0])
@@ -393,9 +452,9 @@ def content_problems(text, mode):
         problems.append(f"at most {MAX_LINES.get(mode, 30)} lines; extensive findings go into a file")
     if HASH_IN_TEXT.search(text):
         problems.append("no commit hashes: say in words what changed")
-    if SPEC_ID.search(text) or CONCEPT_ID.search(text):
+    if ID_IN_TEXT.search(text):
         problems.append("no spec or concept ids: name the title")
-    if text.count("?") > 1:
+    if prose_of(text).count("?") > 1:
         problems.append("at most one question, with a recommendation")
     hedges = sorted({m.group(0).lower() for m in HEDGES.finditer(text)})
     if hedges:

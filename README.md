@@ -93,26 +93,46 @@ Hooks check provenance, form and state, never content.
   grant. A sealed run has nobody to ask, so there it stays refused.
 - Every message in every session of the project ends with a time stamp; the hooks hand the time to the model with
   every prompt and tool result, so no tool call is spent on it. No hashes, ids or hedges reach you, and a blocker
-  is said once: the same `Blocker` line twice in a row is refused.
+  is said once: the same `Blocker` line twice in a row is refused. A blocker also ends the turn: until you answer,
+  nothing is written and no agent or workflow starts.
+- Each mode keeps to its work: concept mode writes concepts and `DOCKET.md`, any other write in the repo comes to you
+  as a permission dialog, and an order for specs given there is answered with `/docket:spec`. The question in the
+  desktop app's next-step box counts toward the one question, and a sealed run asks none there either. A quoted
+  hook answer must have come from a hook in this session.
 - The optional judge (a prompt hook, per project) checks the form of a message after you read it: one question
   at most, no option menus, no manual tasks for you beyond the one step of a blocker, no promises, no self-talk.
   Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts go to Claude and the
   log, never to your screen: Claude answers them with silence.
+- What `/docket:init` copied into your project (the judge entry, the check script's code) follows the plugin: every
+  session start brings it to the installed version, so an update needs no second init. Your check commands and a
+  check script whose code you changed stay as they are.
 
 ## Install
 
 Requires Python 3 on PATH. Hooks use the standard library only.
 
 ```bash
-claude plugin marketplace add /path/to/docket
+claude plugin marketplace add hwein/docket
 claude plugin install docket@docket-local
 ```
 
 Then, in a project: `/docket:init`.
 
+Update (restart Claude Code afterwards):
+
+```bash
+claude plugin marketplace update docket-local
+claude plugin update docket@docket-local
+```
+
+Claude Code keeps its own copy of each installed version, so a session never runs a half-updated plugin. Every
+push to this repository runs the hook tests on Linux and Windows (`.github/workflows/test.yml`).
+
 ## Where things live
 
-- Plugin: this repository. Nothing is copied into your project.
+- Plugin: this repository, installed as Claude Code's own copy. `/docket:init` copies two things into your
+  project: the judge hook into `.claude/settings.json` (only if you opt in) and, if the project has no check
+  script, `scripts/check.py`. Both follow the plugin at every session start.
 - Project: `.claude/docket/` for session state (gitignored).
 - Work dir with `DOCKET.md`, `specs/`, `dockets/`, `LOG.md`: `~/.docket/<repo key>/` by default, with its own
   git history. `/docket:init` offers `docket/` inside the repo instead.
@@ -130,7 +150,7 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.5, an early stage of development, already in use in several repositories.
+0.2.7, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

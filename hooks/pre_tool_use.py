@@ -6,8 +6,11 @@ Write rights by state x path (roles are write rights, not sessions):
 - concepts and DOCKET.md: concept/init modes
 - LOG.md: never by a tool (hooks only)
 Done specs and dockets are not a reference source: Read/Grep on them outside concept mode is refused.
-Sealed: AskUserQuestion refused. Closed: writes and agents refused. Degraded: writes, shell and agents
-refused until the required reading has been observed. Shell read commands are redirected to Read.
+Sealed: AskUserQuestion and a question in the next-step box refused. Closed: writes, agents and box questions
+refused. Degraded: writes, shell and agents refused until the required reading has been observed. Shell read
+commands are redirected to Read.
+Concept and spec: after a message that named a `Blocker` and ended the turn, writes, agents and workflows are
+refused until the user's next prompt. Concept: a write in the repo outside the work dir is put to the user (`ask`).
 forbidden_commands (DOCKET.md) are not refused but put to the user: permissionDecision `ask` shows the command,
 one click grants it once (LOG `ask`, then `grant` from post_tool_use when it ran). In a sealed run, which has no
 user, they stay refused. forbidden_paths stay refused everywhere.
@@ -21,8 +24,8 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (Paths, absolute, config_values, frontmatter, load_state, log_event, read_input, refuse,
-                        save_state, set_context, under)
+from docket_lib import (Paths, absolute, blocker_since_prompt, config_values, frontmatter, load_state, log_event,
+                        read_input, refuse, save_state, set_context, under)
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 INIT_FILES = {"docket.md", "contributing.md", "claude.md", "agents.md", ".gitignore", "settings.json", "settings.local.json"}
@@ -80,6 +83,22 @@ def main():
     if mode in ("sealed", "rewrite") and tool == "AskUserQuestion":
         return refuse("[docket] The spec is sealed: no questions. Take the default, write a 'deviation' line "
                       "into the docket, continue. Only DOCKET BLOCKED or DOCKET DISSENT reach the user.")
+
+    # The desktop app's next-step box asks too, and no Stop hook sees its question.
+    if tool.endswith("__wrap_up") and str(tool_input.get("ask") or "").strip():
+        if mode in ("sealed", "rewrite"):
+            return refuse("[docket] The spec is sealed: no questions, not in the next-step box either. Send the recap "
+                          "alone; only DOCKET BLOCKED or DOCKET DISSENT reach the user.")
+        if mode == "closed":
+            return refuse("[docket] The implementation is closed: no questions, not in the next-step box either. "
+                          "Send the recap alone.")
+
+    # A blocker ends the turn: nothing is written or started until the user answers.
+    if mode in ("concept", "spec") and configured and tool in WRITE_TOOLS | {"Agent", "Workflow"}:
+        blocker = blocker_since_prompt(hook_input.get("transcript_path"))
+        if blocker:
+            return refuse(f"[docket] Your message named a blocker (`{blocker[:80]}`) and ended the turn. Nothing is "
+                          "written or started until the user answers; report only what is new.")
 
     if mode == "closed" and tool in WRITE_TOOLS | {"Agent"}:
         return refuse("[docket] The implementation is closed. Answer from the docket; a new command opens the next mode.")
@@ -147,6 +166,15 @@ def main():
     forbidden = forbidden_path(path, config.get("forbidden_paths", ""), paths)
     if forbidden:
         return refuse(f"[docket] {forbidden} is a forbidden path per DOCKET.md (forbidden_paths); nothing is written there.")
+
+    # Concept mode writes concepts and DOCKET.md. Anything else in the repo (legacy specs, AGENTS.md, CLAUDE.md)
+    # goes to the user as a dialog, one click per write (legacy session 2026-11-05: flags and rule files changed
+    # on a box answer about something else).
+    if mode == "concept" and configured and under(path, paths.root) and not under(path, paths.work):
+        relative = path[len(paths.root):].lstrip("/")
+        log_event(paths, session_id, "", "ask", "write " + relative[:90])
+        return ask(f"[docket] Concept mode writes concepts and DOCKET.md; {relative} lies outside. Allowing it "
+                   "grants this one write.")
 
     if mode == "init" and not state.get("init_approved") and posixpath.basename(path).lower() in INIT_FILES:
         return refuse("[docket] Nothing is written before the diff is approved: show the diff and wait for the user's go.")
@@ -307,7 +335,8 @@ def spec_rule(path, mode, state, tool):
     if mode == "sealed":
         return refuse("[docket] Sealed sessions never write specs; deviations go into the docket.")
     if mode == "concept":
-        return refuse("[docket] Concept mode writes concepts, not specs: name the next spec and let the user run /spec.")
+        return refuse("[docket] Specs are written in spec mode only: name `/docket:spec` with the whole order and end "
+                      "the turn. No draft, concept file or status flag stands in for a spec.")
     return refuse("[docket] Specs are written in spec mode only (/spec).")
 
 

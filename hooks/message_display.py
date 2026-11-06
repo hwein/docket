@@ -28,7 +28,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from docket_lib import (HIDDEN, SESSION_ID, Paths, answers_judge, buffer_path, load_display, load_state, read_input,
                         save_display)
-from stop import GATED_MODES, WATERMARK, content_problems, lines_of
+from stop import GATED_MODES, WATERMARK, box_problems, content_problems, lines_of
 
 
 def show(text):
@@ -74,7 +74,8 @@ def main():
     record = load_display(paths, session_id)
     record["pending"].pop(message_id, None)
     lines = lines_of(text)
-    problems = content_problems(text, mode) if lines and WATERMARK.match(lines[-1]) else []
+    problems = (content_problems(text, mode) + box_problems(text, hook_input.get("transcript_path"))
+                if lines and WATERMARK.match(lines[-1]) else [])
     if problems:
         record["hidden"].append({"at": time.time(), "problems": problems})
         save_display(paths, session_id, record)

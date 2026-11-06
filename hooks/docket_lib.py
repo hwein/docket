@@ -379,6 +379,23 @@ def strip_harness_blocks(prompt):
     return HARNESS_BLOCK.sub("", prompt)
 
 
+def is_user_prompt(entry):
+    """A prompt the user typed: not a tool result, not the Stop hook's feedback, not a harness notice alone."""
+    if entry.get("type") != "user" or entry.get("isSidechain"):
+        return False
+    if entry.get("isMeta") or entry.get("isCompactSummary"):
+        return False  # a skill's text after a Skill call, the summary after a compaction: no user spoke
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return False
+        content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    if not isinstance(content, str) or content.lstrip().startswith(STOP_FEEDBACK):
+        return False
+    return bool(strip_harness_blocks(content).strip())
+
+
 def previous_turn_texts(transcript_path):
     """The assistant's texts of the previous turn: what stood between the second-last and the last prompt of the
     user. Tool results, harness notices and the Stop hook's feedback do not start a turn."""
@@ -386,23 +403,107 @@ def previous_turn_texts(transcript_path):
     for entry in transcript_entries(transcript_path):
         if entry.get("isSidechain"):
             continue
-        message = entry.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        if entry.get("type") == "user":
-            if isinstance(content, list):
-                if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
-                    continue
-                content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
-            if not isinstance(content, str) or content.lstrip().startswith(STOP_FEEDBACK):
-                continue
-            if not strip_harness_blocks(content).strip():
-                continue
+        if is_user_prompt(entry):
             turns.append([])
         elif entry.get("type") == "assistant":
-            text = text_of(content)
+            message = entry.get("message")
+            text = text_of(message.get("content") if isinstance(message, dict) else None)
             if text is not None:
                 turns[-1].append(text)
     return turns[-2] if len(turns) >= 2 else []
+
+
+def current_turn(transcript_path):
+    """The main line's entries since the user's last prompt. A harness notice (a finished workflow, a session
+    note) continues the turn: no user has spoken."""
+    entries = []
+    for entry in transcript_entries(transcript_path):
+        if entry.get("isSidechain"):
+            continue
+        if is_user_prompt(entry):
+            entries = []
+        else:
+            entries.append(entry)
+    return entries
+
+
+BLOCKER_LINE = re.compile(r"^\s*(?:[-*]\s+|\d+[.)]\s+)?(?:\*\*)?blockers?\b", re.IGNORECASE)
+NO_BLOCKER = re.compile(r"blockers?\W*(?:keine?r?|kein|none|nothing|nichts)\b", re.IGNORECASE)
+
+
+def blocker_since_prompt(transcript_path):
+    """The `Blocker` line of a message that ended a turn (a Stop followed it) since the user's last prompt, or "".
+    Legacy session 2026-11-05: the message at 21:58 named the blocker, the turn a finished workflow woke at 22:25
+    wrote the concept file and the flags anyway."""
+    pending = None
+    for entry in current_turn(transcript_path):
+        if entry.get("type") == "assistant":
+            message = entry.get("message")
+            text = text_of(message.get("content") if isinstance(message, dict) else None)
+            if text is not None:
+                pending = text
+        elif entry.get("type") == "system" and entry.get("subtype") == "stop_hook_summary" and pending:
+            for line in pending.splitlines():
+                if BLOCKER_LINE.match(line) and not NO_BLOCKER.search(line):
+                    return line.strip()
+            pending = None
+    return ""
+
+
+def box_questions(transcript_path):
+    """The questions of the next-step box (the desktop app's wrap_up tool) asked since the last Stop: a box the
+    user already saw belongs to an earlier message, even when a notification continued the turn."""
+    asks = []
+    for entry in current_turn(transcript_path):
+        if entry.get("type") == "system" and entry.get("subtype") == "stop_hook_summary":
+            asks = []
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if entry.get("type") != "assistant" or not isinstance(content, list):
+            continue
+        for block in content:
+            if (isinstance(block, dict) and block.get("type") == "tool_use"
+                    and str(block.get("name", "")).endswith("__wrap_up")):
+                ask = (block.get("input") or {}).get("ask")
+                if isinstance(ask, str) and ask.strip():
+                    asks.append(ask.strip())
+    return asks
+
+
+def hook_outputs(transcript_path):
+    """Everything this session heard a hook say, first or second hand: refusals in tool results, Stop hook feedback,
+    hook context, and what the user pasted or an agent reported back."""
+    said, reporters = [], set()
+    for entry in transcript_entries(transcript_path):
+        if entry.get("isSidechain"):
+            continue
+        if entry.get("type") == "attachment":
+            attachment = entry.get("attachment")
+            if isinstance(attachment, dict) and attachment.get("hookEvent"):
+                said.append(str(attachment.get("content") or ""))
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if entry.get("type") == "assistant" and isinstance(content, list):
+            reporters.update(b.get("id") for b in content if isinstance(b, dict) and b.get("type") == "tool_use"
+                             and b.get("name") in ("Agent", "Task", "Workflow"))
+            continue
+        if entry.get("type") != "user":
+            continue
+        if isinstance(content, str):
+            said.append(content)  # a prompt (pasted text included) or the Stop hook's feedback
+            continue
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_result" and (block.get("is_error") or block.get("tool_use_id") in reporters):
+                inner = block.get("content")
+                said.append(inner if isinstance(inner, str) else
+                            " ".join(b.get("text", "") for b in inner or [] if isinstance(b, dict)))
+            elif block.get("type") == "text":
+                said.append(block.get("text", ""))
+    return " ".join(" ".join(said).split())
 
 
 def transcript_blocks(transcript_path):
@@ -564,19 +665,33 @@ def answers_judge(transcript_path):
     """True when the newest text of the user's side is the judge's feedback and no request to write a held-back
     message again: the message being displayed is the acknowledgement, and the user has already read the
     message it answers."""
+    # Claude Code writes each Stop hook's feedback as an entry of its own, the slower judge last: the whole block of
+    # feedback since the last text is read, or stop.py's request for a full rewrite is missed and the rewrite hidden
+    # (legacy session 2026-11-05, entries 522 and 523).
+    judged = False
     for entry in reversed(transcript_entries(transcript_path, tail=True)):
-        if entry.get("type") != "user" or entry.get("isSidechain"):
+        if entry.get("isSidechain"):
             continue
         message = entry.get("message")
         content = message.get("content") if isinstance(message, dict) else None
+        if entry.get("type") == "assistant":
+            if judged and text_of(content) is not None:
+                break  # the message the feedback answers
+            continue
+        if entry.get("type") != "user":
+            continue
         if isinstance(content, list):
             if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
                 continue  # the answer's own tool calls
             content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
         if not isinstance(content, str) or not content.strip():
             continue
-        return content.lstrip().startswith("Stop hook feedback") and JUDGE_PROMPT in content and HELD_BACK not in content
-    return False
+        if not content.lstrip().startswith(STOP_FEEDBACK):
+            break  # a prompt of the user ends the block
+        if HELD_BACK in content:
+            return False
+        judged = judged or JUDGE_PROMPT in content
+    return judged
 
 
 def transcript_entries(transcript_path, tail=False):

@@ -29,12 +29,14 @@ only where the repo is silent or contradicts itself. Nothing is written before t
 4. Diff: `DOCKET.md` in the work dir (configuration, repository behaviour or pointers to where the project already
    answers, deviations, audit fingerprints), `.gitignore` lines, the permission rule `Edit(~/.docket/**)` in user
    settings when the work dir is the home default, and the judge hook from `templates/judge-hook.json` into the
-   project's `.claude/settings.json` (the judge is a per-project opt-in, so it never runs in projects that did not ask). Existing CLAUDE.md, AGENTS.md or CONTRIBUTING.md receive the
+   project's `.claude/settings.json` (the judge is a per-project opt-in, so it never runs in projects that did not ask;
+   once there, session start keeps the entry equal to the plugin's template, so a plugin update reaches it). Existing CLAUDE.md, AGENTS.md or CONTRIBUTING.md receive the
    decisions where they already treat the topic, otherwise as a marked section; no existing sentence changes before
    the user decided the contradiction. Missing files of those three are created only on explicit wish.
    Without a check script that exits non-zero on failure and prints one result line, the diff adds
    `${CLAUDE_PLUGIN_ROOT}/templates/check.py` as `scripts/check.py` with the project's commands filled in, and
-   registers it as `check`. When the work dir is the home default, the hooks keep it under its own git history
+   registers it as `check`; session start keeps its code (everything after COMMANDS) equal to the template while
+   the project has not changed that code. When the work dir is the home default, the hooks keep it under its own git history
    (`git init` on the first LOG line); for `docket/` inside the repo or a second repo, the diff says which.
    New repo: `git init`, remote (existing / create via `gh repo create` / none), all eleven questions.
    Questions 1, 2, 10 and 11 also become the configuration keys `push_branch`, `commit_regex`, `forbidden_paths`

@@ -1,6 +1,6 @@
 ---
 name: conceptor
-description: Writes and rewrites concepts and specs on behalf of the orchestrator or the concept session. The only agent with write access to a frozen spec, and only in rewrite mode for that one spec. Spawned by /implement for refinement rewrites and by /concept or /spec for drafting.
+description: Writes and rewrites concepts and specs on behalf of the orchestrator or the concept session. The only agent with write access to a frozen spec, and only in rewrite mode for that one spec. Spawned by /implement for refinement rewrites and by /spec for drafting.
 model: inherit
 tools: Read, Grep, Glob, Edit, Write
 ---

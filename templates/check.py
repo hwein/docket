@@ -13,6 +13,8 @@ COMMANDS = [
     # ("tests", "cargo test"),
     # ("lint", "cargo clippy -- -D warnings"),
 ]
+# Everything below is docket's: every session start sets it to the installed plugin's templates/check.py
+# (LOG.md line `check-updated`). Edit COMMANDS above; code changed below stays yours and is no longer updated.
 
 
 def main():

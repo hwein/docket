@@ -49,6 +49,22 @@ WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`: the ti
              "only when it says it was held back.")
 
 
+# A concept command whose order is to write or rework specs (legacy session 2026-11-05: "überarbeite die specs in
+# docket-specs" in /docket:concept became a concept file and flags pointing at it).
+SPECS = re.compile(r"\bspecs?\b|spezifikation", re.IGNORECASE)
+WRITE_ORDER = re.compile(r"\b(?:überarbeit|umschreib|schreib|erstell|formulier|neu\s*fass|anleg|rewrite|write|draft|"
+                         r"create|turn\b[^.\n]{0,40}\binto)\w*", re.IGNORECASE)
+SPEC_REQUEST_LINE = ("[docket] This order asks for specs: in concept mode the answer is the command `/docket:spec` "
+                     "with the whole order, then the end of the turn. Nothing is drafted, put into a concept file or "
+                     "flagged for it.")
+
+
+def asks_for_specs(rest):
+    """An order, not a question: "Welche Specs sollten wir schreiben?" is a concept question."""
+    rest = (rest or "").strip()
+    return bool(rest and not rest.endswith("?") and SPECS.search(rest) and WRITE_ORDER.search(rest))
+
+
 def ambition():
     return ("[docket] You lead this team. Be ambitious. You are responsible for the docket being true, "
             "not for being finished.")
@@ -130,7 +146,10 @@ def main():
     if mode != "none":
         lines.append(f"[docket] Mode {mode}" + (f", spec {state['spec']}" if state.get("spec") else "")
                      + ". " + REMINDERS.get(mode, ""))
-        lines.append(ambition())
+        if mode != "concept":
+            lines.append(ambition())  # in concept mode it pushed past the stop (legacy session 2026-11-05)
+    if name == "concept" and asks_for_specs(rest):
+        lines.append(SPEC_REQUEST_LINE)  # with the command that carries the order; it stays in the context
     if mode != "none" or os.path.isfile(paths.config):
         lines.append("[docket] " + WATERMARK)
         lines.append(clock_line(paths, session_id, state))

@@ -219,7 +219,8 @@ class WriteRights(Project):
         draft = self.work / "specs" / "core" / "s-0000ffff-draft.md"
         code, err, _ = self.tool("Write", file_path=str(draft), content="---\nstate: draft\n---\n")
         self.assertEqual(code, 2)
-        self.assertIn("/spec", err)
+        self.assertIn("/docket:spec", err)
+        self.assertIn("end the turn", err)
         self.assertEqual(self.tool("Write", file_path=str(self.work / "concepts" / "core" / "c-0000ffff.md"), content="x")[0], 0)
 
     def test_model_may_not_invoke_docket_commands_itself(self):
@@ -1185,6 +1186,184 @@ class Grants(Project):
         self.assertEqual(self.tool("Write", file_path=f"{self.p}/secrets/key.pem", content="x")[0], 2)
 
 
+class LegacyConcept(Project):
+    """The concept session of 2026-11-05 (framework/ANALYSE-LEGACY-CONCEPT-SITZUNG.md): asked in /docket:concept to
+    rewrite five legacy specs, it never tried a spec write, wrote a concept file, flagged the legacy specs to it,
+    edited three rule files on a box answer about something else, and said a hook had answered what it had only
+    read in the hook's source."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.tmp / "transcript.jsonl"
+
+    def add(self, *entries):
+        with self.path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry) + "\n")
+
+    def user(self, content):
+        return {"type": "user", "message": {"role": "user", "content": content}}
+
+    def said(self, text):
+        return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+
+    def box(self, ask):
+        return {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "mcp__ccd_turn__wrap_up", "input": {"recap": "x", "ask": ask}}]}}
+
+    def stopped(self):
+        return {"type": "system", "subtype": "stop_hook_summary", "hookErrors": []}
+
+    def tool_t(self, name, **tool_input):
+        return run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": name, "tool_input": tool_input,
+                                            "transcript_path": str(self.path)}, self.p)
+
+    def stop_t(self, message):
+        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
+                                    "stop_hook_active": False, "transcript_path": str(self.path)}, self.p)
+
+    def test_a_spec_order_in_concept_mode_gets_the_handover_line_and_no_ambition(self):
+        _, _, out = self.prompt("/docket:concept schaue dir die legacy-specs an, nimm dir die nächsten 5 specs und "
+                                "überarbeite die specs in docket-specs.")
+        self.assertIn("`/docket:spec`", out)
+        self.assertNotIn("Be ambitious", out)
+        _, _, out = self.prompt("Die nächsten Specs laut einer Alt-Aufstellung wären diese gewesen")
+        self.assertNotIn("`/docket:spec`", out)  # said once, with the command; it stays in the context
+        _, _, out = self.prompt("/docket:concept welche spec ist die nächste?")
+        self.assertNotIn("`/docket:spec`", out)
+        _, _, out = self.prompt("/docket:concept Welche Specs sollten wir als nächstes schreiben?")
+        self.assertNotIn("`/docket:spec`", out)  # a question to think about, not an order
+        _, _, out = self.prompt(f"/docket:implement {SPEC}")
+        self.assertIn("Be ambitious", out)
+
+    def test_concept_mode_writes_outside_the_work_dir_only_with_the_users_click(self):
+        self.set_state(mode="concept")
+        for target in (f"{self.p}/legacy/specs/022_testserver.md", f"{self.p}/AGENTS.md", f"{self.p}/.claude/CLAUDE.md"):
+            code, err, out = self.tool("Edit", file_path=target, old_string="a", new_string="b")
+            self.assertEqual(code, 0, err)
+            decision = json.loads(out)["hookSpecificOutput"]
+            self.assertEqual(decision["permissionDecision"], "ask", target)
+            self.assertIn("Concept mode writes concepts", decision["permissionDecisionReason"])
+        self.assertIn(" ask ", self.log())
+        for target in (str(self.work / "concepts" / "core" / "c-0000ffff.md"), str(self.work / "DOCKET.md"),
+                       str(self.tmp / "scratch" / "notes.txt")):
+            code, err, out = self.tool("Write", file_path=target, content="x")
+            self.assertEqual((code, out.strip()), (0, ""), target)
+        self.set_state(mode="spec")
+        self.assertEqual(self.tool("Edit", file_path=f"{self.p}/AGENTS.md", old_string="a", new_string="b")[2].strip(), "")
+        self.set_state(mode="concept")
+        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                      "tool_input": {"file_path": f"{self.p}/AGENTS.md"}}, self.p)
+        self.assertNotIn(" grant ", self.log())  # a Read is no write
+        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
+                                      "tool_input": {"file_path": f"{self.p}/AGENTS.md"}}, self.p)
+        self.assertIn(" grant ", self.log())
+        self.assertIn("write AGENTS.md", self.log())
+        (self.work / "DOCKET.md").unlink()  # a project not set up: docket only observes
+        code, _, out = self.tool("Edit", file_path=f"{self.p}/src/a.py", old_string="a", new_string="b")
+        self.assertEqual((code, out.strip()), (0, ""))
+
+    def test_a_named_blocker_ends_the_turn_until_the_user_answers(self):
+        self.set_state(mode="concept")
+        self.add(self.user("überarbeite die specs"),
+                 self.said(f"- **Blocker:** docket specs only through /docket:spec.\n{hstamp()}"), self.stopped(),
+                 self.user("<task-notification>workflow completed</task-notification>"))
+        for name, tool_input in (("Write", {"file_path": str(self.work / "concepts" / "core" / "c-1.md"), "content": "x"}),
+                                 ("Workflow", {"script": "export const meta = {}"}), ("Agent", {"prompt": "draft"})):
+            code, err, _ = self.tool_t(name, **tool_input)
+            self.assertEqual(code, 2, name)
+            self.assertIn("blocker", err)
+        self.assertEqual(self.tool_t("Read", file_path=str(self.work / "DOCKET.md"))[0], 0)
+        self.add(self.user("ok, dann /docket:spec"))
+        self.assertEqual(self.tool_t("Write", file_path=str(self.work / "concepts" / "core" / "c-1.md"), content="x")[0], 0)
+
+    def test_a_skill_text_or_a_compaction_is_no_answer_and_no_blocker_is_no_blocker(self):
+        self.set_state(mode="concept")
+        concept = str(self.work / "concepts" / "core" / "c-1.md")
+        self.add(self.user("weiter"), self.said(f"1. Blocker: the key is missing.\n{hstamp()}"), self.stopped(),
+                 {"type": "user", "isMeta": True, "message": {"role": "user", "content": "# Simplify\nReview the code"}},
+                 {"type": "user", "isCompactSummary": True, "message": {"role": "user", "content": "Summary of the session"}})
+        self.assertEqual(self.tool_t("Write", file_path=concept, content="x")[0], 2)
+        self.add(self.user("ok"), self.said(f"Blocker: keiner.\n{hstamp()}"), self.stopped())
+        self.assertEqual(self.tool_t("Write", file_path=concept, content="x")[0], 0)
+
+    def test_a_blocker_in_a_text_between_tool_calls_does_not_end_the_turn(self):
+        self.set_state(mode="spec")
+        self.add(self.user("schreib die spec"), self.said("Blocker for the live check: no key yet; writing the rest."))
+        self.assertEqual(self.tool_t("Write", file_path=str(self.work / "specs" / "core" / "s-0000ffff-x.md"),
+                                     content="---\nstate: draft\n---\n")[0], 0)
+
+    def test_no_question_in_the_box_of_a_sealed_or_closed_session(self):
+        for mode in ("sealed", "closed"):
+            self.set_state(mode=mode, spec=SPEC)
+            code, err, _ = self.tool("mcp__ccd_turn__wrap_up", recap="x", ask="Committen?")
+            self.assertEqual(code, 2, mode)
+            self.assertIn("next-step box", err)
+            self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x")[0], 0, mode)
+        self.set_state(mode="concept")
+        self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x", ask="Committen?")[0], 0)
+
+    def test_the_box_question_counts_toward_the_one_question(self):
+        self.set_state(mode="concept")
+        self.add(self.user("weiter"), self.box("Dürfen docket-Läufe den Testserver per REST ansprechen?"))
+        code, err, _ = self.stop_t(f"Empfehlung zur Frage im Kasten: ja. Soll ich auch CHANGELOG.md bereinigen?\n{hstamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("next-step box", err)
+        self.assertEqual(self.stop_t(f"Empfehlung zur Frage im Kasten: ja (DOCKET.md Frage 11).\n{hstamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"Quelle: https://example.org/x?y=1 und `a?b`.\n{hstamp()}")[0], 0)
+
+    def test_a_box_before_the_last_stop_belongs_to_an_earlier_message(self):
+        self.set_state(mode="concept")
+        self.add(self.user("weiter"), self.box("Committen?"), self.said(f"Fertig.\n{hstamp()}"), self.stopped(),
+                 self.user("<task-notification>done</task-notification>"), self.box("Pushen?"))
+        self.assertEqual(self.stop_t(f"Der Lauf ist durch (git log).\n{hstamp()}")[0], 0)
+
+    def test_a_hook_answer_is_quoted_only_when_a_hook_gave_it(self):
+        self.set_state(mode="concept")
+        message = (f"- Warum ein Konzept: Der Hook hat geantwortet: „Specs are written in spec mode only“ "
+                   f"(pre_tool_use.py).\n{hstamp()}")
+        self.add(self.user("was ist das für ein Konzept?"))
+        code, err, _ = self.stop_t(message)
+        self.assertEqual(code, 2)
+        self.assertIn("no hook said it", err)
+        self.add({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t9", "is_error": True,
+             "content": "PreToolUse:Write hook error: [docket] Specs are written in spec mode only: name `/docket:spec`"}]}})
+        self.assertEqual(self.stop_t(message)[0], 0)
+        # A quote from elsewhere, or without a hook in the line, is not checked.
+        self.assertEqual(self.stop_t(f"Der Nutzer schrieb „nimm die nächsten fünf Specs“.\n{hstamp()}")[0], 0)
+
+    def test_a_hook_text_read_in_a_file_or_pasted_by_the_user_may_be_quoted(self):
+        self.set_state(mode="concept")
+        self.add(self.user("was ist das für ein Konzept?"))
+        self.assertEqual(self.stop_t("Der Hook-Text lautet „Specs are written in spec mode only“ "
+                                     f"(pre_tool_use.py:310).\n{hstamp()}")[0], 0)
+        self.add(self.user("Der Hook schrieb mir: Specs are written in spec mode only: name it"))
+        self.assertEqual(self.stop_t(f"Der Hook sagte „Specs are written in spec mode only“.\n{hstamp()}")[0], 0)
+
+    def test_an_id_inside_a_link_target_is_part_of_a_path(self):
+        self.set_state(mode="concept")
+        link = "[Legacy-Transfer 1](concept/docket/concepts/general/c-35290626-legacy-transfer-1.md)"
+        self.assertEqual(self.stop(f"Die Entwürfe stehen in {link}.\n{hstamp()}")[0], 0)
+        code, err, _ = self.stop(f"Die Entwürfe stehen in c-35290626.\n{hstamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("ids", err)
+
+    def test_a_rewrite_the_gate_asked_for_is_shown_when_the_judge_feedback_is_a_separate_entry(self):
+        self.set_state(mode="concept")
+        judge = JudgeLog.PROMPT + ': no-source "Alle fünf Specs tragen"' + JudgeLog.TAIL
+        self.add(self.said(f"Alle fünf Specs tragen.\n{hstamp()}"),
+                 self.user("Stop hook feedback:\n[docket] Your last message was held back and never shown to the user: "
+                           "no spec or concept ids. Write it again in full."),
+                 self.user("Stop hook feedback:\n" + judge))
+        message = f"Alle fünf Specs tragen (Konzept, Abschnitt Korrekturen).\n{hstamp()}"
+        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "m7", "index": 0,
+                                                         "final": True, "delta": message,
+                                                         "transcript_path": str(self.path)}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["displayContent"], message)
+
+
 class RepeatedBlocker(Project):
     """M4: a blocker is said once. On 2026-11-05 the same blocker stood in seven messages in a row and the user
     read the seventh as a refusal."""
@@ -1266,6 +1445,146 @@ class Clock(Project):
         (self.work / "DOCKET.md").unlink()
         code, _, out = self.post()
         self.assertEqual((code, out.strip()), (0, ""))
+
+
+class CopySync(Project):
+    """The judge entry and the check script that /docket:init copied into the project follow the plugin at every
+    session start; nobody runs init again (2026-11-06: the judge in luradb-web-client was five versions behind)."""
+
+    TEMPLATE = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))["hooks"]["Stop"][0]["hooks"][0]
+    CHECK = (HOOKS.parent / "templates" / "check.py").read_text("utf-8").replace("\r\n", "\n")
+
+    def setUp(self):
+        super().setUp()
+        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
+                                             "| check | `python scripts/check.py` | |\n", "utf-8")
+        self.script = self.root / "scripts" / "check.py"
+        self.script.parent.mkdir()
+
+    def start(self):
+        return run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
+
+    def settings(self, hooks):
+        (self.root / ".claude" / "settings.json").write_text(json.dumps({"hooks": hooks, "model": "x"}), "utf-8")
+
+    def project_check(self, code=None):
+        head, rest = self.CHECK.split("\nCOMMANDS = [", 1)
+        commands = '\nCOMMANDS = [\n    ("test", "npm test"),\n]\n'
+        return "# project comment\n" + head + commands + (code if code is not None else rest.split("\n]\n", 1)[1])
+
+    def in_process(self, function, **patched):
+        sys.path.insert(0, str(HOOKS))
+        import session_start
+        saved = {name: getattr(session_start, name) for name in patched}
+        saved_env = os.environ.get("CLAUDE_PROJECT_DIR")
+        for name, value in patched.items():
+            setattr(session_start, name, value)
+        os.environ["CLAUDE_PROJECT_DIR"] = self.p
+        try:
+            return getattr(session_start, function)(session_start.Paths({"cwd": self.p}))
+        finally:
+            for name, value in saved.items():
+                setattr(session_start, name, value)
+            if saved_env is None:
+                os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            else:
+                os.environ["CLAUDE_PROJECT_DIR"] = saved_env
+
+    def test_an_old_judge_is_replaced_and_other_settings_stay(self):
+        sys.path.insert(0, str(HOOKS))
+        import session_start
+        old = {"type": "prompt", "model": "claude-haiku-5-5", "timeout": 30, "prompt": "You judge the final message, old"}
+        other = {"type": "command", "command": "node no-root-docs.mjs"}
+        self.settings({"Stop": [{"hooks": [old]}], "PreToolUse": [{"matcher": "Bash", "hooks": [other]}]})
+        versions = session_start.JUDGE_VERSIONS + (session_start.judge_digest(old),)
+        self.assertTrue(self.in_process("sync_judge", JUDGE_VERSIONS=versions))
+        data = json.loads((self.root / ".claude" / "settings.json").read_text("utf-8"))
+        self.assertEqual(data["hooks"]["Stop"][0]["hooks"][0], self.TEMPLATE)
+        self.assertEqual(data["hooks"]["PreToolUse"][0]["hooks"][0], other)
+        self.assertEqual(data["model"], "x")
+        self.assertFalse(self.in_process("sync_judge", JUDGE_VERSIONS=versions))  # nothing left to do
+        self.assertEqual(list((self.root / ".claude").glob("*.tmp")), [])
+
+    def test_a_judge_the_project_changed_stays_and_odd_settings_do_not_crash(self):
+        custom = dict(self.TEMPLATE, model="claude-sonnet-5-5", timeout=60)
+        self.settings({"Stop": [{"hooks": [custom]}]})
+        before = (self.root / ".claude" / "settings.json").read_text("utf-8")
+        code, err, out = self.start()
+        self.assertEqual(code, 0, err)
+        self.assertEqual((self.root / ".claude" / "settings.json").read_text("utf-8"), before)
+        self.settings({"Stop": None})
+        code, err, out = self.start()
+        self.assertEqual(code, 0, err)
+        self.assertIn("session state", out)
+
+    def test_the_template_judge_is_a_known_version(self):
+        sys.path.insert(0, str(HOOKS))
+        import session_start
+        self.assertIn(session_start.judge_digest(self.TEMPLATE), session_start.JUDGE_VERSIONS,
+                      "templates/judge-hook.json changed: append its hash to JUDGE_VERSIONS in session_start.py")
+
+    def test_a_project_without_the_judge_stays_without(self):
+        self.settings({"Stop": [{"hooks": [{"type": "command", "command": "x"}]}]})
+        before = (self.root / ".claude" / "settings.json").read_text("utf-8")
+        self.start()
+        self.assertEqual((self.root / ".claude" / "settings.json").read_text("utf-8"), before)
+        self.assertNotIn("judge-updated", self.log())
+
+    def test_the_template_code_is_a_known_version(self):
+        sys.path.insert(0, str(HOOKS))
+        import hashlib
+        import session_start
+        code = session_start.split_check(self.CHECK)[1]
+        self.assertIn(hashlib.sha256(code.encode("utf-8")).hexdigest(), session_start.CHECK_VERSIONS,
+                      "templates/check.py changed its code: append its hash to CHECK_VERSIONS in session_start.py")
+
+    def test_an_old_copy_of_the_check_gets_the_new_code_and_keeps_its_head_and_commands(self):
+        sys.path.insert(0, str(HOOKS))
+        import hashlib
+        import session_start
+        old_code = "\n\ndef main():\n    print('check: old')\n    return 0\n"
+        self.script.write_text(self.project_check(old_code), "utf-8")
+        saved_versions, saved_env = session_start.CHECK_VERSIONS, os.environ.get("CLAUDE_PROJECT_DIR")
+        session_start.CHECK_VERSIONS = saved_versions + (hashlib.sha256(old_code.encode("utf-8")).hexdigest(),)
+        os.environ["CLAUDE_PROJECT_DIR"] = self.p
+        try:
+            changed = session_start.sync_check(session_start.Paths({"cwd": self.p}))
+        finally:
+            session_start.CHECK_VERSIONS = saved_versions
+            if saved_env is None:
+                os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            else:
+                os.environ["CLAUDE_PROJECT_DIR"] = saved_env
+        self.assertEqual(changed, "scripts/check.py")
+        text = self.script.read_text("utf-8")
+        self.assertTrue(text.startswith("# project comment\n"))
+        self.assertIn('("test", "npm test")', text)
+        self.assertNotIn("check: old", text)
+        self.assertEqual(text, self.project_check())
+
+    def test_a_current_or_changed_check_stays(self):
+        self.script.write_text(self.project_check(), "utf-8")
+        self.start()
+        self.assertEqual(self.script.read_text("utf-8"), self.project_check())
+        custom = self.project_check("\n\ndef main():\n    return run_my_own_way()\n")
+        self.script.write_text(custom, "utf-8")
+        self.start()
+        self.assertEqual(self.script.read_text("utf-8"), custom)
+        self.assertNotIn("check-updated", self.log())
+
+    def test_a_check_outside_the_project_is_never_written(self):
+        sys.path.insert(0, str(HOOKS))
+        import hashlib
+        import session_start
+        outside = self.tmp / "shared-ci" / "check.py"
+        outside.parent.mkdir()
+        old_code = "\n\ndef main():\n    return 0\n"
+        outside.write_text(self.project_check(old_code), "utf-8")
+        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
+                                             "| check | `python ../shared-ci/check.py` | |\n", "utf-8")
+        versions = session_start.CHECK_VERSIONS + (hashlib.sha256(old_code.encode("utf-8")).hexdigest(),)
+        self.assertEqual(self.in_process("sync_check", CHECK_VERSIONS=versions), "")
+        self.assertEqual(outside.read_text("utf-8"), self.project_check(old_code))
 
 
 if __name__ == "__main__":
