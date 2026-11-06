@@ -113,7 +113,7 @@ Requires Python 3 on PATH. Hooks use the standard library only.
 
 ```bash
 claude plugin marketplace add hwein/docket
-claude plugin install docket@docket-local
+claude plugin install docket@docket
 ```
 
 Then, in a project: `/docket:init`.
@@ -121,12 +121,13 @@ Then, in a project: `/docket:init`.
 Update (restart Claude Code afterwards):
 
 ```bash
-claude plugin marketplace update docket-local
-claude plugin update docket@docket-local
+claude plugin marketplace update docket
+claude plugin update docket@docket
 ```
 
 Claude Code keeps its own copy of each installed version, so a session never runs a half-updated plugin. Every
-push to this repository runs the hook tests on Linux and Windows (`.github/workflows/test.yml`).
+push to this repository runs the hook tests on Linux and Windows (`.github/workflows/test.yml`); the badge on the
+latest commit shows whether they passed.
 
 ## Where things live
 
