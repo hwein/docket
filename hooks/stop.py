@@ -27,7 +27,8 @@ from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (JUDGE_ACK, Paths, box_questions, collect_judge, config_values, hook_outputs, load_state,
+from docket_lib import (JUDGE_ACK, Paths, box_questions, check_commands, collect_judge, config_values, hook_outputs,
+                        load_state,
                         log_event, log_lines, log_time, message_text, point_counts, previous_turn_texts, read_input,
                         refuse, release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
                         transcript_blocks)
@@ -207,26 +208,33 @@ def sealed_problems(text, state, paths, hook_input):
 def provenance_problems(body, spec_id, paths, hook_input):
     """The evidence standard, checked at the one moment it matters: DOCKET DELIVERED.
 
-    1. The project's check (DOCKET.md `check`) ran in this session after the last agent returned.
+    1. Every command of the project's check (DOCKET.md `check`, as many as the project has) ran in this session
+       after the last agent returned, alone or together with others, and its last run did not fail.
     2. Every file:line the docket cites exists and has that many lines.
     3. Every reference doc the spec names is marked in the docket as updated (and the file changed
        after sealing) or as not needed.
     """
     problems = []
-    check = config_values(paths).get("check", "")
     blocks = transcript_blocks(hook_input.get("transcript_path"))
-    if check and blocks:
+    commands = check_commands(paths)
+    if commands and blocks:
         agent_ids = {b.get("id") for _, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
                      and b.get("name") == "Agent"}
         last_return = max((i for i, role, b in blocks if role == "user" and b.get("type") == "tool_result"
                            and b.get("tool_use_id") in agent_ids), default=-1)
-        last_check = max((i for i, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
-                          and b.get("name") in ("Bash", "PowerShell")
-                          and check in str((b.get("input") or {}).get("command", ""))), default=-1)
-        if last_check < 0:
-            problems.append(f"the check `{check}` never ran in this session; run it yourself and cite its result line")
-        elif last_return > last_check:
-            problems.append(f"the check `{check}` last ran before the last agent returned; run it again yourself")
+        failed = {b.get("tool_use_id") for _, role, b in blocks
+                  if role == "user" and b.get("type") == "tool_result" and b.get("is_error")}
+        shell = [(i, b) for i, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
+                 and b.get("name") in ("Bash", "PowerShell")]
+        for command in commands:
+            # One call per command or one call for several: what counts is the last call that contains it.
+            runs = [(i, b) for i, b in shell if command in str((b.get("input") or {}).get("command", ""))]
+            if not runs:
+                problems.append(f"the check `{command}` never ran in this session; run it yourself")
+            elif last_return > runs[-1][0]:
+                problems.append(f"the check `{command}` last ran before the last agent returned; run it again yourself")
+            elif runs[-1][1].get("id") in failed:
+                problems.append(f"the check `{command}` failed in its last run; the point is not delivered")
     missing = []
     for match in FILE_LINE.finditer(body):
         rel, line = match.group(1), int(match.group(2))

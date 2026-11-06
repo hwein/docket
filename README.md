@@ -86,8 +86,9 @@ While it runs, your messages go to an inbox the orchestrator reads between point
 Hooks check provenance, form and state, never content.
 
 - Specs freeze at `ready`; the docket is append-only; `LOG.md` is written by hooks only.
-- `DOCKET DELIVERED` passes only if the check ran after the last agent returned, every cited `file:line`
-  exists, and every reference doc the spec names is updated or accounted for.
+- `DOCKET DELIVERED` passes only if every command of the project's check (as many as the project has, listed in
+  `DOCKET.md`) ran after the last agent returned and none failed, every cited `file:line` exists, and every
+  reference doc the spec names is updated or accounted for.
 - Project rules from `DOCKET.md` (branch, commit form, forbidden paths) apply to every command. A forbidden
   command is not refused but put to you as a permission dialog: one click runs it once, and the LOG records the
   grant. A sealed run has nobody to ask, so there it stays refused.
@@ -103,9 +104,9 @@ Hooks check provenance, form and state, never content.
   at most, no option menus, no manual tasks for you beyond the one step of a blocker, no promises, no self-talk.
   Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts go to Claude and the
   log, never to your screen: Claude answers them with silence.
-- What `/docket:init` copied into your project (the judge entry, the check script's code) follows the plugin: every
-  session start brings it to the installed version, so an update needs no second init. Your check commands and a
-  check script whose code you changed stay as they are.
+- docket adds no code to your repository. The judge entry `/docket:init` writes into `.claude/settings.json`
+  follows the plugin: every session start brings it to the installed version, so an update needs no second init; a
+  judge you changed stays as it is.
 
 ## Install
 
@@ -131,9 +132,8 @@ latest commit shows whether they passed.
 
 ## Where things live
 
-- Plugin: this repository, installed as Claude Code's own copy. `/docket:init` copies two things into your
-  project: the judge hook into `.claude/settings.json` (only if you opt in) and, if the project has no check
-  script, `scripts/check.py`. Both follow the plugin at every session start.
+- Plugin: this repository, installed as Claude Code's own copy. In your project `/docket:init` writes only the
+  judge hook into `.claude/settings.json`, and only if you opt in; it follows the plugin at every session start.
 - Project: `.claude/docket/` for session state (gitignored).
 - Work dir with `DOCKET.md`, `specs/`, `dockets/`, `LOG.md`: `~/.docket/<repo key>/` by default, with its own
   git history. `/docket:init` offers `docket/` inside the repo instead.
@@ -144,14 +144,14 @@ latest commit shows whether they passed.
 commands/   concept, spec, implement, init, register, status, stop
 agents/     conceptor, refiner, implementer, fixer
 hooks/      hooks.json, Python hooks, tests
-templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, check.py, judge-hook.json
+templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, judge-hook.json
 ```
 
 Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.7, an early stage of development, already in use in several repositories.
+0.2.8, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

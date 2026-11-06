@@ -24,7 +24,7 @@ One paragraph: what users or operators get, and why now.
 
 ## Points
 
-Each point has a done criterion that a hook or the check script can verify: a command and its expected
+Each point has a done criterion that a hook or the project's check commands can verify: a command and its expected
 result, or a file and what it must contain. A criterion describes the mechanism of the check, never the
 outcome in prose.
 

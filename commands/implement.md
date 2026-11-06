@@ -58,8 +58,9 @@ DOCKET.md marks complex starts at opus). Briefing: spec path and point number, d
 quoted from DOCKET.md and CONTRIBUTING.md, at most three orchestrator hints, the report format (facts with source,
 `Unverified:` line). While an agent runs you change nothing in the repo.
 
-After each return: read the diff completely, run the check from DOCKET.md yourself (verbatim as registered; the
-Stop hook refuses DOCKET DELIVERED unless the check ran after the last agent returned), compare with the acceptance
+After each return: read the diff completely, run every command of the check from DOCKET.md yourself (verbatim as
+registered, one call each or together; the Stop hook refuses DOCKET DELIVERED unless each ran after the last agent
+returned and none failed in its last run), compare with the acceptance
 line. Green: `fixer` flips the point to `[x]` and appends the evidence line (command → result, commit in words);
 the hook logs every flip. Cite locations as `path/file.ext:line` relative to the repo; the Stop hook verifies
 each one exists.

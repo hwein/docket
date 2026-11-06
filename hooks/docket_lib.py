@@ -143,6 +143,21 @@ def config_values(paths):
     return values
 
 
+def check_commands(paths):
+    """The project's check from DOCKET.md: every command in backticks in the `check` row, as many as the project
+    has (`npm run check`, `npm test`); a row without backticks is one command. Placeholders count as none."""
+    try:
+        with open(paths.config, encoding="utf-8-sig", errors="ignore") as handle:
+            for line in handle:
+                cells = [cell.strip().replace("\\|", "|") for cell in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+                if len(cells) >= 2 and cells[0].lower() == "check":
+                    commands = re.findall(r"`([^`]+)`", cells[1]) or ([cells[1]] if cells[1] else [])
+                    return [c.strip() for c in commands if c.strip() and not c.strip().startswith("<")]
+    except OSError:
+        pass
+    return []
+
+
 def find_document(directory, doc_id):
     """The one file under <directory>/<topic>/ whose name starts with the id."""
     if not doc_id or not os.path.isdir(directory):

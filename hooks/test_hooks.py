@@ -801,6 +801,32 @@ class Provenance(Project):
         code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
         self.assertEqual(code, 0, err)
 
+    def several(self, *commands):
+        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
+                                             "| check | `npm run check` `npm test` | ci.yml |\n", "utf-8")
+        blocks = [("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}}),
+                  ("user", {"type": "tool_result", "tool_use_id": "a1", "content": "done"})]
+        for n, (command, failed) in enumerate(commands):
+            blocks.append(("assistant", {"type": "tool_use", "id": f"b{n}", "name": "Bash", "input": {"command": command}}))
+            blocks.append(("user", {"type": "tool_result", "tool_use_id": f"b{n}", "is_error": failed,
+                                    "content": "Exit code 1" if failed else "ok"}))
+        self.write_transcript(blocks)
+        self.set_state(mode="sealed", spec=SPEC)
+        return self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+
+    def test_a_check_of_several_commands_passes_alone_or_together(self):
+        self.assertEqual(self.several(("npm run check && npm test", False))[0], 0)
+        self.assertEqual(self.several(("npm run check", False), ("npm test", False))[0], 0)
+
+    def test_every_command_of_the_check_must_run_and_none_may_fail(self):
+        code, err, _ = self.several(("npm run check", False))
+        self.assertEqual(code, 2)
+        self.assertIn("`npm test` never ran", err)
+        code, err, _ = self.several(("npm run check", False), ("npm test", True))
+        self.assertEqual(code, 2)
+        self.assertIn("`npm test` failed", err)
+        self.assertEqual(self.several(("npm test", True), ("npm run check && npm test", False))[0], 0)
+
     def test_placeholder_check_is_not_a_check(self):
         (self.work / "DOCKET.md").write_text("| check | `<command that exits 0>` | |\n", "utf-8")
         self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
@@ -1448,29 +1474,19 @@ class Clock(Project):
 
 
 class CopySync(Project):
-    """The judge entry and the check script that /docket:init copied into the project follow the plugin at every
-    session start; nobody runs init again (2026-11-06: the judge in luradb-web-client was five versions behind)."""
+    """The judge entry /docket:init wrote into the project follows the plugin at every session start; nobody runs
+    init again (2026-11-06: the judge in luradb-web-client was five versions behind)."""
 
     TEMPLATE = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))["hooks"]["Stop"][0]["hooks"][0]
-    CHECK = (HOOKS.parent / "templates" / "check.py").read_text("utf-8").replace("\r\n", "\n")
 
     def setUp(self):
         super().setUp()
-        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
-                                             "| check | `python scripts/check.py` | |\n", "utf-8")
-        self.script = self.root / "scripts" / "check.py"
-        self.script.parent.mkdir()
 
     def start(self):
         return run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
 
     def settings(self, hooks):
         (self.root / ".claude" / "settings.json").write_text(json.dumps({"hooks": hooks, "model": "x"}), "utf-8")
-
-    def project_check(self, code=None):
-        head, rest = self.CHECK.split("\nCOMMANDS = [", 1)
-        commands = '\nCOMMANDS = [\n    ("test", "npm test"),\n]\n'
-        return "# project comment\n" + head + commands + (code if code is not None else rest.split("\n]\n", 1)[1])
 
     def in_process(self, function, **patched):
         sys.path.insert(0, str(HOOKS))
@@ -1530,61 +1546,6 @@ class CopySync(Project):
         self.assertEqual((self.root / ".claude" / "settings.json").read_text("utf-8"), before)
         self.assertNotIn("judge-updated", self.log())
 
-    def test_the_template_code_is_a_known_version(self):
-        sys.path.insert(0, str(HOOKS))
-        import hashlib
-        import session_start
-        code = session_start.split_check(self.CHECK)[1]
-        self.assertIn(hashlib.sha256(code.encode("utf-8")).hexdigest(), session_start.CHECK_VERSIONS,
-                      "templates/check.py changed its code: append its hash to CHECK_VERSIONS in session_start.py")
-
-    def test_an_old_copy_of_the_check_gets_the_new_code_and_keeps_its_head_and_commands(self):
-        sys.path.insert(0, str(HOOKS))
-        import hashlib
-        import session_start
-        old_code = "\n\ndef main():\n    print('check: old')\n    return 0\n"
-        self.script.write_text(self.project_check(old_code), "utf-8")
-        saved_versions, saved_env = session_start.CHECK_VERSIONS, os.environ.get("CLAUDE_PROJECT_DIR")
-        session_start.CHECK_VERSIONS = saved_versions + (hashlib.sha256(old_code.encode("utf-8")).hexdigest(),)
-        os.environ["CLAUDE_PROJECT_DIR"] = self.p
-        try:
-            changed = session_start.sync_check(session_start.Paths({"cwd": self.p}))
-        finally:
-            session_start.CHECK_VERSIONS = saved_versions
-            if saved_env is None:
-                os.environ.pop("CLAUDE_PROJECT_DIR", None)
-            else:
-                os.environ["CLAUDE_PROJECT_DIR"] = saved_env
-        self.assertEqual(changed, "scripts/check.py")
-        text = self.script.read_text("utf-8")
-        self.assertTrue(text.startswith("# project comment\n"))
-        self.assertIn('("test", "npm test")', text)
-        self.assertNotIn("check: old", text)
-        self.assertEqual(text, self.project_check())
-
-    def test_a_current_or_changed_check_stays(self):
-        self.script.write_text(self.project_check(), "utf-8")
-        self.start()
-        self.assertEqual(self.script.read_text("utf-8"), self.project_check())
-        custom = self.project_check("\n\ndef main():\n    return run_my_own_way()\n")
-        self.script.write_text(custom, "utf-8")
-        self.start()
-        self.assertEqual(self.script.read_text("utf-8"), custom)
-        self.assertNotIn("check-updated", self.log())
-
-    def test_a_check_outside_the_project_is_never_written(self):
-        sys.path.insert(0, str(HOOKS))
-        import hashlib
-        import session_start
-        outside = self.tmp / "shared-ci" / "check.py"
-        outside.parent.mkdir()
-        old_code = "\n\ndef main():\n    return 0\n"
-        outside.write_text(self.project_check(old_code), "utf-8")
-        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
-                                             "| check | `python ../shared-ci/check.py` | |\n", "utf-8")
-        versions = session_start.CHECK_VERSIONS + (hashlib.sha256(old_code.encode("utf-8")).hexdigest(),)
-        self.assertEqual(self.in_process("sync_check", CHECK_VERSIONS=versions), "")
-        self.assertEqual(outside.read_text("utf-8"), self.project_check(old_code))
 
 
 if __name__ == "__main__":

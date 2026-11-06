@@ -15,8 +15,9 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    language (comments, README, issues); commenting (comment lines per code line per language: sparse < 5 %,
    normal, verbose > 15 %; existing section markers); forbidden paths and content (.gitignore, guard hooks,
    CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules).
-   Also: existing CLAUDE.md, AGENTS.md, CONTRIBUTING.md, hooks, commands, skills, permissions; a check script with
-   exit code and one result line. For every existing hook, command or skill, say what it does in one line and
+   Also: existing CLAUDE.md, AGENTS.md, CONTRIBUTING.md, hooks, commands, skills, permissions; the commands that
+   make up the project's own check (CI workflow, package scripts, Makefile, CONTRIBUTING), as many as it has. For
+   every existing hook, command or skill, say what it does in one line and
    whether the plugin does the same (write guard on specs, timestamp check, report limit, read redirect,
    required reading, mode switch): a duplicate gets one card, replace (project hook disabled in the diff) or keep
    (both run).
@@ -33,10 +34,9 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    once there, session start keeps the entry equal to the plugin's template, so a plugin update reaches it). Existing CLAUDE.md, AGENTS.md or CONTRIBUTING.md receive the
    decisions where they already treat the topic, otherwise as a marked section; no existing sentence changes before
    the user decided the contradiction. Missing files of those three are created only on explicit wish.
-   Without a check script that exits non-zero on failure and prints one result line, the diff adds
-   `${CLAUDE_PLUGIN_ROOT}/templates/check.py` as `scripts/check.py` with the project's commands filled in, and
-   registers it as `check`; session start keeps its code (everything after COMMANDS) equal to the template while
-   the project has not changed that code. When the work dir is the home default, the hooks keep it under its own git history
+   The `check` row lists those commands, each in backticks, in the order the project runs them, with their source
+   (`npm run check`, `npm test` from `.github/workflows/ci.yml:19-20`); docket adds no file of its own to the repo.
+   When the work dir is the home default, the hooks keep it under its own git history
    (`git init` on the first LOG line); for `docket/` inside the repo or a second repo, the diff says which.
    New repo: `git init`, remote (existing / create via `gh repo create` / none), all eleven questions.
    Questions 1, 2, 10 and 11 also become the configuration keys `push_branch`, `commit_regex`, `forbidden_paths`

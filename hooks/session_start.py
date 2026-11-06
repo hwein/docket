@@ -16,19 +16,11 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (SPEC_ID, Paths, absolute, config_values, load_state, log_event, log_lines, point_counts,
-                        read_input, save_state, under, violations_line)
+from docket_lib import (SPEC_ID, Paths, load_state, log_event, log_lines, point_counts, read_input, save_state,
+                        violations_line)
 
 TERMINAL_EVENTS = ("delivered", "blocked", "dissent")
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CHECK_MARKER = "The project's check: one command, one result line"
-# SHA-256 of every version of the code after the COMMANDS block in templates/check.py (LF line ends). A project copy
-# whose code matches one of them is docket's own and follows the template; code the project changed stays as it is.
-# A change to the template's code appends its hash here (test_the_template_code_is_a_known_version).
-CHECK_VERSIONS = (
-    "6256f39287468bc17631bbd1fc9d68a7ecc9229ada13cdb6c0a1e62287c7d3f3",  # 7cd023d .. 2087323
-    "09cf57b14dc638eff0579cd207f65927e5a5ee9221842ad7be64783ff572653b",  # 0.2.7: marker line below COMMANDS
-)
 # SHA-256 of the judge entry (JSON, sorted keys) in every version of templates/judge-hook.json. A change to the
 # template appends its hash here (test_the_template_judge_is_a_known_version).
 JUDGE_VERSIONS = (
@@ -92,17 +84,13 @@ def main():
 
 
 def sync_copies(paths, session_id):
-    """/docket:init copies two files into the project: the judge hook into .claude/settings.json and the check
-    script. A plugin update reaches them here, at every session start, so no project runs an old copy and nobody
-    has to run init again (2026-11-06: the judge in luradb-web-client was five template versions behind)."""
+    """/docket:init writes one thing into the project's settings: the judge hook (opt-in). A plugin update reaches
+    it here, at every session start, so no project runs an old judge and nobody has to run init again
+    (2026-11-06: the judge in luradb-web-client was five template versions behind). docket adds no code file."""
     notes = []
     if sync_judge(paths):
         log_event(paths, session_id, "", "judge-updated", "from templates/judge-hook.json")
         notes.append("[docket] The judge in .claude/settings.json now follows the plugin's version.")
-    check = sync_check(paths)
-    if check:
-        log_event(paths, session_id, "", "check-updated", check)
-        notes.append(f"[docket] The code of {check} now follows the plugin's version; its commands stayed.")
     return notes
 
 
@@ -150,46 +138,6 @@ def sync_judge(paths):
         except OSError:
             return False
     return changed
-
-
-def split_check(text):
-    """(head with the COMMANDS block, code after it) or None."""
-    start = text.find("\nCOMMANDS = [")
-    end = text.find("\n]\n", start) if start >= 0 else -1
-    if end < 0:
-        return None
-    return text[:end + 3], text[end + 3:]
-
-
-def sync_check(paths):
-    """The check script docket copied keeps its head and commands; its code follows the template while it is an
-    unchanged copy of an earlier template. Returns the script's path relative to the root, or ""."""
-    found = re.search(r"([^\s\"'`]+\.py)\b", config_values(paths).get("check", ""))
-    if not found:
-        return ""
-    path = absolute(found.group(1), paths.root)
-    if not under(path, paths.root):
-        return ""  # a script outside the project is not docket's copy
-    try:
-        with open(path, encoding="utf-8", newline="") as handle:
-            text = handle.read()
-        with open(posixpath.join(PLUGIN, "templates", "check.py"), encoding="utf-8") as handle:
-            template = handle.read().replace("\r\n", "\n")
-    except OSError:
-        return ""
-    crlf = "\r\n" in text
-    text = text.replace("\r\n", "\n")
-    project, current = split_check(text), split_check(template)
-    if CHECK_MARKER not in text or not project or not current or project[1] == current[1]:
-        return ""
-    if hashlib.sha256(project[1].encode("utf-8")).hexdigest() not in CHECK_VERSIONS:
-        return ""  # the project changed the code: it stays
-    updated = project[0] + current[1]
-    try:
-        write_atomically(path, updated.replace("\n", "\r\n") if crlf else updated)
-    except OSError:
-        return ""
-    return path[len(paths.root):].lstrip("/")
 
 
 def points_summary(paths, spec_id):

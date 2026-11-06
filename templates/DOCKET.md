@@ -9,7 +9,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 |---|---|---|
 | work_dir | `<path>` | /docket:init |
 | topics | `<topic1>, <topic2>` | folders under specs/ |
-| check | `<command that exits 0 and prints one result line, e.g. "tests 42 passed">` | |
+| check | `<first command of the project's check>` `<further commands, as many as the project has>` | <where the project runs them, e.g. the CI workflow> |
 | reference_roots | `<docs/, README.md, ...>` (what IS; specs say what SHOULD) | |
 | model_ladder | fixer: claude-haiku-5-5 · implementer round 1: claude-sonnet-5-5 · round 2+: claude-opus-5-5 · refiners: claude-sonnet-5-5 | |
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |

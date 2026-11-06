@@ -24,7 +24,7 @@ spec is `ready`.
 ## Writing the spec
 
 - Goal in one paragraph: what users or operators get.
-- Points: each with a done criterion that a hook or the check script can run. Write the mechanism
+- Points: each with a done criterion that a hook or the project's check commands can run. Write the mechanism
   (`<command> → <expected result>`, or `<file> contains <x>`), never the outcome in prose. A point without a
   verifiable criterion does not pass the ready gate.
 - Reference update: name every reference file that changes, or `none` with the reason. The spec is not the
