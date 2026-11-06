@@ -130,7 +130,7 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.3, an early stage of development, already in use in several repositories.
+0.2.4, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of
