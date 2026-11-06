@@ -16,8 +16,8 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    normal, verbose > 15 %; existing section markers); forbidden paths and content (.gitignore, guard hooks,
    CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules); language of every
    message to the user, in every mode, which is a question of its own because it is not the language of the repo
-   (an English repo, a German author: luradb-web-client 2026-11-06) and is answered from the language the user
-   writes in this session.
+   (an English repo, a German author: luradb-web-client 2026-11-06); its finding is the language the user writes
+   in this session.
    Also: existing CLAUDE.md, AGENTS.md, CONTRIBUTING.md, hooks, commands, skills, permissions; the commands that
    make up the project's own check (CI workflow, package scripts, Makefile, CONTRIBUTING), as many as it has. For
    every existing hook, command or skill, say what it does in one line and
@@ -29,7 +29,9 @@ only where the repo is silent or contradicts itself. Nothing is written before t
 3. Interview: unambiguous findings are listed once ("adopted, source") and confirmed in one go at the end.
    Ambiguous and silent questions get one card each (AskUserQuestion): both findings with source, the effect in
    one sentence, the recommendation first, answerable with one word. A card never asks two things and never gives
-   the user a task.
+   the user a task. Questions 8 and 12 are told together: the finding on the repo's language is followed at once
+   by the language of the messages to the user (a card when the user's own language differs from the repo's or is
+   not evident), never separated by other questions.
 4. Diff: `DOCKET.md` in the work dir (configuration, repository behaviour or pointers to where the project already
    answers, deviations, audit fingerprints), `.gitignore` lines, the permission rule `Edit(~/.docket/**)` in user
    settings when the work dir is the home default, and the judge hook from `templates/judge-hook.json` into the
