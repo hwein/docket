@@ -91,11 +91,20 @@ class SessionStart(Project):
         self.assertIn("DOCKET.md", out)
         self.assertTrue(self.state()["degraded"])
 
-    def test_without_docket_md_only_observes(self):
+    def test_without_docket_md_prints_nothing(self):
         (self.work / "DOCKET.md").unlink()
         code, err, out = run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
         self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_without_docket_md_a_docket_command_names_init(self):
+        (self.work / "DOCKET.md").unlink()
+        code, err, out = self.prompt("/docket:status")
+        self.assertEqual(code, 0, err)
         self.assertIn("/docket:init", out)
+        code, err, out = self.prompt("hello")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("[docket]", out)
 
 
 class ModeSwitch(Project):

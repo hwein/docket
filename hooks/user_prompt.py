@@ -124,6 +124,9 @@ def main():
 
     mode = state.get("mode", "none")
     lines = []
+    if name and name != "init" and mode == "none" and not os.path.isfile(paths.config):
+        lines.append(f"[docket] No DOCKET.md at {paths.work}. Run /docket:init to set this project up; "
+                     "until then the docket hooks only observe.")
     if mode != "none":
         lines.append(f"[docket] Mode {mode}" + (f", spec {state['spec']}" if state.get("spec") else "")
                      + ". " + REMINDERS.get(mode, ""))

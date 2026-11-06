@@ -2,6 +2,7 @@
 
 Marks the session degraded: required reading has not been observed. Prints the
 reminder as additional context: state, spec, the docket's point count, the last LOG line.
+In a project without DOCKET.md it prints nothing: the hooks only observe there.
 The degraded flag lifts in pre_tool_use once every required file has been read with Read.
 A docket that was sealed but never reached a terminal state is named, so the next
 /implement resumes it instead of starting over.
@@ -32,6 +33,8 @@ def main():
     spec_id = state.get("spec", "")
     if mode in ("sealed", "rewrite") and source in ("resume", "compact"):
         log_event(paths, session_id, spec_id, "resumed", f"source={source}")
+    if mode == "none" and not os.path.isfile(paths.config):
+        return 0  # project not set up: nothing to say; user_prompt names /docket:init when a docket command is typed
     lines = [f"[docket] session state: {mode}" + (f", spec {spec_id}" if spec_id else "") + "."]
     if os.path.isfile(paths.config):
         lines.append("[docket] Required reading before any other action, each file completely with Read: "
@@ -41,9 +44,6 @@ def main():
                      "or fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
                      "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or the line `[docket] noted`; "
                      "repeat a message only when the hook says it was held back and never shown.")
-    else:
-        lines.append(f"[docket] No DOCKET.md at {paths.work}. Run /docket:init to set this project up; "
-                     "until then the docket hooks only observe.")
     if mode in ("sealed", "rewrite"):
         lines.append(f"[docket] A sealed implementation of {spec_id} is in progress: {points_summary(paths, spec_id)}. "
                      f"Continue from the docket at {paths.docket_file(spec_id) or paths.dockets} "
