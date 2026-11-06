@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "s=\"${CLAUDE_PLUGIN_ROOT}/hooks/user_prompt.py\"; [ -f \"$s\" ] || exit 0; p=$(command -v python || command -v python3); \"$p\" \"$s\"",
-            "timeout": 20
+            "timeout": 120
           }
         ]
       }

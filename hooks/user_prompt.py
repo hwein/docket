@@ -3,9 +3,10 @@
 Switches the session mode on /docket:concept, /docket:spec, /docket:implement, /docket:init, /docket:stop.
 /docket:implement takes a spec, a list of specs, a concept (its ready specs), --all or nothing (the next
 ready spec); several specs are a series: the first is sealed, the rest wait in the state's queue and the
-Stop hook seals each after the previous DOCKET DELIVERED (resolve_implement).
-In sealed mode, free text does not reach the model: it is stored in the inbox and the
-prompt is blocked (exit 2 shows the notice to the user). Every turn gets a two-line
+Stop hook seals each after the previous one's docket states DELIVERED (resolve_implement).
+Before sealing, the user-only preconditions of every spec of the run are checked (V12); the judge is suspended
+for the run (V5). In sealed mode, free text does not reach the model: it is stored in the inbox and the prompt is
+blocked with a notice in the user's language (exit 2 shows it; not counted as a violation). Every turn gets a
 mode reminder as additional context.
 """
 import os
@@ -16,9 +17,12 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (CONCEPT_ID, SPEC_ID, Paths, clock_line, config_values, display_path, load_state, lock_holder,
-                        log_event, open_predecessors, read_input, ready_specs, refuse, save_display, save_state,
-                        set_context, set_spec_state, strip_harness_blocks, take_lock, violations_line)
+from docket_lib import (CONCEPT_ID, RUN_MODES, SPEC_ID, Paths, claim_lock, clock_line, config_values, display_path,
+                        load_state,
+                        lock_holder, log_event, logged_series, notice, open_predecessors, precondition_result,
+                        preconditions, queued_elsewhere, read_input, ready_specs, refuse, save_display, save_state, say,
+                        series_line, session_live, set_context, set_spec_state, spec_title, strip_harness_blocks,
+                        suspend_judge, terminal_base, violations_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
@@ -35,14 +39,14 @@ REMINDERS = {
     "init": ("Audit first, ask second: evidence from the repo with its source for every question; cards only where "
              "the repo is silent or contradicts itself. Write nothing before the diff is approved."),
     "sealed": ("The spec is sealed. No questions to the user; defaults plus a 'deviation' line in the docket. "
-               "Nothing you did not fetch yourself is a fact. The user sees none of your messages during the run "
-               "(the hook shows a status line instead), only the terminal message: DOCKET DELIVERED, DOCKET BLOCKED "
-               "or DOCKET DISSENT, line 2 the spec's title and the result in one sentence, line 3 what only the user "
-               "must do (`Du musst …` / `You must …`) or `Nichts zu tun` / `Nothing to do`, then one line per point "
-               "named by its content, nothing about hooks, last line `stamp: YYYY-MM-DD HH:MM <spec-id> "
-               "<delivered>/<points>` with the docket's current counts."),
+               "Nothing you did not fetch yourself is a fact. You write no text during the run: a turn that waits "
+               "for agents ends without text, and a spec ends in its docket's `## Terminal state` section (`state:`, "
+               "`result:`, `open:`, `user:`, `decision:`), then the turn ends without text. The hook then seals the "
+               "next spec of the series or hands you the run's one message to send verbatim. When the harness asks "
+               "what you are doing, answer in at most five words, no stamp."),
     "rewrite": ("Rewrite mode: only the conceptor agent edits the named spec, and it records the rewrite with date "
                 "and reason in the spec."),
+    "closing": "The run is over: send the closing message the hook rendered, verbatim, and nothing else.",
     "closed": ("The implementation is closed. Answer only from the docket, shorter when not understood; "
                "propose nothing, start nothing. A new command opens the next mode."),
     "none": "",
@@ -52,6 +56,8 @@ WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`: the ti
              "now, never remembered; the hook refuses the message otherwise. Sent back: do exactly what the hook asks "
              "(the stamp line alone, correction lines, or after a judge verdict an empty answer); repeat a message "
              "only when it says it was held back.")
+RUN_RULE = ("In a sealed run you write no text and no stamp: the run's one message is the closing message the hook "
+            "renders at its end. A turn that waits for agents ends without text.")
 
 
 # A concept command whose order is to write or rework specs (legacy session 2026-11-05: "überarbeite die specs in
@@ -90,6 +96,9 @@ def main():
     # A new turn of the user: what the display gate held back or let through in the last one is settled.
     if os.path.isfile(display_path(paths, session_id)):
         save_display(paths, session_id, {"hidden": [], "pending": {}, "retry": False})
+    if state.get("refused"):
+        state["refused"] = False  # a new turn of the user: the next Stop is a first pass
+        save_state(paths, session_id, state)
     feedback = ""
     # A command may sit on its own line below a preamble (sessions started by another session).
     command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")
@@ -104,24 +113,55 @@ def main():
         if problem:
             return refuse(problem)
         # Several specs are a series: the first is sealed now, the rest follow in this session, one after another,
-        # each with its own docket and terminal message (luradb-web-client 2026-11-06: five ids in one call, the
-        # first was sealed, four vanished without a word).
+        # each with its own docket; the run ends in one message for all of them (docket_lib.render_closing).
         spec_id, queue = found[0], found[1:]
-        if state.get("mode") in ("sealed", "rewrite") and state.get("spec") != spec_id:
-            return refuse(f"[docket] This session is sealed on {state.get('spec')}. Finish it or run /docket:stop.")
+        title = lambda spec: spec_title(paths, spec) or spec
+        if state.get("mode") in RUN_MODES and state.get("spec") != spec_id:
+            return notice("[docket] " + say(paths, "sealed_on", title=title(state.get("spec", ""))))
         for candidate in found:
             holder = lock_holder(paths, candidate)
             if holder and holder != session_id and held_by_live_session(paths, holder, candidate):
-                return refuse(f"[docket] {candidate} is sealed in session {holder[:8]}. Finish or /docket:stop it "
-                              f"there; the lock is {paths.lock_file(candidate)}.")
+                return notice("[docket] " + say(paths, "sealed_elsewhere", title=title(candidate)))
+            if queued_elsewhere(paths, candidate, session_id):
+                return notice("[docket] " + say(paths, "queued_in", title=title(candidate)))
+        # V12: what only the user can provide (a key, a running server) is checked before the session seals
+        # (luradb-web-client 2026-11-06: the test server's key was invalid at sealing, the live test never ran). The
+        # commands come from specs the user approved; forbidden_commands keeps its word here too.
+        forbidden = config_values(paths).get("forbidden_commands", "")
         for candidate in found:
-            take_lock(paths, candidate, session_id)
-        state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False, "queue": queue})
+            for command, expected in preconditions(paths, candidate):
+                try:
+                    if forbidden and re.search(forbidden, command):
+                        return notice("[docket] " + say(paths, "forbidden_precondition", command=command,
+                                                        title=title(candidate)))
+                except re.error:
+                    pass
+                ok, got = precondition_result(paths, command, expected)
+                if not ok:
+                    log_event(paths, session_id, candidate, "precondition", f"`{command[:60]}` {got}")
+                    return notice("[docket] " + say(paths, "precondition", title=title(candidate), command=command,
+                                                    expected=expected or "exit 0", got=got))
+        # Only the spec at work is locked, exclusively; the ones waiting are named in this session's queue, which
+        # other sessions respect while this one runs (V13: a lock on a spec never started outlived a crashed series).
+        if claim_lock(paths, spec_id, session_id):
+            return notice("[docket] " + say(paths, "sealed_elsewhere", title=title(spec_id)))
+        resume = state.get("mode") in RUN_MODES and state.get("spec") == spec_id and found == [spec_id]
+        outcomes, base = {}, terminal_base(paths, spec_id)
+        if resume:
+            # The resume of the spec at work in this session (the halted line's command): the series stays, and a
+            # Terminal state block this run wrote still counts.
+            queue, found = list(state.get("queue") or []), list(state.get("series") or found)
+            outcomes, base = dict(state.get("outcomes") or {}), int(state.get("terminal_base", 0) or 0)
+        state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False, "queue": queue, "series": found,
+                      "outcomes": outcomes, "refused": False, "closing": None, "halted": False,
+                      "terminal_base": base})
         save_state(paths, session_id, state)
         log_event(paths, session_id, spec_id, "sealed")
         if queue:
             log_event(paths, session_id, spec_id, "queued", ", ".join(queue))
         set_spec_state(paths, spec_id, "in-progress")
+        if suspend_judge(paths, session_id):
+            log_event(paths, session_id, spec_id, "judge-suspended")
         feedback = violations_line(paths, spec_id)
     elif name == "stop":
         if state.get("mode") in ("sealed", "rewrite"):
@@ -132,22 +172,29 @@ def main():
         state.update({"mode": "init", "spec": "", "init_approved": False})
         save_state(paths, session_id, state)
     elif name in ("status", "register"):
-        pass  # read-only: no mode change
+        # read-only: no mode change; a series of this session or an interrupted one is named with its titles (V13)
+        mine = (session_id or "")[:8]
+        feedback = "\n".join(series_line(paths, series, live=series["session"] == mine)
+                             for series in logged_series(paths)[-3:]
+                             if series["session"] == mine or "interrupted" in series["status"].values())
     elif state.get("mode") == "init" and GO.match(text):
         # The diff is approved on the user's one word; only now may init write project files.
         state["init_approved"] = True
         save_state(paths, session_id, state)
         log_event(paths, session_id, "", "init-approved")
     elif name in ("concept", "spec"):
-        if state.get("mode") in ("sealed", "rewrite"):
+        if state.get("mode") in RUN_MODES:
             return refuse(f"[docket] Sealed on {state.get('spec')}: finish it or run /docket:stop first.")
         state.update({"mode": name, "spec": ""})
         save_state(paths, session_id, state)
     elif state.get("mode") in ("sealed", "rewrite") and not command_line:
         store_inbox(paths, state.get("spec", ""), text)
         log_event(paths, session_id, state.get("spec", ""), "inbox")
-        return refuse("[docket] Noted for the next checkpoint; the orchestrator reads the inbox between "
-                      "points. Use /docket:stop to end the run.")
+        # V11: the notice is for the user, in the user's language, and no rule was broken.
+        if state.get("halted"):
+            rest = ", ".join([state.get("spec", "")] + list(state.get("queue") or []))
+            return notice("[docket] " + say(paths, "inbox_halted", specs=rest))
+        return notice("[docket] " + say(paths, "inbox"))
 
     mode = state.get("mode", "none")
     lines = []
@@ -159,8 +206,8 @@ def main():
                      + ". " + REMINDERS.get(mode, ""))
         if mode in ("sealed", "rewrite") and state.get("queue"):
             lines.append("[docket] Queued after this spec, in order: " + ", ".join(state["queue"])
-                         + ". After its DOCKET DELIVERED the hook seals the next one in this session and tells you; "
-                         "until then it does not exist for you.")
+                         + ". When this spec's docket states DELIVERED the hook seals the next one in this session and "
+                         "tells you; until then it does not exist for you.")
         if mode != "concept":
             lines.append(ambition())  # in concept mode it pushed past the stop (legacy session 2026-11-05)
         language = config_values(paths).get("user_language", "")
@@ -169,7 +216,10 @@ def main():
                          "the hook refuses a message in another language. Agents are briefed in the language of the spec.")
     if name == "concept" and asks_for_specs(rest):
         lines.append(SPEC_REQUEST_LINE)  # with the command that carries the order; it stays in the context
-    if mode != "none" or os.path.isfile(paths.config):
+    if mode in RUN_MODES:
+        lines.append("[docket] " + RUN_RULE)
+        lines.append(clock_line(paths, session_id, state))
+    elif mode != "none" or os.path.isfile(paths.config):
         lines.append("[docket] " + WATERMARK)
         lines.append(clock_line(paths, session_id, state))
     if feedback:
@@ -234,10 +284,10 @@ def parse_command(line):
 
 
 def held_by_live_session(paths, holder, spec_id):
-    """A lock counts only while its session's state still says sealed on that spec; stale locks are taken over."""
+    """A lock counts only while its session runs on that spec (state sealed, rewrite or closing, touched within the
+    hour); the lock of a crashed or finished session is taken over."""
     other = load_state(paths, holder)
-    return other.get("mode") in ("sealed", "rewrite") and (other.get("spec") == spec_id
-                                                         or spec_id in (other.get("queue") or []))
+    return session_live(paths, holder) and (other.get("spec") == spec_id or spec_id in (other.get("queue") or []))
 
 
 def store_inbox(paths, spec_id, text):

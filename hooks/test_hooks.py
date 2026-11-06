@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -82,6 +83,39 @@ class Project(unittest.TestCase):
         return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
                                     "stop_hook_active": active}, self.p)
 
+    def run_stop(self, message="", active=False, **extra):
+        payload = {"session_id": SID, "cwd": self.p, "last_assistant_message": message, "stop_hook_active": active}
+        payload.update(extra)
+        return run_hook("stop.py", payload, self.p)
+
+    def end_spec(self, kind="DELIVERED", result="Login works, three tests are green.", lines=(), spec_id=SPEC,
+                 review=True):
+        """0.3.0 (V3): a spec ends in its docket's Terminal state section; DELIVERED also needs a decided review."""
+        docket = self.work / "dockets" / "core" / f"{spec_id}.md"
+        body = docket.read_text("utf-8") if docket.exists() else "# Docket\n"
+        if review and "## Review" not in body:
+            body += "\n## Review\n\n- no findings\n"
+        body += "\n## Terminal state\n\n" + f"- state: {kind}\n" + (f"- result: {result}\n" if result else "")
+        docket.write_text(body + "".join(f"- {line}\n" for line in lines), "utf-8")
+
+    def finish(self, message, **extra):
+        """A 0.2.9 terminal message as a 0.3.0 end: its kind goes into the docket's Terminal state and the Stop has no
+        text. 0 when the spec ended (the hook moved on to the closing), else the hook's answer."""
+        kind = message.split()[1] if message.startswith("DOCKET ") else "DELIVERED"
+        if kind == "DELIVERED":
+            self.end_spec()
+        else:
+            self.end_spec("BLOCKED: start Docker" if kind == "BLOCKED" else kind, review=False,
+                          lines=["dissent: a, per src/a.rs", "dissent: b, per src/b.rs"] if kind == "DISSENT" else ())
+        code, err, out = self.run_stop(**extra)
+        if code == 2 and self.state().get("mode") == "closing":
+            return 0, err, out
+        return code, err, out
+
+    def closing(self):
+        path = self.root / ".claude" / "docket" / f"closing-{SID}.md"
+        return path.read_text("utf-8") if path.exists() else ""
+
 
 class SessionStart(Project):
     def test_marks_degraded_and_names_required_reading(self):
@@ -130,8 +164,9 @@ class ModeSwitch(Project):
         self.assertEqual(self.state()["queue"], ["s-aaaa1111", "s-bbbb2222"])
         self.assertIn("Queued after this spec, in order: s-aaaa1111, s-bbbb2222", out)
         self.assertIn("queued", self.log())
-        for spec in (SPEC, "s-aaaa1111", "s-bbbb2222"):
-            self.assertEqual((self.work / "locks" / spec).read_text("utf-8"), SID)
+        self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)  # only the spec at work
+        self.assertFalse((self.work / "locks" / "s-aaaa1111").exists())
+        self.assertEqual(self.state()["series"], [SPEC, "s-aaaa1111", "s-bbbb2222"])
 
     def test_namespaced_commands_are_the_same_commands(self):
         code, _, _ = self.prompt(f"/docket:implement {SPEC}")
@@ -166,7 +201,7 @@ class ModeSwitch(Project):
         self.prompt(f"/implement {SPEC}")
         code, err, _ = self.prompt("please also fix the logo")
         self.assertEqual(code, 2)
-        self.assertIn("inbox", err)
+        self.assertIn("Noted. The run reads your message", err)
         self.assertIn("fix the logo", (self.work / "inbox" / f"{SPEC}.md").read_text("utf-8"))
         self.assertEqual(self.state()["mode"], "sealed")
 
@@ -363,51 +398,127 @@ class SubagentReports(Project):
 
 
 class SealedStop(Project):
+    """0.3.0: a spec ends in its docket, the run in one message the hook renders (luradb-web-client 2026-11-06:
+    four receipts of up to 2,500 characters, 76 bare stamps, no message about the series as a whole)."""
+
     def setUp(self):
         super().setUp()
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("# Docket\n- [x] point 1: tests 3 passed\n", "utf-8")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [x] |\n", "utf-8")
 
-    def test_delivered_closes_session_and_logs(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works, 3 tests, CI green.\nNothing to do.\n{stamp()}")
+    def entries(self, *entries):
+        path = self.tmp / "transcript.jsonl"
+        path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
+        return str(path)
+
+    def spawn(self):
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        return [{"type": "assistant", "timestamp": now,
+                 "message": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "Agent", "input": {}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1",
+                                                          "content": "Async agent launched successfully.\nagentId: a1"}]}}]
+
+    NOTE = "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n</task-notification>"
+
+    def test_delivered_closes_the_spec_and_the_closing_message_closes_the_run(self):
+        self.end_spec()
+        code, err, out = self.run_stop()
+        self.assertEqual(code, 2, err)  # the order to send the closing message, no refusal
+        self.assertEqual(out.strip(), "")
+        self.assertIn(f"closing-{SID}.md", err)
+        self.assertEqual(self.state()["mode"], "closing")
+        self.assertIn(f"{SPEC}  delivered", self.log())
+        self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())
+        text = self.closing()
+        self.assertEqual(text.splitlines()[:4], [
+            "Run finished: “Login” is implemented.",
+            "- Login: 1 of 1 points delivered. Login works, three tests are green.",
+            "Checked: code review without findings.",
+            "Nothing open, nothing to do."])
+        self.assertNotIn(SPEC, text)
+        self.assertTrue(text.splitlines()[-1].startswith("stamp: "))
+        code, err, _ = self.run_stop(text, active=True)
         self.assertEqual(code, 0, err)
         self.assertEqual(self.state()["mode"], "closed")
-        self.assertIn("delivered", self.log())
+        self.assertIn("run-closed", self.log())
 
-    def test_plain_message_is_sent_back(self):
-        code, err, _ = self.stop("I finished the login. Shall I also do the logout?")
+    def test_a_text_without_the_terminal_state_is_sent_back(self):
+        code, err, _ = self.run_stop("I finished the login. Shall I also do the logout?")
         self.assertEqual(code, 2)
-        self.assertIn("terminal state", err)
-        self.assertIn("stamp", err)
+        self.assertIn("Terminal state", err)
+        self.assertNotIn("stamp", err)
         self.assertEqual(self.state()["mode"], "sealed")
 
-    def test_stale_stamp_is_sent_back(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(-21)}")
+    def test_a_docket_message_is_no_end(self):
+        self.end_spec()
+        code, err, _ = self.run_stop(f"DOCKET DELIVERED {SPEC}\nLogin works.\nNothing to do.")
         self.assertEqual(code, 2)
-        self.assertIn("minutes off", err)
+        self.assertIn("no `DOCKET …` message", err)
+        self.assertEqual(self.state()["mode"], "sealed")
 
     def test_open_point_blocks_delivered_but_not_blocked(self):
-        self.docket.write_text("# Docket\nflip `[ ]` to `[x]`\n| 1 | login | `cargo test` | [ ] |\n", "utf-8")
-        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='0/1')}")[0], 2)
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nDocker is not running.\nYou must start Docker.\n{stamp(counts='0/1')}")[0], 0)
-        self.assertEqual(self.state()["terminal"], "blocked")
+        self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [ ] |\n", "utf-8")
+        self.end_spec()
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("still open", err)
+        self.end_spec("BLOCKED: start Docker", result="Login is not built yet.", review=False)
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("closing", {SPEC: "blocked"}))
+        text = self.closing()
+        self.assertIn("Run stopped: “Login” is blocked, 0 of 1 specs implemented.", text)
+        self.assertIn("- Login: blocked at 0 of 1 points. Login is not built yet.", text)
+        self.assertIn("You must: Start Docker.", text)
 
-    def test_blocked_without_docket_closes(self):
+    def test_blocked_with_a_docket_of_its_terminal_state_alone(self):
         self.docket.unlink()
-        code, err, _ = self.stop(f"DOCKET BLOCKED {SPEC}\nWorking tree not clean.\nYou must commit or stash it.\n{stamp()}")
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.state()["terminal"], "blocked")
+        self.end_spec("BLOCKED: the working tree is not clean, commit or stash it", result="Nothing was built.",
+                      review=False)
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["outcomes"], {SPEC: "blocked"})
 
-    def test_background_agent_running_is_not_a_terminal_moment(self):
-        code, _, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": f"waiting for the fixer\n{hstamp()}",
-                                          "stop_hook_active": False, "background_tasks": [{"id": "a1"}]}, self.p)
-        self.assertEqual(code, 0)
+    def test_waits_pass_without_text_or_stamp(self):
+        code, err, _ = self.run_stop("", background_tasks=[{"id": "a1"}])
+        self.assertEqual(code, 0, err)
+        # The agent's notification has not reached the model: still a wait, also when background_tasks is empty.
+        self.assertEqual(self.run_stop(transcript_path=self.entries(*self.spawn()))[0], 0)
+        queued = {"type": "attachment", "attachment": {"type": "queued_command", "prompt": self.NOTE}}
+        self.assertEqual(self.run_stop(transcript_path=self.entries(*self.spawn(), queued))[0], 0)
+        delivered = {"type": "user", "message": {"role": "user", "content": self.NOTE}}
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), delivered))
+        self.assertEqual(code, 2)
+        self.assertIn("Terminal state", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertNotIn("stop-forced", self.log())
+
+    def test_an_empty_turn_never_judges_an_older_text(self):
+        older = {"type": "assistant", "message": {"content": [{"type": "text", "text": f"DOCKET DELIVERED {SPEC}\nok"}]}}
+        code, err, _ = self.run_stop("", transcript_path=self.entries(older))
+        self.assertEqual(code, 2)
+        self.assertNotIn("DOCKET …", err)
+
+    def test_a_second_stop_right_after_the_refusal_tells_the_user_the_run_stopped(self):
+        self.assertEqual(self.run_stop()[0], 2)
+        code, err, out = self.run_stop(active=True)
+        self.assertEqual(code, 0, err)
+        self.assertIn("Login: the run stopped without being finished. `/docket:implement s-0123abcd` resumes it.",
+                      json.loads(out)["systemMessage"])
+        self.assertIn("stop-forced", self.log())
         self.assertEqual(self.state()["mode"], "sealed")
 
-    def test_second_pass_is_let_through_and_logged(self):
-        code, _, _ = self.stop("still not terminal", active=True)
-        self.assertEqual(code, 0)
-        self.assertIn("stop-forced", self.log())
+    def test_another_hooks_block_is_no_second_pass(self):
+        # stop_hook_active comes from any Stop hook's block; only this hook's own refusal makes a second pass.
+        code, err, _ = self.run_stop(active=True)
+        self.assertEqual(code, 2)
+        self.assertNotIn("stop-forced", self.log())
+
+    def test_a_tool_call_after_the_refusal_makes_the_next_stop_a_first_pass(self):
+        self.assertEqual(self.run_stop()[0], 2)
+        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                      "tool_input": {"file_path": "x"}}, self.p)
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        self.assertNotIn("stop-forced", self.log())
 
 
 class HumanStop(Project):
@@ -458,12 +569,12 @@ class HumanStop(Project):
         self.assertEqual(self.stop("Delivered as written in the docket.")[0], 2)
         self.assertEqual(self.stop(f"Delivered as written in the docket.\n{hstamp()}")[0], 0)
 
-    def test_background_wait_needs_a_stamp_too(self):
+    def test_a_wait_in_a_sealed_run_needs_no_text_and_no_stamp(self):
+        # V4 (luradb-web-client 2026-11-06: 76 of 128 texts were a bare stamp for a wait).
         self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": "waiting for the fixer",
+        code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": "",
                                             "stop_hook_active": False, "background_tasks": [{"id": "a1"}]}, self.p)
-        self.assertEqual(code, 2)
-        self.assertIn("stamp", err)
+        self.assertEqual(code, 0, err)
         self.assertEqual(self.state()["mode"], "sealed")
 
     def test_none_mode_needs_only_the_stamp_once_the_project_is_set_up(self):
@@ -686,10 +797,10 @@ class SpecState(Project):
         self.prompt(f"/implement {SPEC}")
         self.assertIn("state: in-progress          # draft | ready", self.spec.read_text("utf-8"))
         self.docket.write_text("- [x] point 1\n", "utf-8")
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.\n{stamp()}")[0], 0)
+        self.assertEqual(self.finish(f"DOCKET BLOCKED {SPEC}")[0], 0)
         self.assertIn("state: ready", self.spec.read_text("utf-8"))
         self.set_state(mode="sealed", spec=SPEC)
-        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 0)
+        self.assertEqual(self.finish(f"DOCKET DELIVERED {SPEC}")[0], 0)
         self.assertIn("state: done", self.spec.read_text("utf-8"))
 
 
@@ -703,7 +814,7 @@ class HookOwnedFiles(Project):
         self.assertEqual(self.tool("Edit", file_path=str(self.work / "locks" / SPEC), old_string="a", new_string="b")[0], 2)
         self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.violations.json"), content="{}")[0], 2)
         self.set_state(mode="sealed", spec=SPEC)
-        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.json"), content="{}")[0], 0)
+        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.json"), content="{}")[0], 2)
 
     def test_save_state_is_atomic_and_leaves_no_temp_files(self):
         self.prompt("/concept")
@@ -731,7 +842,7 @@ class Locks(Project):
         code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-2", "cwd": self.p,
                                                    "prompt": f"/implement {SPEC}"}, self.p)
         self.assertEqual(code, 2)
-        self.assertIn("sealed in session", err)
+        self.assertIn("runs in another session", err)
 
     def test_stale_lock_is_taken_over_and_released_on_close(self):
         (self.work / "locks").mkdir()
@@ -739,7 +850,7 @@ class Locks(Project):
         code, _, _ = self.prompt(f"/implement {SPEC}")
         self.assertEqual(code, 0)
         self.docket.write_text("- [x] point 1\n", "utf-8")
-        self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
+        self.assertEqual(self.finish(f"DOCKET DELIVERED {SPEC}")[0], 0)
         self.assertFalse((self.work / "locks" / SPEC).exists())
 
 
@@ -758,8 +869,7 @@ class Provenance(Project):
         self.transcript.write_text("\n".join(lines) + "\n", "utf-8")
 
     def stop_t(self, message):
-        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
-                                    "stop_hook_active": False, "transcript_path": str(self.transcript)}, self.p)
+        return self.finish(message, transcript_path=str(self.transcript))
 
     def test_check_after_last_agent_return_passes(self):
         self.write_transcript([
@@ -842,29 +952,26 @@ class Provenance(Project):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
         self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 0)
 
-    def test_stale_stamp_sets_degraded(self):
-        self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
-        self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(-30)}")
-        self.assertTrue(self.state()["degraded"])
 
+class ClosingCounts(Project):
+    """The closing message counts the docket's boxes itself and names every deviation (replaces F19: the stamp's
+    counts are gone with the terminal message)."""
 
-class StampCounts(Project):
     def setUp(self):
         super().setUp()
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [~] |\n| 3 | c | `z` | [x] |\n", "utf-8")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | token refresh | `y` | [~] |\n| 3 | c | `z` | [x] |\n"
+                               "## Refinement\n- feasibility: a → adopted\n- spec: c → rejected: out of scope\n", "utf-8")
 
-    def test_counts_must_match_the_docket(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='3/3')}")
-        self.assertEqual(code, 2)
-        self.assertIn("2/3", err)
-        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='2/3')}")[0], 0)
-
-    def test_delivered_without_counts_is_refused_blocked_passes(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='')}")
-        self.assertEqual(code, 2)
-        self.assertIn("2/3", err)
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.\n{stamp(counts='')}")[0], 0)
+    def test_counts_and_deviations_come_from_the_docket(self):
+        self.end_spec(lines=["open: the refresh needs the server's 0.6 API"])
+        self.assertEqual(self.run_stop()[0], 2)
+        text = self.closing()
+        self.assertIn("- Login: 2 of 3 points delivered. Login works, three tests are green.", text)
+        self.assertIn("Checked: 2 findings in advance, 1 adopted; code review without findings.", text)
+        self.assertIn("Open:\n- The refresh needs the server's 0.6 API.\n- “token refresh” deviates from the spec.", text)
+        self.assertNotIn("Nothing open", text)
 
 
 class Refinement(Project):
@@ -901,6 +1008,7 @@ class ProjectRules(Project):
             "| commit_regex | `(feat\|fix\|docs)(\\(.*\\))?: ` | |\n| forbidden_paths | `secrets/**, .env` | |\n"
             "| forbidden_commands | `gh workflow run\|terraform apply` | |\n", "utf-8")
         self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("## Review\n\n- no findings\n", "utf-8")  # V14: the push waits for the review
 
     def test_push_to_other_branch_refused(self):
         code, err, _ = self.tool("Bash", command="git push origin main")
@@ -1081,7 +1189,7 @@ class JudgeLog(Project):
         self.set_state(mode="sealed", spec=SPEC)
         code, err, _ = self.stop_with("[docket] noted")
         self.assertEqual(code, 2)
-        self.assertIn("terminal", err)
+        self.assertIn("Terminal state", err)
 
     def test_older_judge_verdicts_are_counted_too(self):
         # luradb-web-client, 2026-11-05: the judge before the acknowledgement asked for correction lines.
@@ -1127,8 +1235,7 @@ class CiHash(Project):
         blocks = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "p1", "name": "Bash",
                    "input": {"command": "git push origin feature/x" if pushed else "git status"}}]}}]
         self.transcript.write_text("\n".join(json.dumps(b) for b in blocks) + "\n", "utf-8")
-        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
-                                    "stop_hook_active": False, "transcript_path": str(self.transcript)}, self.p)
+        return self.finish(message, transcript_path=str(self.transcript))
 
     def test_ci_hash_must_be_reachable_and_pushed(self):
         self.docket.write_text(f"- [x] point 1: ok. CI: green {self.head[:10]}\n", "utf-8")
@@ -1164,7 +1271,7 @@ class StartSummary(Project):
     def test_stopped_run_with_open_points_is_resumable(self):
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [ ] |\n| 3 | c | `z` | [ ] |\n", "utf-8")
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nstopped by user\nNothing to do.\n{stamp(counts='1/3')}")[0], 0)
+        self.assertEqual(self.finish(f"DOCKET BLOCKED {SPEC}")[0], 0)
         _, _, out = run_hook("session_start.py", {"session_id": "other-session-9", "cwd": self.p, "source": "startup"}, self.p)
         self.assertIn("stopped with open points", out)
         self.assertIn(f"{SPEC} (2 open)", out)
@@ -1333,12 +1440,16 @@ class LegacyConcept(Project):
                                      content="---\nstate: draft\n---\n")[0], 0)
 
     def test_no_question_in_the_box_of_a_sealed_or_closed_session(self):
-        for mode in ("sealed", "closed"):
-            self.set_state(mode=mode, spec=SPEC)
-            code, err, _ = self.tool("mcp__ccd_turn__wrap_up", recap="x", ask="Committen?")
-            self.assertEqual(code, 2, mode)
+        self.set_state(mode="sealed", spec=SPEC)
+        for ask in ("Committen?", ""):  # a run shows no box at all until its closing message
+            code, err, _ = self.tool("mcp__ccd_turn__wrap_up", recap="x", ask=ask)
+            self.assertEqual(code, 2, ask)
             self.assertIn("next-step box", err)
-            self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x")[0], 0, mode)
+        self.set_state(mode="closed", spec=SPEC)
+        code, err, _ = self.tool("mcp__ccd_turn__wrap_up", recap="x", ask="Committen?")
+        self.assertEqual(code, 2)
+        self.assertIn("next-step box", err)
+        self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x")[0], 0)
         self.set_state(mode="concept")
         self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x", ask="Committen?")[0], 0)
 
@@ -1562,8 +1673,8 @@ class CopySync(Project):
 
 
 class SealedGate(Project):
-    """0.2.9: a sealed run speaks to the user once. luradb-web-client 2026-11-06: 25 status lines in the plugin's
-    words and three DOCKET DELIVERED reached the user, who asked half an hour later whether the run was done."""
+    """0.3.0: a run shows the series' status line live, only when it carries news, and at its end the one closing
+    message. luradb-web-client 2026-11-06: 105 status lines, 30 equal to the one before, 51 new only in the minute."""
 
     HIDDEN = DisplayGate.HIDDEN
     display = DisplayGate.display
@@ -1572,83 +1683,98 @@ class SealedGate(Project):
     def setUp(self):
         super().setUp()
         self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login per Token\nstate: in-progress\n---\n# Login per Token\n", "utf-8")
-        self.set_state(mode="sealed", spec=SPEC, clock="2026-11-06 10:00")
-        self.docket.write_text("| 1 | login | `cargo test` | [x] |\n| 2 | logout | `cargo test` | [~] |\n", "utf-8")
+        (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
+            "---\nid: s-aaaa1111\ntitle: Logout\nstate: ready\n---\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC, "s-aaaa1111"], queue=["s-aaaa1111"],
+                       clock="2026-11-06 10:00")
+        self.docket.write_text("| 1 | login | `cargo test` | [x] |\n| 2 | logout | `cargo test` | [~] |\n"
+                               "| 3 | refresh | `cargo test` | [ ] |\n", "utf-8")
 
     def german_config(self):
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
 
-    def terminal(self, body="Login per Token: 1 of 2 points delivered, merged to next, run finished.\nNothing to do.",
-                 counts="1/2"):
-        return f"DOCKET DELIVERED {SPEC}\n{body}\nThe token login works, 3 tests green.\n{stamp(counts=counts)}"
-
-    def test_a_status_message_is_replaced_by_the_hooks_status_line(self):
+    def test_a_text_is_replaced_by_the_series_status_line_without_clock(self):
         shown = self.display("Three refiners running. Meanwhile checking loadEnv myself.")
-        self.assertIn("[docket] Login per Token: 1 of 2 points delivered, 1 deviating, 0 open", shown)
-        self.assertIn("2026-11-06 10:00", shown)
-        self.assertNotIn("refiners", shown)
-        self.assertEqual(self.record()["hidden"], [])  # not held back: the Stop hook asks for no rewrite
-        # Also after a refusal (retry): the orchestrator's answer to the Stop hook is not for the user either.
-        (self.root / ".claude" / "docket" / f"display-{SID}.json").write_text(
-            json.dumps({"hidden": [], "pending": {}, "retry": True}), "utf-8")
-        self.assertIn("[docket] Login per Token", self.display(f"Fixer running.\n{hstamp()}", message_id="m2"))
+        self.assertEqual(shown, "[docket] Spec 1 of 2 · Login per Token: 1 of 3 points delivered, 1 deviating")
+        self.assertEqual(self.record()["hidden"], [])
+
+    def test_the_same_status_line_is_shown_once(self):
+        self.assertIn("1 of 3", self.display("one", message_id="m1"))
+        self.assertEqual(self.display("two", message_id="m2"), self.HIDDEN)
+        self.docket.write_text(self.docket.read_text("utf-8").replace("| [ ] |", "| [x] |"), "utf-8")
+        self.assertIn("2 of 3", self.display("three", message_id="m3"))
+        self.assertEqual(self.display("four", message_id="m4"), self.HIDDEN)
 
     def test_status_line_in_german_before_the_docket_exists(self):
         self.docket.unlink()
         self.german_config()
-        shown = self.display("Reading the required files first.")
-        self.assertEqual(shown, "[docket] Login per Token: Vorbereitung: Spec wird gelesen und gegen den Code geprüft"
-                                " · Lauf läuft · 2026-11-06 10:00")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.assertEqual(self.display("Reading the required files first."),
+                         "[docket] Login per Token: wird vorab aus drei Blickwinkeln geprüft")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC, "s-aaaa1111"])
+        self.assertEqual(self.display("again", message_id="m2"),
+                         "[docket] Spec 1 von 2 · Login per Token: wird vorab aus drei Blickwinkeln geprüft")
 
-    def test_a_terminal_message_the_stop_hook_would_refuse_is_held_back(self):
-        broken = f"DOCKET DELIVERED {SPEC}\nPoint 1: the fixer flipped the docket row.\n{stamp(counts='1/2')}"
-        self.assertEqual(self.display(broken), self.HIDDEN)
-        held = self.record()["hidden"][0]["problems"]
-        self.assertTrue(any("title `Login per Token`" in p for p in held), held)
-        self.assertTrue(any("Du musst" in p for p in held), held)
-        code, err, _ = self.stop(broken)
-        self.assertEqual(code, 2)
-        self.assertIn("held back and never shown", err)
-        self.assertEqual(self.state()["mode"], "sealed")
+    def closing_state(self):
+        rendered = ("Run finished: “Login per Token” is implemented.\n- Login per Token: 1 of 1 points delivered.\n"
+                    f"Nothing open, nothing to do.\n{hstamp()}\n")
+        path = self.root / ".claude" / "docket" / f"closing-{SID}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(rendered, "utf-8")
+        self.set_state(mode="closing", spec=SPEC, series=[SPEC], closing={"file": str(path), "attempts": 0})
+        return rendered
 
-    def test_a_clean_terminal_message_is_shown_and_the_hook_adds_its_closing_line(self):
-        text = self.terminal()
-        self.assertEqual(self.display(text), text)
-        (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
-            "---\nid: s-aaaa1111\ntitle: Logout\nstate: ready\n---\n", "utf-8")
-        code, err, out = self.stop(text)
+    def test_closing_shows_only_the_rendered_message_and_closes_the_run(self):
+        rendered = self.closing_state()
+        self.assertEqual(self.display("Reading the closing file."), self.HIDDEN)
+        self.assertEqual(self.display(rendered, message_id="m2"), rendered)
+        code, err, _ = self.run_stop(rendered)
         self.assertEqual(code, 0, err)
         self.assertEqual(self.state()["mode"], "closed")
-        closing = json.loads(out)["systemMessage"]
-        self.assertEqual(closing, "[docket] Login per Token: delivered 1/2, run finished, session closed. "
-                                  "next spec in state ready: s-aaaa1111 (Logout), in a new session with /docket:implement s-aaaa1111.")
+        self.assertIn("run-closed", self.log())
 
-    def test_closing_line_in_german_names_no_next_spec_when_none_is_ready(self):
-        self.german_config()
-        text = (f"DOCKET BLOCKED {SPEC}\nLogin per Token: 1 von 2 Punkten geliefert, Lauf abgebrochen.\n"
-                f"Du musst Docker starten, dann den Lauf erneut beginnen.\n{stamp(counts='1/2')}")
-        code, err, out = self.stop(text)
-        self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(out)["systemMessage"],
-                         f"[docket] Login per Token: blockiert bei 1/2, Lauf beendet; /docket:implement {SPEC} nimmt ihn wieder auf. "
-                         "Keine weitere Spec im Zustand ready.")
-
-    def test_terminal_message_about_hooks_or_in_the_wrong_language_is_refused(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin per Token: done.\nNothing to do.\n"
-                                 f"Note: the append-only hook objected to those edits.\n{stamp(counts='1/2')}")
+    def test_a_wrong_closing_message_is_asked_for_again_and_the_third_try_shows_the_rendered_one(self):
+        rendered = self.closing_state()
+        wrong = f"DOCKET DELIVERED {SPEC}\nAll good."
+        self.assertEqual(self.display(wrong), self.HIDDEN)
+        code, err, _ = self.run_stop(wrong)
         self.assertEqual(code, 2)
-        self.assertIn("nothing about hooks", err)
+        self.assertIn("does not match", err)
+        self.assertIn("line 1 should read `Run finished", err)
+        self.assertEqual(self.display(wrong, message_id="m2"), self.HIDDEN)
+        self.assertEqual(self.run_stop(wrong, active=True)[0], 2)
+        self.assertEqual(self.display(wrong, message_id="m3"), rendered.rstrip())
+        code, err, _ = self.run_stop(wrong, active=True)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["mode"], "closed")
+        self.assertIn("stop-forced", self.log())
+
+    def test_terminal_lines_are_the_users_words(self):
         self.german_config()
-        self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.stop(self.terminal())
+        self.docket.write_text("| 1 | login | `cargo test` | [x] |\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.end_spec(result="The token login works now and all three tests are green on the branch.")
+        code, err, _ = self.run_stop()
         self.assertEqual(code, 2)
         self.assertIn("not in Deutsch", err)
-        self.set_state(mode="sealed", spec=SPEC)
-        german = (f"DOCKET DELIVERED {SPEC}\nLogin per Token: 1 von 2 Punkten geliefert, auf next gemerged, Lauf beendet.\n"
-                  f"Nichts zu tun.\nDer Login mit Token funktioniert, drei Tests sind grün (`cargo test` → 3 passed).\n"
-                  f"{stamp(counts='1/2')}")
-        code, err, _ = self.stop(german)
-        self.assertEqual(code, 0, err)
+        self.end_spec(result=f"Der Login mit Token funktioniert, siehe {SPEC}.")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("no spec or concept ids", err)
+        self.end_spec(result="Der Login mit Token funktioniert, drei Tests sind grün.",
+                      lines=["decision: Soll der Logout auch kommen? Empfehlung: ja"])
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("/docket:spec", err)
+        self.end_spec(result="Der Login mit Token funktioniert, drei Tests sind grün.",
+                      lines=["decision: Soll der Logout auch kommen? Empfehlung: ja, mit `/docket:spec`"])
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        text = self.closing()
+        self.assertTrue(text.startswith("Lauf beendet: „Login per Token“ ist umgesetzt."), text)
+        self.assertIn("Entscheidung: Soll der Logout auch kommen? Empfehlung: ja, mit `/docket:spec`.", text)
+        self.assertIn("Geprüft: Code-Review ohne Befund.", text)
 
 
 class Language(Project):
@@ -1727,20 +1853,21 @@ class CitationsAtWrite(Project):
 
     def test_delivered_checks_the_evidence_sections_only(self):
         # A refinement line written before 0.2.9 may cite a location that is gone: it never forces an in-place edit.
-        self.docket.write_text("## Refinement\n- concept: see docs/old.md:3\n## Evidence\n- point 1: `cargo test` → ok, src/auth.rs:2\n"
+        self.docket.write_text("## Refinement\n- concept: see docs/old.md:3 → adopted\n## Evidence\n- point 1: `cargo test` → ok, src/auth.rs:2\n"
                                "| 1 | login | x | [x] |\n", "utf-8")
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works.\nNothing to do.\n{stamp()}")
+        code, err, _ = self.finish(f"DOCKET DELIVERED {SPEC}")
         self.assertEqual(code, 0, err)
         self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("## Refinement\n- fine\n## Evidence\n- point 1: see src/auth.rs:9\n| 1 | login | x | [x] |\n", "utf-8")
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works.\nNothing to do.\n{stamp()}")
+        self.docket.write_text("## Refinement\n- fine → adopted\n## Evidence\n- point 1: see src/auth.rs:9\n| 1 | login | x | [x] |\n", "utf-8")
+        code, err, _ = self.finish(f"DOCKET DELIVERED {SPEC}")
         self.assertEqual(code, 2)
         self.assertIn("src/auth.rs:9", err)
 
 
 class Series(Project):
-    """0.2.9: several specs are a series in one session, each with its own docket and terminal message, as the
-    author's orchestrate-execution runs them. luradb-web-client 2026-11-06: five ids, the first sealed, four lost."""
+    """Several specs are a series in one session, each with its own docket; the run ends in one closing message
+    for all of them. luradb-web-client 2026-11-06: five ids, the first sealed, four lost (0.2.8); four delivered,
+    four receipts, no word about the series (0.2.9)."""
 
     def spec_file(self, spec_id, title, state="ready", follows="", concept="", created="2026-11-01"):
         path = self.work / "specs" / "core" / f"{spec_id}-{title.lower()}.md"
@@ -1755,14 +1882,9 @@ class Series(Project):
         self.spec_file("s-bbbb2222", "Profile", concept="c-33334444", created="2026-11-03")
         self.spec_file("s-cccc3333", "Done", state="done", created="2026-10-01")
 
-    def stop_at(self, message, active=False):
-        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
-                                    "stop_hook_active": active}, self.p)
-
-    def terminal(self, spec_id, kind="DELIVERED", title="Login"):
-        when = datetime.now()
-        return (f"DOCKET {kind} {spec_id}\n{title}: delivered, run finished.\nNothing to do.\n"
-                f"stamp: {when:%Y-%m-%d %H:%M} {spec_id} 1/1")
+    def deliver(self, spec_id, title):
+        (self.work / "dockets" / "core" / f"{spec_id}.md").write_text("| 1 | x | `x` | [x] |\n", "utf-8")
+        self.end_spec(spec_id=spec_id, result=f"{title} works.")
 
     def test_no_argument_picks_the_next_ready_spec_whose_predecessors_are_done(self):
         code, err, out = self.prompt("/docket:implement")
@@ -1793,58 +1915,593 @@ class Series(Project):
         self.assertEqual(code, 2)
         self.assertIn("--all", err)
 
-    def test_delivered_seals_the_next_spec_in_this_session_and_blocks_the_stop(self):
+    def test_delivered_seals_the_next_spec_and_hands_over_on_stderr(self):
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111, s-bbbb2222")
-        self.docket.write_text("| 1 | login | x | [x] |\n", "utf-8")
-        code, err, out = self.stop_at(self.terminal(SPEC))
-        self.assertEqual(code, 0, err)
-        answer = json.loads(out)
-        self.assertEqual(answer["decision"], "block")
-        self.assertIn("sealed on s-aaaa1111", answer["reason"])
-        self.assertIn("queued after it: s-bbbb2222", answer["reason"])
-        self.assertIn("step 0", answer["reason"])
-        self.assertEqual(answer["systemMessage"], "[docket] Login: delivered 1/1, run finished, session closed. "
-                                                  "continuing in this session with s-aaaa1111 (Logout); after it s-bbbb2222.")
+        self.deliver(SPEC, "Login")
+        code, err, out = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertEqual(out.strip(), "")  # no JSON, no systemMessage: nothing for the user
+        self.assertIn("Spec 2 of 3 is sealed: Logout (s-aaaa1111)", err)
+        self.assertIn("step 0", err)
         state = self.state()
-        self.assertEqual((state["mode"], state["spec"], state["queue"]), ("sealed", "s-aaaa1111", ["s-bbbb2222"]))
+        self.assertEqual((state["mode"], state["spec"], state["queue"], state["series"]),
+                         ("sealed", "s-aaaa1111", ["s-bbbb2222"], [SPEC, "s-aaaa1111", "s-bbbb2222"]))
         log = self.log()
         self.assertIn(f"{SPEC}  delivered", log)
         self.assertIn("s-aaaa1111  sealed", log)
         self.assertIn("state: in-progress", (self.work / "specs" / "core" / "s-aaaa1111-logout.md").read_text("utf-8"))
         self.assertIn("state: done", self.spec.read_text("utf-8"))
-        # The next spec's first Stop is a first pass although stop_hook_active is true: a broken message is refused.
-        code, err, _ = self.stop_at(f"Reading the spec.\n{hstamp()}", active=True)
+        self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())  # the order is no refusal
+        metrics = json.loads((self.work / "metrics" / f"{SPEC}.json").read_text("utf-8"))
+        self.assertEqual((metrics["outcome"], metrics["points"]["delivered"]), ("delivered", 1))
+        # The next spec's first Stop is a first pass although stop_hook_active is true.
+        code, err, _ = self.run_stop(active=True)
         self.assertEqual(code, 2)
-        self.assertIn("terminal state", err)
-        # A second refusal of the same spec is let through as before.
-        self.assertEqual(self.stop_at(f"still reading\n{hstamp()}", active=True)[0], 0)
+        self.assertIn("Terminal state", err)
+        code, err, out = self.run_stop(active=True)
+        self.assertEqual(code, 0, err)
+        self.assertIn("Logout: the run stopped", json.loads(out)["systemMessage"])
+
+    def test_a_series_ends_in_one_message_naming_every_spec(self):
+        self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
+        self.deliver(SPEC, "Login")
+        self.assertEqual(self.run_stop()[0], 2)
+        self.deliver("s-aaaa1111", "Logout")
+        code, err, _ = self.run_stop(active=True)
+        self.assertEqual(code, 2)
+        self.assertIn("closing", err)
+        text = self.closing()
+        self.assertEqual(text.splitlines()[:5], [
+            "Run finished: 2 of 2 specs implemented.",
+            "- Login: 1 of 1 points delivered. Login works.",
+            "- Logout: 1 of 1 points delivered. Logout works.",
+            "Checked: code review without findings.",
+            "Nothing open, nothing to do."])
+        self.assertNotRegex(text, r"\bs-[0-9a-f]{8}\b")
+        self.assertEqual(self.run_stop(text, active=True)[0], 0)
+        self.assertEqual(self.state()["mode"], "closed")
+        self.assertEqual(self.log().count(" run-closed "), 1)
 
     def test_blocked_stops_the_series_and_names_the_rest(self):
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
-        code, err, out = self.stop_at(f"DOCKET BLOCKED {SPEC}\nLogin: Docker is down.\nYou must start Docker.\n{stamp(counts='0/1')}")
-        self.assertEqual(code, 0, err)
-        answer = json.loads(out)
-        self.assertNotIn("decision", answer)
-        self.assertIn("not started: s-aaaa1111; give a new command", answer["systemMessage"])
-        self.assertEqual((self.state()["mode"], self.state()["queue"]), ("closed", []))
+        self.assertFalse((self.work / "locks" / "s-aaaa1111").exists())  # only the spec at work is locked
+        self.end_spec("BLOCKED: start Docker", result="Login is not built yet.", review=False)
+        code, err, out = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertEqual(out.strip(), "")
+        text = self.closing()
+        self.assertIn("Run stopped: “Login” is blocked, 0 of 2 specs implemented.", text)
+        self.assertIn("- Logout: not started.", text)
+        self.assertIn("You must:\n- Login: start Docker.\n- Then `/docket:implement s-0123abcd, s-aaaa1111` resumes the series.", text)
+        self.assertEqual((self.state()["mode"], self.state()["queue"]), ("closing", []))
         self.assertIn("queue-dropped", self.log())
-        self.assertFalse((self.work / "locks" / "s-aaaa1111").exists())
 
     def test_stop_request_ends_the_series(self):
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
         self.prompt("/docket:stop")
-        self.docket.write_text("| 1 | login | x | [x] |\n", "utf-8")
-        code, err, out = self.stop_at(self.terminal(SPEC))
-        self.assertEqual(code, 0, err)
-        self.assertNotIn("decision", json.loads(out))
-        self.assertEqual(self.state()["mode"], "closed")
+        self.deliver(SPEC, "Login")
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        self.assertIn("Run ended at your request: 1 of 2 specs implemented.", self.closing())
 
-    def test_a_queued_spec_is_locked_against_other_sessions(self):
+    def test_a_queued_spec_waits_for_its_series(self):
         self.prompt(f"/docket:implement {SPEC}, s-bbbb2222")
         code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-0002", "cwd": self.p,
                                                    "prompt": "/docket:implement s-bbbb2222"}, self.p)
         self.assertEqual(code, 2)
-        self.assertIn("is sealed in session", err)
+        self.assertIn("waits in another session's series", err)
+
+    def test_the_closing_message_says_whether_the_work_is_pushed(self):
+        git = lambda *args, cwd=self.root: subprocess.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c",
+                                                           "user.email=t@t"] + list(args), capture_output=True, check=True)
+        remote = self.tmp / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        git("init", "-q")
+        (self.root / ".gitignore").write_text(".claude/\n", "utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "one")
+        git("remote", "add", "origin", str(remote))
+        git("push", "-q", "-u", "origin", "HEAD")
+        branch = subprocess.run(["git", "-C", str(self.root), "rev-parse", "--abbrev-ref", "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+        self.prompt(f"/docket:implement {SPEC}")
+        self.deliver(SPEC, "Login")
+        self.run_stop()
+        self.assertEqual(self.closing().splitlines()[0], f"Run finished: “Login” is implemented, pushed to `{branch}`.")
+        (self.root / "b.txt").write_text("b\n", "utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "two")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC], outcomes={})
+        self.run_stop()
+        self.assertEqual(self.closing().splitlines()[0],
+                         f"Run finished: “Login” is implemented, 1 commit on `{branch}` not pushed.")
+
+
+class AgentNames(Project):
+    """V8: an agent's description is what the user reads when it finishes. luradb-web-client 2026-11-06: 80
+    completions, 59 names in the plugin's words, none naming its spec."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC, "s-aaaa1111"], queue=["s-aaaa1111"])
+
+    def agent(self, description, **extra):
+        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Agent",
+                   "tool_input": {"subagent_type": "docket:refiner", "description": description, "prompt": "x"}}
+        payload.update(extra)
+        return run_hook("pre_tool_use.py", payload, self.p)
+
+    def test_a_series_agent_names_its_place_and_its_task_in_everyday_words(self):
+        code, err, _ = self.agent("Refiner feasibility vs code")
+        self.assertEqual(code, 2)
+        self.assertIn("`Spec 1 of 2: `", err)
+        self.assertEqual(self.agent("Spec 1 of 2: check against the code")[0], 0)
+        self.assertEqual(self.agent("Spec 1 of 2: fixer flips the box")[0], 2)
+        self.assertEqual(self.agent("Refiner feasibility", agent_id="sub-1")[0], 0)  # an agent's own spawn
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
+        self.assertEqual(self.agent("Spec 1 von 2: Prüfung gegen den Code")[0], 0)
+        self.assertEqual(self.agent("Spec 1 of 2: check against the code")[0], 2)
+
+    def test_a_single_spec_needs_no_place_but_no_plugin_words(self):
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.assertEqual(self.agent("Check against the code")[0], 0)
+        self.assertEqual(self.agent("")[0], 0)
+        self.assertEqual(self.agent("Docket skeleton")[0], 2)
+
+
+class OrchestratorDocket(Project):
+    """V6: the orchestrator keeps the docket, the hook writes the metrics; a fixer changes project files only
+    (luradb-web-client 2026-11-06: 22 of 41 fixer spawns did docket bookkeeping)."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+
+    def fixer(self, prompt):
+        return self.tool("Agent", subagent_type="docket:fixer", prompt=prompt)
+
+    def test_a_fixer_never_gets_the_docket_or_the_metrics(self):
+        code, err, _ = self.fixer(f"append to {self.work}/dockets/core/{SPEC}.md: point 1 evidence")
+        self.assertEqual(code, 2)
+        self.assertIn("The docket is yours", err)
+        self.assertEqual(self.fixer(f"write metrics/{SPEC}.json")[0], 2)
+        self.assertEqual(self.fixer("CHANGELOG.md: add the line `- login`")[0], 0)
+        self.assertEqual(self.tool("Write", file_path=str(self.docket), content="# Docket\n")[0], 0)
+        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.json"), content="{}")[0], 2)
+
+
+class JudgeSuspension(Project):
+    """V5: the judge has no place in a sealed run (ENTSCHEIDUNGEN.md, Stop-Hook). luradb-web-client 2026-11-06: 24
+    verdicts on waits of at most three lines, which the judge's own exceptions should have let through."""
+
+    def setUp(self):
+        super().setUp()
+        template = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))
+        self.judge = template["hooks"]["Stop"][0]["hooks"][0]
+        self.other = {"type": "command", "command": "echo hi"}
+        self.settings = self.root / ".claude" / "settings.json"
+        self.settings.write_text(json.dumps({"permissions": {"allow": []},
+                                             "hooks": {"Stop": [{"hooks": [self.other, self.judge]}]}}, indent=2), "utf-8")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        self.record = self.root / ".claude" / "docket" / "judge-suspended.json"
+
+    def stop_hooks(self):
+        return [hook for group in json.loads(self.settings.read_text("utf-8"))["hooks"]["Stop"] for hook in group["hooks"]]
+
+    def test_the_judge_is_away_during_the_run_and_back_after_it(self):
+        self.prompt(f"/implement {SPEC}")
+        self.assertEqual(self.stop_hooks(), [self.other])
+        self.assertEqual(json.loads(self.settings.read_text("utf-8"))["permissions"], {"allow": []})
+        self.assertTrue(self.record.exists())
+        self.assertIn("judge-suspended", self.log())
+        self.docket.write_text("| 1 | login | `x` | [x] |\n", "utf-8")
+        self.end_spec()
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.run_stop(self.closing(), active=True)[0], 0)
+        self.assertEqual(sorted(map(json.dumps, self.stop_hooks())), sorted(map(json.dumps, [self.other, self.judge])))
+        self.assertFalse(self.record.exists())
+        self.assertIn("judge-resumed", self.log())
+
+    def test_a_tracked_settings_file_stays_and_the_verdicts_in_a_run_count_nothing(self):
+        subprocess.run(["git", "-C", str(self.root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "add", ".claude/settings.json"], check=True)
+        self.prompt(f"/implement {SPEC}")
+        self.assertEqual(self.stop_hooks(), [self.other, self.judge])
+        self.assertFalse(self.record.exists())
+        transcript = self.tmp / "t.jsonl"
+        transcript.write_text(json.dumps({"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-06T12:00:00Z",
+                                          "hookErrors": [JudgeLog.PROMPT + ': promise "I will report"' + JudgeLog.TAIL]}) + "\n",
+                              "utf-8")
+        self.run_stop(background_tasks=[{"id": "a1"}], transcript_path=str(transcript))
+        self.assertIn("judge-ignored", self.log())
+        self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())
+
+    def test_a_judge_a_crashed_run_left_away_comes_back_at_the_next_start(self):
+        self.prompt(f"/implement {SPEC}")
+        state_file = self.root / ".claude" / "docket" / f"state-{SID}.json"
+        old = time.time() - 7200
+        os.utime(state_file, (old, old))
+        run_hook("session_start.py", {"session_id": "fresh-session-2", "cwd": self.p, "source": "startup"}, self.p)
+        self.assertIn(self.judge, self.stop_hooks())
+        self.assertFalse(self.record.exists())
+
+
+class PluginSource(Project):
+    """V10: a run is checked by the hooks, not studied through them (luradb-web-client 2026-11-06: the orchestrator
+    read stop.py to learn what the check accepts)."""
+
+    def test_the_plugin_source_is_not_read_in_a_run(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, _ = self.tool("Read", file_path=str(HOOKS / "stop.py"))
+        self.assertEqual(code, 2)
+        self.assertIn("plugin's own files", err)
+        self.assertEqual(self.tool("Grep", pattern="refuse", path=str(HOOKS))[0], 2)
+        self.assertEqual(self.tool("Read", file_path=str(HOOKS.parent / "templates" / "delivery-docket.md"))[0], 0)
+        self.set_state(mode="concept")
+        self.assertEqual(self.tool("Read", file_path=str(HOOKS / "stop.py"))[0], 0)
+
+    def test_every_refinement_section_is_checked(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("## Refinement\n- feasibility: fine → adopted\n## Evidence\n- \n"
+                               "## Refinement (second round)\n- spec: the token expires after an hour\n", "utf-8")
+        code, err, _ = self.tool("Agent", subagent_type="docket:implementer", prompt="point 1")
+        self.assertEqual(code, 2)
+        self.assertIn("the token expires", err)
+
+
+class ReviewGate(Project):
+    """V14: one reviewer reads the whole diff before the push; every finding is decided in the docket."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("| 1 | login | `x` | [x] |\n", "utf-8")
+
+    def test_the_push_waits_for_a_decided_review(self):
+        code, err, _ = self.tool("Bash", command="git push origin next")
+        self.assertEqual(code, 2)
+        self.assertIn("Review", err)
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n- the expiry test asserts nothing | "
+                               "src/auth_test.rs:12 | test\n", "utf-8")
+        code, err, _ = self.tool("Bash", command="git push origin next")
+        self.assertEqual(code, 2)
+        self.assertIn("without a decision", err)
+        self.docket.write_text(self.docket.read_text("utf-8") + "- the expiry test asserts nothing → fixed, asserts the 401 now\n", "utf-8")
+        self.docket.write_text(self.docket.read_text("utf-8").replace("| test\n", "| test → deferred\n"), "utf-8")
+        self.assertEqual(self.tool("Bash", command="git push origin next")[0], 0)
+        code, _, _ = run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Bash", "agent_id": "x",
+                                                  "tool_input": {"command": "git push origin other"}}, self.p)
+        self.assertEqual(code, 0)
+
+    def test_delivered_needs_the_review(self):
+        self.end_spec(review=False)
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("## Review", err)
+
+
+class InboxNotice(Project):
+    """V11: the notice for a note typed during the run is the user's language and no violation; the closing
+    message says what came of the note (luradb-web-client 2026-11-06: an English notice, counted as a breach)."""
+
+    def test_the_notice_is_german_uncounted_and_the_note_is_answered_at_the_end(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        self.prompt(f"/implement {SPEC}")
+        code, err, _ = self.prompt("bitte auch das Logo prüfen")
+        self.assertEqual(code, 2)
+        self.assertIn("Notiert.", err)
+        self.assertNotIn("Noted", err)
+        self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Inbox\n\n- Logo geprüft, es bleibt unverändert.\n", "utf-8")
+        self.end_spec(result="Der Login funktioniert, drei Tests sind grün.")
+        self.run_stop()
+        self.assertRegex(self.closing(), r"Deine Nachricht von \d{1,2}:\d{2}: Logo geprüft, es bleibt unverändert\.")
+
+
+class Preconditions(Project):
+    """V12: what only the user can provide is checked before the session seals (luradb-web-client 2026-11-06: the
+    test server's key was invalid at sealing; the live test of the first spec never ran)."""
+
+    def write(self, *lines):
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n\n## Preconditions (user only)\n\n"
+                             + "".join(f"- {line}\n" for line in lines), "utf-8")
+
+    def test_a_failing_precondition_keeps_the_session_unsealed(self):
+        self.write("`echo ready` → ready", "`exit 3` → ok")
+        code, err, _ = self.prompt(f"/implement {SPEC}")
+        self.assertEqual(code, 2)
+        self.assertIn("Precondition of “Login” not met: `exit 3`", err)
+        self.assertIn("(exit 3)", err)
+        self.assertNotEqual(self.state().get("mode"), "sealed")
+        self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())
+        self.write("`echo ready` → ready")
+        self.assertEqual(self.prompt(f"/implement {SPEC}")[0], 0)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_the_template_has_no_precondition(self):
+        template = (HOOKS.parent / "templates" / "spec.md").read_text("utf-8")
+        self.spec.write_text(template.replace("id: s-xxxxxxxx", f"id: {SPEC}").replace("state: draft", "state: ready"), "utf-8")
+        self.assertEqual(self.prompt(f"/implement {SPEC}")[0], 0)
+
+
+class SeriesOnAbort(Project):
+    """V13: an interrupted series is named with its titles and the state of each spec; a lock of a session gone
+    quiet is taken over."""
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        for spec_id, title in (("s-aaaa1111", "Logout"), ("s-bbbb2222", "Profile")):
+            (self.work / "specs" / "core" / f"{spec_id}-{title.lower()}.md").write_text(
+                f"---\nid: {spec_id}\ntitle: {title}\nstate: ready\n---\n", "utf-8")
+
+    def test_an_interrupted_series_is_named_with_its_titles(self):
+        (self.work / "LOG.md").write_text(
+            f"2026-11-05T10:00:00Z  {SPEC}  sealed             session=deadbeef\n"
+            f"2026-11-05T10:00:01Z  {SPEC}  queued             session=deadbeef  s-aaaa1111, s-bbbb2222\n"
+            f"2026-11-05T10:30:00Z  {SPEC}  delivered          session=deadbeef  spec closed\n"
+            "2026-11-05T10:30:01Z  s-aaaa1111  sealed             session=deadbeef  from queue\n", "utf-8")
+        _, _, out = run_hook("session_start.py", {"session_id": "fresh-session-3", "cwd": self.p, "source": "startup"}, self.p)
+        self.assertIn("Interrupted series: “Login” delivered, “Logout” interrupted, “Profile” not started. "
+                      "`/docket:implement s-aaaa1111, s-bbbb2222` resumes it.", out)
+        self.assertNotIn("without a terminal state", out)
+
+    def test_status_names_the_series_of_this_session(self):
+        self.prompt(f"/implement {SPEC}, s-aaaa1111")
+        _, _, out = self.prompt("/docket:status")
+        self.assertIn("Series: “Login” running, “Logout” not started.", out)
+
+    def test_a_lock_of_a_session_gone_quiet_is_taken_over(self):
+        self.prompt(f"/implement {SPEC}")
+        code, _, _ = run_hook("user_prompt.py", {"session_id": "other-session-7", "cwd": self.p,
+                                                 "prompt": f"/implement {SPEC}"}, self.p)
+        self.assertEqual(code, 2)
+        old = time.time() - 7200
+        os.utime(self.root / ".claude" / "docket" / f"state-{SID}.json", (old, old))
+        code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-7", "cwd": self.p,
+                                                   "prompt": f"/implement {SPEC}"}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), "other-session-7")
+
+
+class ReviewFindings(Project):
+    """The adversarial review of 0.3.0 (2026-11-06), one test per confirmed defect."""
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [x] |\n", "utf-8")
+        self.path = self.tmp / "t.jsonl"
+
+    def entries(self, *entries):
+        self.path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
+        return str(self.path)
+
+    def spawn(self, tool_id="toolu_1"):
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        return [{"type": "assistant", "timestamp": now,
+                 "message": {"content": [{"type": "tool_use", "id": tool_id, "name": "Agent", "input": {}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id,
+                                                          "content": "Async agent launched successfully.\nagentId: a1"}]}}]
+
+    def queued(self, tool_id="toolu_1"):
+        return {"type": "attachment", "attachment": {"type": "queued_command",
+                "prompt": f"<task-notification>\n<tool-use-id>{tool_id}</tool-use-id>\n</task-notification>"}}
+
+    def said(self, text="ok"):
+        return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+
+    def test_a_notification_the_model_saw_mid_turn_is_no_wait(self):
+        # Live in experiment 12: the spec's end was waved through as a wait, the run stood still.
+        self.end_spec()
+        path = self.entries(*self.spawn(), self.queued(), self.said())
+        code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertEqual(self.state()["mode"], "closing")
+
+    def test_a_queued_notification_not_yet_seen_still_waits(self):
+        self.end_spec()
+        path = self.entries(*self.spawn(), self.queued())
+        self.assertEqual(self.run_stop(transcript_path=path, background_tasks=[])[0], 0)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_background_shell_does_not_hold_a_written_end(self):
+        shell = [{"id": "b1", "type": "shell", "status": "running", "command": "npm run dev"}]
+        self.assertEqual(self.run_stop(background_tasks=shell)[0], 0)  # no end written yet: a wait
+        self.end_spec()
+        self.assertEqual(self.run_stop(background_tasks=shell)[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+
+    def test_an_agent_still_running_holds_a_written_end(self):
+        self.end_spec()
+        agent = [{"id": "a1", "type": "subagent", "status": "running"}]
+        self.assertEqual(self.run_stop(background_tasks=agent)[0], 0)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_the_terminal_lines_may_carry_bold_backticks_and_dashes(self):
+        self.docket.write_text(self.docket.read_text("utf-8") + "\n## Review\n\n- no findings\n\n## Terminal state\n\n"
+                               "- **state:** `DELIVERED`.\n- `result: Login works.`\n- open: none\n- user: keine\n", "utf-8")
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        text = self.closing()
+        self.assertIn("- Login: 1 of 1 points delivered. Login works.", text)
+        self.assertIn("Nothing open, nothing to do.", text)
+
+    def test_a_block_an_earlier_run_left_does_not_end_the_resumed_spec(self):
+        self.end_spec("BLOCKED: start Docker", result="Nothing built.", review=False)
+        self.set_state(mode="none")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        self.prompt(f"/implement {SPEC}")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("Terminal state", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.end_spec()
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["outcomes"], {SPEC: "delivered"})
+
+    def test_resuming_the_spec_at_work_keeps_the_series(self):
+        (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
+            "---\nid: s-aaaa1111\ntitle: Logout\nstate: ready\n---\n", "utf-8")
+        self.set_state(mode="none")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        self.prompt(f"/implement {SPEC}, s-aaaa1111")
+        self.assertEqual(self.run_stop()[0], 2)
+        code, _, out = self.run_stop(active=True)  # halted
+        self.assertIn(f"`/docket:implement {SPEC}, s-aaaa1111` resumes it", json.loads(out)["systemMessage"])
+        self.prompt(f"/implement {SPEC}")
+        self.assertEqual((self.state()["series"], self.state()["queue"]), ([SPEC, "s-aaaa1111"], ["s-aaaa1111"]))
+
+    def test_a_stopped_series_is_reported_as_stopped_with_the_stopped_spec_to_resume(self):
+        (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
+            "---\nid: s-aaaa1111\ntitle: Logout\nstate: ready\n---\n", "utf-8")
+        self.set_state(mode="none")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        self.prompt(f"/implement {SPEC}, s-aaaa1111")
+        self.prompt("/docket:stop")
+        self.end_spec("BLOCKED: stopped by user", result="Half of the login is built.", review=False)
+        self.run_stop()
+        text = self.closing()
+        self.assertTrue(text.startswith("Run ended at your request: 0 of 2 specs implemented."), text)
+        self.assertNotIn("stopped by user", text)
+        self.assertIn(f"`/docket:implement {SPEC}, s-aaaa1111` resumes the series", text)
+
+    def test_the_closing_message_reaches_the_user_when_the_last_try_had_no_text(self):
+        self.end_spec()
+        self.run_stop()
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        code, err, out = self.run_stop(active=True)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["systemMessage"], self.closing().rstrip())
+        self.assertEqual(self.state()["mode"], "closed")
+
+    def test_a_judge_verdict_does_not_hide_the_closing_message(self):
+        self.end_spec()
+        self.run_stop()
+        feedback = {"type": "user", "message": {"content": "Stop hook feedback:\n" + JudgeLog.PROMPT + ': promise "x"' + JudgeLog.TAIL}}
+        path = self.entries(self.said("before"), feedback)
+        text = self.closing()
+        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "m1", "index": 0,
+                                                         "final": True, "delta": text, "transcript_path": path}, self.p)
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["displayContent"], text)
+
+    def test_only_the_conceptor_ends_a_rewrite(self):
+        self.tool("Agent", subagent_type="docket:conceptor", prompt="rewrite")
+        stop = lambda kind: run_hook("subagent_stop.py", {"session_id": SID, "cwd": self.p, "agent_type": kind,
+                                                          "last_assistant_message": "done\nUnverified: none"}, self.p)
+        stop("docket:refiner")
+        self.assertEqual(self.state()["mode"], "rewrite")
+        stop("docket:conceptor")
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_check_counts_only_after_a_background_agent_returned(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        check = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b1", "name": "Bash",
+                                                               "input": {"command": "cargo test"}}]}}
+        note = {"type": "user", "message": {"content": "<task-notification>\n<tool-use-id>toolu_1</tool-use-id>\n</task-notification>"}}
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), check, note), background_tasks=[])
+        self.assertEqual(code, 2)
+        self.assertIn("before the last agent returned", err)
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), note, check), background_tasks=[])
+        self.assertEqual(code, 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        self.assertIn("project check green after the last change", self.closing())
+
+    def test_a_host_and_port_is_no_citation(self):
+        self.assertEqual(self.tool("Edit", file_path=str(self.docket))[0], 0)
+        self.docket.write_text(self.docket.read_text("utf-8") + "- the server runs on staging.example.com:8443\n", "utf-8")
+        code, err, _ = run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
+                                                     "tool_input": {"file_path": str(self.docket)}}, self.p)
+        self.assertEqual(code, 0, err)
+
+    def test_an_untracked_settings_file_git_would_commit_keeps_its_judge(self):
+        template = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))
+        settings = self.root / ".claude" / "settings.json"
+        settings.write_text(json.dumps({"hooks": {"Stop": [{"hooks": template["hooks"]["Stop"][0]["hooks"]}]}}), "utf-8")
+        subprocess.run(["git", "-C", str(self.root), "init", "-q"], check=True)
+        self.set_state(mode="none")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        self.prompt(f"/implement {SPEC}")
+        self.assertIn("You judge", settings.read_text("utf-8"))
+        (self.root / ".gitignore").write_text(".claude/\n", "utf-8")
+        self.set_state(mode="none")
+        self.prompt(f"/implement {SPEC}")
+        self.assertNotIn("You judge", settings.read_text("utf-8"))
+
+    def test_the_lock_is_exclusive_and_a_live_holder_keeps_it(self):
+        self.set_state(mode="none")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
+        self.assertEqual(self.prompt(f"/implement {SPEC}")[0], 0)
+        code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-8", "cwd": self.p,
+                                                   "prompt": f"/implement {SPEC}"}, self.p)
+        self.assertEqual(code, 2)
+        self.assertIn("runs in another session", err)
+        self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)
+
+
+class ExperimentTwelve(Project):
+    """Experiment 12 (2026-11-06): the first closing message of a real series said "Du musst: keine Schritte nötig"
+    twice, the same decision twice and ended cut lines with "….". """
+
+    def test_shared_items_once_none_values_dropped_cut_lines_without_a_period(self):
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC, "s-aaaa1111"], queue=["s-aaaa1111"])
+        for spec_id, title in ((SPEC, "Login"), ("s-aaaa1111", "Logout")):
+            (self.work / "specs" / "core" / f"{spec_id}-{title.lower()}.md").write_text(
+                f"---\nid: {spec_id}\ntitle: {title}\nstate: ready\n---\n", "utf-8")
+        for spec_id, title in ((SPEC, "Login"), ("s-aaaa1111", "Logout")):
+            (self.work / "dockets" / "core" / f"{spec_id}.md").write_text("| 1 | x | `x` | [x] |\n", "utf-8")
+            self.end_spec(spec_id=spec_id, result=f"{title} works.", lines=[
+                "user: keine Schritte nötig.",
+                "decision: Fehleingaben in eigener Spec festlegen? Empfehlung: ja, mit /docket:spec",
+                "open: " + "lange Zeile " * 30])
+            self.assertEqual(self.run_stop(active=spec_id != SPEC)[0], 2)  # the handover, then the closing order
+        text = self.closing()
+        self.assertNotIn("keine Schritte", text)
+        self.assertNotIn("You must", text)
+        self.assertEqual(text.count("Decision: Fehleingaben in eigener Spec festlegen?"), 1)
+        self.assertNotIn("Login: Fehleingaben", text)
+        self.assertNotIn("….", text)
+        self.assertIn("Open: Lange Zeile lange Zeile", text)  # the same item of both specs, once
+    def test_the_fixer_ban_does_not_trip_on_a_path_with_docket_in_it(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        prompt = "In D:/dev/projects/docket/experiments/exp12-series/tests/test_greet.py add the case `--bye`."
+        self.assertEqual(self.tool("Agent", subagent_type="docket:fixer", prompt=prompt)[0], 0)
+
+    def test_the_docket_of_a_finished_spec_is_no_reference(self):
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: done\n---\n", "utf-8")
+        self.docket.write_text("| 1 | x | `x` | [x] |\n", "utf-8")
+        self.set_state(mode="sealed", spec="s-aaaa1111")
+        self.assertEqual(self.tool("Read", file_path=str(self.docket))[0], 2)
+
+    def test_the_task_list_speaks_the_users_words(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, _ = self.tool("mcp__ccd_turn__update_plan", items=[{"content": "Spec 1: Docket-Skelett schreiben",
+                                                                        "status": "in_progress"}])
+        self.assertEqual(code, 2)
+        self.assertIn("task list", err)
+        self.assertEqual(self.tool("mcp__ccd_turn__update_plan", items=[{"content": "Spec 1: Prüfung gegen den Code",
+                                                                          "status": "in_progress"}])[0], 0)
+
+    def test_metrics_count_agents_that_started(self):
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        (self.work / "LOG.md").write_text(f"2026-11-06T10:00:00Z  {SPEC}  sealed             session=test-ses\n", "utf-8")
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        call = lambda i: {"type": "assistant", "timestamp": now, "message": {"content": [
+            {"type": "tool_use", "id": f"f{i}", "name": "Agent", "input": {"subagent_type": "docket:fixer"}}]}}
+        refused = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "f1", "is_error": True,
+                                                            "content": "[docket] The docket is yours"}]}}
+        path = self.tmp / "t.jsonl"
+        path.write_text("\n".join(json.dumps(e) for e in (call(1), refused, call(2))) + "\n", "utf-8")
+        self.docket.write_text("| 1 | x | `x` | [x] |\n", "utf-8")
+        self.end_spec()
+        self.run_stop(transcript_path=str(path), background_tasks=[])
+        metrics = json.loads((self.work / "metrics" / f"{SPEC}.json").read_text("utf-8"))
+        self.assertEqual(metrics["agents"], {"fixer": 1})
+
 
 
 if __name__ == "__main__":

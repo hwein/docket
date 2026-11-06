@@ -5,7 +5,8 @@ reminder as additional context: state, spec, the docket's point count, the last 
 In a project without DOCKET.md it prints nothing: the hooks only observe there.
 The degraded flag lifts in pre_tool_use once every required file has been read with Read.
 A docket that was sealed but never reached a terminal state is named, so the next
-/implement resumes it instead of starting over.
+/implement resumes it instead of starting over; an interrupted series is named with its titles and the state of
+each spec (V13). A judge a crashed run left suspended is put back (V5).
 """
 import hashlib
 import json
@@ -16,8 +17,9 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (SPEC_ID, Paths, load_state, log_event, log_lines, point_counts, read_input, save_state,
-                        violations_line)
+from docket_lib import (RUN_MODES, SPEC_ID, Paths, load_judge_record, load_state, log_event, log_lines,
+                        logged_series, point_counts, position, read_input, resume_judge, save_state, series_line,
+                        session_live, violations_line, write_atomically)
 
 TERMINAL_EVENTS = ("delivered", "blocked", "dissent")
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +50,10 @@ def main():
     spec_id = state.get("spec", "")
     if mode in ("sealed", "rewrite") and source in ("resume", "compact"):
         log_event(paths, session_id, spec_id, "resumed", f"source={source}")
+    record = load_judge_record(paths)
+    if record and not any(s == session_id or session_live(paths, s) for s in record.get("sessions") or []):
+        if resume_judge(paths, session_id, force=True):
+            log_event(paths, session_id, "", "judge-resumed", "no run holds it any more")
     if mode == "none" and not os.path.isfile(paths.config):
         return 0  # project not set up: nothing to say; user_prompt names /docket:init when a docket command is typed
     lines = [f"[docket] session state: {mode}" + (f", spec {spec_id}" if spec_id else "") + "."]
@@ -55,22 +61,37 @@ def main():
         lines += sync_copies(paths, session_id)
         lines.append("[docket] Required reading before any other action, each file completely with Read: "
                      + ", ".join(required) + ". Until then writes, shell commands and agents are refused.")
-        lines.append("[docket] Rule of every session here: each message ends with the line `stamp: YYYY-MM-DD HH:MM`, "
-                     "the time of the latest `[docket] clock:` line the hooks give with every prompt and tool result, "
-                     "or fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
-                     "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or after a judge "
-                     "verdict an empty answer; "
-                     "repeat a message only when the hook says it was held back and never shown.")
+        if mode in RUN_MODES:
+            lines.append("[docket] In a sealed run you write no text and no stamp: a turn that waits for agents ends "
+                         "without text, a spec ends in its docket's Terminal state section, and the run's one message "
+                         "is the closing message the hook renders at its end.")
+        else:
+            lines.append("[docket] Rule of every session here: each message ends with the line `stamp: YYYY-MM-DD HH:MM`, "
+                         "the time of the latest `[docket] clock:` line the hooks give with every prompt and tool result, "
+                         "or fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
+                         "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or after a judge "
+                         "verdict an empty answer; "
+                         "repeat a message only when the hook says it was held back and never shown.")
     if mode in ("sealed", "rewrite"):
-        lines.append(f"[docket] A sealed implementation of {spec_id} is in progress: {points_summary(paths, spec_id)}. "
+        i, n = position(state)
+        lines.append(f"[docket] A sealed implementation of {spec_id} is in progress"
+                     + (f" (spec {i} of {n} of the series)" if n > 1 else "") + f": {points_summary(paths, spec_id)}. "
                      f"Continue from the docket at {paths.docket_file(spec_id) or paths.dockets} "
                      f"and the last lines of {paths.log}."
                      + (f" Queued after it: {', '.join(state['queue'])}." if state.get("queue") else ""))
         feedback = violations_line(paths, spec_id)
         if feedback:
             lines.append(feedback)
+    elif mode == "closing":
+        lines.append("[docket] The run is over; its closing message waits to be sent verbatim from "
+                     + str((state.get("closing") or {}).get("file", "")) + ".")
     else:
-        open_runs = interrupted_runs(paths)
+        in_series = set()
+        for series in logged_series(paths):
+            if "interrupted" in series["status"].values() and not session_live(paths, series["session"]):
+                lines.append(series_line(paths, series))
+            in_series.update(series["ids"])
+        open_runs = [spec for spec in interrupted_runs(paths) if spec not in in_series]
         if open_runs:
             lines.append("[docket] Sealed runs without a terminal state: " + ", ".join(open_runs)
                          + ". `/implement <id>` resumes one from its docket.")
@@ -94,17 +115,6 @@ def sync_copies(paths, session_id):
         log_event(paths, session_id, "", "judge-updated", "from templates/judge-hook.json")
         notes.append("[docket] The judge in .claude/settings.json now follows the plugin's version.")
     return notes
-
-
-def write_atomically(path, text, bom=False):
-    temporary = f"{path}.docket-{os.getpid()}.tmp"
-    try:
-        with open(temporary, "w", encoding="utf-8-sig" if bom else "utf-8", newline="") as handle:
-            handle.write(text)
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.remove(temporary)
 
 
 def judge_digest(entry):

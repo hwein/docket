@@ -14,20 +14,33 @@ Hooks check provenance, form and state, never content. This is the mechanics beh
 - `LOG.md` is written by hooks only: sealed, point-delivered, deviation, delivered, blocked, dissent, grants,
   judge verdicts.
 
-## DOCKET DELIVERED
+## The end of a spec
 
-The Stop hook accepts `DOCKET DELIVERED` only if every command of the project's check (as many as the project has,
-listed in `DOCKET.md`) ran after the last agent returned and none failed in its last run; every `file:line` cited in
-the docket's Evidence, Deviations and Reference update sections exists; every reference doc the spec names is marked
-`updated` (and changed since sealing) or `not needed`; with `ci` configured, a `CI: <state> <hash>` line names a
-hash reachable from HEAD after a push in this session. Otherwise the run goes on until it holds.
+A spec ends in its docket, not in a message: the orchestrator writes the `Terminal state` section (`state:`
+DELIVERED, BLOCKED or DISSENT, `result:`, `open:`, `user:`, `decision:`, `dissent:`), in the user's language, without
+ids or hashes; the last block counts. The Stop hook accepts DELIVERED only if every command of the project's check (as
+many as the project has, listed in `DOCKET.md`) ran after the last agent returned and none failed in its last run;
+every `file:line` cited in the docket's Evidence, Deviations and Reference update sections exists; every reference
+doc the spec names is marked `updated` (and changed since sealing) or `not needed`; every refinement line and every
+review line carries a decision; with `ci` configured, a `CI: <state> <hash>` line names a hash reachable from HEAD
+after a push in this session. Otherwise the run goes on until it holds. An accepted end closes the spec, writes its
+metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts the closing.
+
+## The closing message
+
+When the last spec of a run has ended, or one ended BLOCKED or DISSENT, or the user stopped the run, the hook renders
+the run's one message from the dockets, the LOG and git: every spec by its title with its points and result, whether
+the work is pushed and CI green, what was checked (refinement, review, the project check), what is open, what only
+the user can do, which decision is due and with which command, what came of the user's notes, where the dockets
+are. The orchestrator sends it verbatim; the display gate shows nothing else, and after three misses it shows the
+rendered text itself. The session is closed afterwards.
 
 ## Project rules
 
 Branch (`push_branch`), commit form (`commit_regex`), `forbidden_paths` and `forbidden_commands` from `DOCKET.md`
 apply to every command. A forbidden command is not refused but put to the user as a permission dialog: one click
 runs it once, and the LOG records the grant. A sealed run has nobody to ask, so there it stays refused and is named
-in `DOCKET BLOCKED`.
+as BLOCKED in the spec's docket and in the closing message.
 
 ## Messages
 
@@ -41,19 +54,32 @@ in `DOCKET BLOCKED`.
   answers, nothing is written and no agent or workflow starts.
 - A quoted hook answer must have come from a hook in this session.
 - The display gate (MessageDisplay hook) holds a message that breaks a rule back before the user sees it; the Stop
-  hook asks for it again in full. In a sealed run the gate replaces every message that is not the terminal one
-  with the hook's status line, and shows a terminal message only when the Stop hook will accept it.
-- The terminal message of a run: line 2 names the spec by its title, one line starts with `Du musst` / `You must`
-  or `Nichts zu tun` / `Nothing to do`, no line is about hooks, the last line is the stamp with the docket's counts.
-  The hook then adds a closing line of its own: delivered how many of how many, run finished, and the next spec
-  (of the series, or in state `ready`).
+  hook asks for it again in full.
+- A sealed run writes no text. A turn that waits for agents ends without text: the Stop hook recognises the wait by
+  Claude Code's `background_tasks` or by an agent notification queued and not yet seen by the model, and checks
+  nothing; once the spec's Terminal state is written, only agents still running hold it, not a dev server. Whatever
+  text the orchestrator still writes is replaced live by the hook's status line (spec i of n, title, points
+  delivered), and only when that line differs from the last one shown.
+- The description of an agent in a run is what the user reads when it finishes: in a series it starts with
+  `Spec i of n: `, then the task in everyday words; the plugin's words are refused there.
+- The Stop hook refuses a message only once: a second Stop right after its own refusal, with no tool call between,
+  is let through and logged; in a run the user is told in one line that the run stopped and how to resume it.
 
 ## Modes
 
 Each mode keeps to its work: concept mode writes concepts and `DOCKET.md`, any other write in the repo comes to the
 user as a permission dialog, and an order for specs given there is answered with `/docket:spec`. A sealed run asks
 no question, not in the text and not in the next-step box; free text typed during it goes to an inbox the
-orchestrator reads between points.
+orchestrator reads between points, and the notice says so in the user's language.
+
+In a sealed run the orchestrator keeps the docket itself; a fixer gets no docket or metrics path. The hooks' own
+source is not read. A push waits until every line of the docket's Review section is decided: one reviewer agent
+reads the whole diff of the spec before it. Before the session seals, the user-only preconditions of every spec of
+the run (`Preconditions (user only)`: `command` → expected output) are run; the first that fails is named and
+nothing is sealed; a precondition that matches `forbidden_commands` is not run, and its output never reaches the LOG.
+Only the spec at work is locked, exclusively; a session counts as running while its state was touched within the hour
+or it waits for its agents, so a lock of a crashed run is taken over and the next session start names an interrupted series with the
+titles and state of its specs.
 
 ## The judge
 
@@ -61,6 +87,11 @@ The optional judge (a prompt hook, per project, opt-in at `/docket:init`) checks
 user has read it: one question at most, no option menus, no manual tasks for the user beyond the steps of a blocker,
 no promises, no self-talk. Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts
 go to Claude and the log, never to the screen: Claude answers them with silence.
+
+A sealed run has no judge: at sealing its entry leaves `.claude/settings.json` (or `settings.local.json`) for a
+record in `.claude/docket/` (written first), and it comes back when the run ends; a session start puts it back when
+the run that took it is no longer running. A settings file a commit could carry (tracked, or not ignored) is left
+alone; there a verdict in a run is logged as `judge-ignored` and counts nothing.
 
 ## Footprint
 

@@ -40,7 +40,9 @@ def end_rewrite(hook_input):
     session_id = hook_input.get("session_id")
     state = load_state(paths, session_id)
     set_context(paths, state.get("spec", ""))
-    if state.get("mode") == "rewrite":
+    kind = str(hook_input.get("agent_type") or "").lower()
+    # Only the conceptor's return ends the rewrite; a refiner still running from step 1 does not (review 2026-11-06).
+    if state.get("mode") == "rewrite" and (not kind or "conceptor" in kind):
         state.update({"mode": "sealed", "rewrite": ""})
         save_state(paths, session_id, state)
         log_event(paths, session_id, state.get("spec", ""), "rewrite-done", "spec frozen again")

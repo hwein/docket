@@ -51,11 +51,13 @@ latest commit shows whether they passed.
    what differs from a spec is decided here, not patched later.
 3. **Decide:** `/docket:spec`. The agreed WHAT becomes a spec: points with done criteria a script can check,
    your decisions closed with one word each, reference docs named. Then it is `ready` and frozen.
-4. **Leave:** `/docket:implement <id>`. The session seals. Refinement, pre-registered docket, one implementer
-   per point, checks run by the orchestrator, commits per the project's rules. Your messages wait in the inbox;
-   `/docket:stop` ends the run cleanly. Nothing asks you anything until the docket is written.
-5. **Read:** one message, `DOCKET DELIVERED`, `DOCKET BLOCKED` or `DOCKET DISSENT`, in plain words. The docket
-   has the evidence. What deviated goes back to step 2.
+4. **Leave:** `/docket:implement <id>`. What only you can provide, a key or a running server, is checked first;
+   then the session seals. Refinement, pre-registered docket, one implementer per point, checks run by the
+   orchestrator, one review of the whole change, commits per the project's rules. Your messages wait in the
+   inbox; `/docket:stop` ends the run cleanly. Nothing asks you anything until the run is over.
+5. **Read:** one message for the whole run, in your language: each spec by its title and what it delivered,
+   whether the work is pushed and CI is green, what was checked, what is open, what only you can do, and the
+   decision that is due. The dockets hold the evidence. What deviated goes back to step 2.
 
 Several specs can wait as `ready`; several sessions can run on different specs at once, each locked to its own.
 
@@ -70,7 +72,7 @@ flowchart LR
         register --> points["implementer<br/>per point"]
         points --> check["orchestrator runs<br/>the check"]
         check --> points
-        check --> close["one message:<br/>DELIVERED · BLOCKED · DISSENT"]
+        check --> review["one review<br/>of the whole change"] --> close["one final message<br/>for the whole run"]
     end
     docket[("docket<br/>evidence, append-only<br/>LOG by hooks only")]
     init --> concept --> spec --> run
@@ -88,7 +90,7 @@ Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`,
 | `/docket:init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
 | `/docket:concept` | concept | Thinks with you. One idea per message, one question at most. |
 | `/docket:spec` | spec | Turns the agreed WHAT into a spec with checkable done criteria, then `ready`. |
-| `/docket:implement [...]` | sealed | Runs one spec or a series of specs autonomously, one message per spec (forms below). |
+| `/docket:implement [...]` | sealed | Runs one spec or a series of specs autonomously and ends with one final message (forms below). |
 | `/docket:register` | | The register: concepts, specs, dockets, last LOG lines. |
 | `/docket:status` | | One line: mode, spec, open points, last LOG line. |
 | `/docket:stop` | | Ends a sealed run at the next checkpoint. |
@@ -96,8 +98,8 @@ Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`,
 ## One spec or a series
 
 A concept ends in one spec or several, in an order (`follows:` in the spec's header). `/docket:implement` runs
-them the same way, one after another in one session, each with its own refinement, docket, merge and terminal
-message:
+them the same way, one after another in one session, each with its own refinement, docket and merge; the run ends
+with one message for all of them:
 
 | Call | Runs |
 |---|---|
@@ -108,10 +110,9 @@ message:
 | `/docket:implement --all` | every ready spec of the project, in implementation order |
 
 Implementation order: a spec after every spec it follows, otherwise by creation date. A call that would run a spec
-before an undone predecessor is refused and names the predecessor. After each `DOCKET DELIVERED` the hook seals
-the next spec of the series and tells you so in its closing line; after `DOCKET BLOCKED` or `DOCKET DISSENT` the
-series stops and the closing line names the specs not started. `/docket:stop` ends the series at the next
-checkpoint.
+before an undone predecessor is refused and names the predecessor. When a spec is delivered, the hook seals the
+next one in the same session. A spec that ends blocked or in dissent ends the series, and the closing message names
+the specs not started and the command that resumes them. `/docket:stop` ends the series at the next checkpoint.
 
 ## How a sealed run works
 
@@ -119,30 +120,36 @@ checkpoint.
 2. A docket skeleton is pre-registered: one line per point with the evidence that will count.
 3. One implementer agent per point. The orchestrator reads every diff and runs the project check itself.
 4. Every delivered point gets its evidence line; what differs from the spec becomes a deviation line.
-5. The run ends with `DOCKET DELIVERED`, `DOCKET BLOCKED` or `DOCKET DISSENT`: the spec's title and the result in
-   one sentence, then what only you have to do (or `Nothing to do`), then one line per point in everyday words, in
-   the language `DOCKET.md` sets. The hook closes the session and adds a line of its own: delivered how many of how
-   many, run finished, and the next spec in state `ready`.
+5. One reviewer agent reads the whole change before it is pushed; every finding is decided in the docket.
+6. The spec ends in its docket: delivered, blocked or in dissent, with its result in one sentence and what is
+   left open.
+7. The run ends with one message, which the hook writes from the dockets and git, in the language `DOCKET.md`
+   sets.
 
-While it runs you see none of the orchestrator's messages, only the hook's status line (title, points delivered,
-clock); your own messages go to an inbox the orchestrator reads between points.
+While it runs you see a status line, and only when something changed: which spec of how many, its title, the
+points delivered. Your own messages go to an inbox the orchestrator reads between points; the closing message
+says what came of them.
 
 ## What you can rely on
 
 - A spec that is `ready` does not change under you; a rewrite is a logged event.
-- `DOCKET DELIVERED` means: the project's own check ran green after the last agent, every cited location exists,
+- A delivered spec means: the project's own check ran green after the last agent, every cited location exists,
   every reference doc the spec names is updated or accounted for.
+- Nothing is pushed before one review of the whole change is decided, finding by finding.
+- The message at the end is written by the hook from the dockets and git, not from the model's memory.
 - The log is written by hooks, not by the model.
 
 ## When docket interrupts you
 
+- Before a run: a precondition only you can meet, a key or a running server, is named, and nothing starts.
 - A permission dialog: a command from `forbidden_commands`, or a write outside the current mode's files. One click
   runs it once; a sealed run has nobody to ask and refuses.
 - A blocker: one line that names what only you can do. Nothing happens until you answer.
 
 ## What you see
 
-- During a run: one status line (spec, points delivered, time). At the end: one message per spec, in your language.
+- During a run: a status line when something changed (which spec, points delivered). At the end: one message
+  for the whole run, in your language.
 - Never: hashes, ids, hedges, intermediate states, the judge's verdicts.
 
 How the hooks do this: [HOOKS.md](HOOKS.md).
@@ -159,7 +166,7 @@ How the hooks do this: [HOOKS.md](HOOKS.md).
 
 ```
 commands/   concept, spec, implement, init, register, status, stop
-agents/     conceptor, refiner, implementer, fixer
+agents/     conceptor, refiner, implementer, reviewer, fixer
 hooks/      hooks.json, Python hooks, tests
 templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, judge-hook.json
 HOOKS.md    how the hooks enforce the rules
@@ -169,7 +176,7 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.9, an early stage of development, already in use in several repositories.
+0.3.0, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

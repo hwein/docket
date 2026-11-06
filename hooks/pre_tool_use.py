@@ -6,8 +6,11 @@ Write rights by state x path (roles are write rights, not sessions):
 - concepts and DOCKET.md: concept/init modes
 - LOG.md: never by a tool (hooks only)
 Done specs and dockets are not a reference source: Read/Grep on them outside concept mode is refused.
-Sealed: AskUserQuestion and a question in the next-step box refused. Closed: writes, agents and box questions
-refused. Degraded: writes, shell and agents refused until the required reading has been observed. Shell read
+Sealed: AskUserQuestion and the next-step box refused; an agent's description names its place in the series in
+everyday words (V8); a fixer never gets the docket or the metrics (V6, the orchestrator keeps the docket, the hook
+writes the metrics); the plugin's own source is not read (V10); a push waits for a decided review (V14).
+Closing: only the rendered closing message is sent; the box may ask only the decision it names. Closed: writes,
+agents and box questions refused. Degraded: writes, shell and agents refused until the required reading has been observed. Shell read
 commands are redirected to Read.
 Concept and spec: after a message that named a `Blocker` and ended the turn, writes, agents and workflows are
 refused until the user's next prompt. Concept: a write in the repo outside the work dir is put to the user (`ask`).
@@ -24,12 +27,16 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (Paths, absolute, blocker_since_prompt, config_values, frontmatter, load_state, log_event,
-                        read_input, refuse, save_state, set_context, under)
+from docket_lib import (PLUGIN_ROOT, RUN_MODES, Paths, absolute, blocker_since_prompt, closing_path, config_values,
+                        frontmatter, language_code, load_state, log_event, position, read_input, read_text,
+                        refinement_problem, refuse, review_problem, save_state, set_context, under)
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 INIT_FILES = {"docket.md", "contributing.md", "claude.md", "agents.md", ".gitignore", "settings.json", "settings.local.json"}
-DECISION = re.compile(r"\b(adopted|rejected|rewrite|rewritten|dissent|moot)\b", re.IGNORECASE)
+# V8: the agent's description is what the user reads when it finishes; plugin words mean nothing to the user
+# (luradb-web-client 2026-11-06: 80 completions, 59 names in the plugin's words, none naming its spec).
+PLUGIN_WORDS = re.compile(r"\b(refiners?|fixers?|conceptors?|implementers?|orchestrators?|flip\w*|dockets?|skeletons?)\b",
+                          re.IGNORECASE)
 GIT_PUSH = re.compile(r"\bgit\s+push\b([^|;&\n]*)")
 GIT_COMMIT = re.compile(r"\bgit\s+commit\b[^|;&\n]*?(?:-m|--message)[=\s]+(?:\"([^\"]*)\"|'([^']*)'|(\S+))")
 HEREDOC_MESSAGE = re.compile(r"\bgit\s+commit\b[^\n]*<<\s*['\"]?(\w+)['\"]?\)?\s*\n([^\n]*)")
@@ -80,16 +87,25 @@ def main():
             return refuse("[docket] The /docket: commands are the user's commands: they switch the mode "
                           "only when the user types them. Say which command comes next and end the turn.")
 
-    if mode in ("sealed", "rewrite") and tool == "AskUserQuestion":
+    if mode in RUN_MODES and tool == "AskUserQuestion":
         return refuse("[docket] The spec is sealed: no questions. Take the default, write a 'deviation' line "
-                      "into the docket, continue. Only DOCKET BLOCKED or DOCKET DISSENT reach the user.")
+                      "into the docket, continue. What only the user can decide goes into the Terminal state "
+                      "(`decision:` or `state: BLOCKED: …`) and reaches the user in the closing message.")
 
     # The desktop app's next-step box asks too, and no Stop hook sees its question.
-    if tool.endswith("__wrap_up") and str(tool_input.get("ask") or "").strip():
+    if tool.endswith("__wrap_up"):
+        asks = bool(str(tool_input.get("ask") or "").strip())
         if mode in ("sealed", "rewrite"):
-            return refuse("[docket] The spec is sealed: no questions, not in the next-step box either. Send the recap "
-                          "alone; only DOCKET BLOCKED or DOCKET DISSENT reach the user.")
-        if mode == "closed":
+            return refuse("[docket] A sealed run shows nothing until its closing message: no next-step box, no recap. "
+                          "End the turn without text.")
+        if mode == "closing":
+            head = (read_text(closing_path(paths, session_id)).splitlines() or [""])[0]
+            recap = " ".join(str(tool_input.get("recap") or "").split())
+            if head and not recap.startswith(" ".join(head.split())[:60]):
+                return refuse(f"[docket] The recap of the closing turn begins with the closing message's first line: `{head}`.")
+            if asks and not closing_decision(paths, session_id):
+                return refuse("[docket] The closing message asks no decision: send the recap alone, no question.")
+        if mode == "closed" and asks:
             return refuse("[docket] The implementation is closed: no questions, not in the next-step box either. "
                           "Send the recap alone.")
 
@@ -102,6 +118,18 @@ def main():
 
     if mode == "closed" and tool in WRITE_TOOLS | {"Agent"}:
         return refuse("[docket] The implementation is closed. Answer from the docket; a new command opens the next mode.")
+    if mode == "closing" and tool in WRITE_TOOLS | {"Agent", "Workflow", "Bash", "PowerShell"}:
+        return refuse("[docket] The run is over: read the closing message with Read and send it verbatim, nothing else.")
+
+    subagent = bool(hook_input.get("agent_id"))  # a tool call of an agent, not of the orchestrator
+    if tool.endswith("__update_plan") and mode in RUN_MODES:
+        problem = plan_problem(paths, tool_input)
+        if problem:
+            return refuse(problem)
+    if tool in ("Agent", "Task") and mode in ("sealed", "rewrite") and not subagent:
+        problem = agent_problem(paths, state, tool_input)
+        if problem:
+            return refuse(problem)
 
     # Rewrite is a visible event: spawning the conceptor in a sealed run opens that one spec for it.
     if tool == "Agent" and "conceptor" in str(tool_input.get("subagent_type", "")).lower():
@@ -124,13 +152,17 @@ def main():
         if isinstance(command, str):
             forbidden = forbidden_command(command, config)
             if forbidden and mode in ("sealed", "rewrite"):
-                return refuse(forbidden + " A sealed run has no user: name the command in DOCKET BLOCKED.")
+                return refuse(forbidden + " A sealed run has no user: end the spec with `state: BLOCKED: <the command, for the user to run>`.")
             if forbidden:
                 log_event(paths, session_id, state.get("spec", ""), "ask", " ".join(command.split())[:100])
                 return ask(forbidden + " Allowing it here grants it once; the LOG records the grant.")
             problem = project_rule_problem(command, config, paths)
             if problem:
                 return refuse(problem)
+            if mode in ("sealed", "rewrite") and GIT_PUSH.search(command) and not subagent:
+                problem = review_problem(paths, state.get("spec", ""))
+                if problem:
+                    return refuse(problem + " The push waits for it.")
         if isinstance(command, str) and registered_check(command, paths, state):
             return 0
         if configured and isinstance(command, str) and SHELL_READ.search(command) and "<<" not in command:
@@ -140,12 +172,17 @@ def main():
     if path is None:
         return 0
 
+    if tool in READ_TOOLS and mode in RUN_MODES and hook_source_path(path):
+        # V10: the run is checked by the hooks, not studied through them (luradb-web-client 2026-11-06: the
+        # orchestrator read stop.py to find what the check accepts).
+        return refuse("[docket] The plugin's own files are not part of the work. What a hook wants is in its message; "
+                      "the rules are in the implement command.")
     if tool in READ_TOOLS and mode != "concept":
         if path.lower() == paths.log.lower():
             return 0
         for folder in (paths.specs, paths.dockets):
             if under(path, folder) and os.path.isfile(path):
-                if frontmatter(path).get("state", "").lower() in FINISHED_STATES:
+                if finished_document(paths, path, folder):
                     return refuse("[docket] Finished specs and dockets are closed work orders, not a reference. "
                                   "Current behaviour comes from the reference docs named in DOCKET.md, then from code.")
         if tool == "Grep" and (under(paths.specs, path) or under(paths.dockets, path)) and mode != "concept":
@@ -159,8 +196,8 @@ def main():
     if path.lower() == paths.log.lower():
         return refuse("[docket] LOG.md is written by the hooks only.")
 
-    if under(path, paths.state_dir) or under(path, posixpath.join(paths.work, "locks")) or path.lower().endswith(".violations.json"):
-        return refuse("[docket] Session state, locks and violation counts are written by the hooks only; "
+    if under(path, paths.state_dir) or under(path, posixpath.join(paths.work, "locks")) or under(path, paths.metrics):
+        return refuse("[docket] Session state, locks and metrics are written by the hooks only; "
                       "a mode changes through the user's command, never by editing the state file.")
 
     forbidden = forbidden_path(path, config.get("forbidden_paths", ""), paths)
@@ -221,25 +258,59 @@ def registered_check(command, paths, state):
     return False
 
 
-def refinement_problem(paths, spec_id):
-    """Before the first implementer: the docket skeleton exists and every refinement line carries a decision."""
-    docket = paths.docket_file(spec_id)
-    if docket is None:
-        return "[docket] No docket yet: a fixer writes the skeleton (one row per spec point) before the first implementer."
-    try:
-        with open(docket, encoding="utf-8-sig", errors="ignore") as handle:
-            text = handle.read()
-    except OSError:
-        return ""
-    match = re.search(r"^##\s+Refinement\b.*?$(.*?)(?=^##\s|\Z)", text, re.MULTILINE | re.DOTALL | re.IGNORECASE)
-    if not match:
-        return ""
-    open_lines = [line.strip() for line in match.group(1).splitlines()
-                  if re.match(r"\s*[-*]\s+\S", line) and not DECISION.search(line)]
-    if open_lines:
-        return ("[docket] Refinement lines without a decision (adopted / rejected / rewrite / dissent): "
-                + " | ".join(line[:70] for line in open_lines[:3]) + ". Close them before the first implementer.")
+def agent_problem(paths, state, tool_input):
+    """V8: the description names the place in the series and the task in everyday words; V6: a fixer changes project
+    files only, the orchestrator keeps the docket and the hook writes the metrics."""
+    description = str(tool_input.get("description") or "")
+    kind = str(tool_input.get("subagent_type") or "").lower()
+    i, n = position(state)
+    german = language_code(paths) == "de"
+    prefix = (f"Spec {i} von {n}: " if german else f"Spec {i} of {n}: ") if n > 1 else ""
+    example = prefix + ("Prüfung gegen den Code" if german else "check against the code")
+    if (prefix and not description.startswith(prefix)) or PLUGIN_WORDS.search(description):
+        return ("[docket] The agent's description is what the user reads when it finishes: "
+                + (f"start it with `{prefix}` and " if prefix else "")
+                + "name the task in everyday words, without the plugin's words (refiner, fixer, implementer, docket "
+                f"…). Example: `{example}`.")
+    prompt = str(tool_input.get("prompt") or "")
+    if "fixer" in kind and re.search(r"\bdockets[/\\]|\bmetrics[/\\]|\.violations\.json", prompt, re.IGNORECASE):
+        return ("[docket] The docket is yours: write it yourself (skeleton with Write, then Edit: boxes, evidence, "
+                "Terminal state); the hook writes the metrics. A fixer changes project files only.")
     return ""
+
+
+def hook_source_path(path):
+    """The hooks of this plugin or of any installed docket version; its templates, commands and agents stay readable
+    (the orchestrator writes the docket from the template)."""
+    return under(path, PLUGIN_ROOT + "/hooks") or bool(
+        re.search(r"/plugins/cache/docket[^/]*/docket/[^/]+/hooks(/|$)", path.replace("\\", "/"), re.IGNORECASE))
+
+
+def finished_document(paths, path, folder):
+    """A spec in state done or superseded, or the docket of such a spec (a docket has no state of its own)."""
+    if folder == paths.specs:
+        return frontmatter(path).get("state", "").lower() in FINISHED_STATES
+    found = re.match(r"(s-[0-9a-f]{8})", posixpath.basename(path).lower())
+    spec = paths.spec_file(found.group(1)) if found else None
+    return bool(spec) and frontmatter(spec).get("state", "").lower() in FINISHED_STATES
+
+
+def plan_problem(paths, tool_input):
+    """The desktop app's task list is on the user's screen during a run: its items speak the user's words, not the
+    plugin's (experiment 12: "Docket-Skelett schreiben", "Terminal-Zustand")."""
+    items = tool_input.get("items") if isinstance(tool_input.get("items"), list) else []
+    words = [str(item.get("content", "")) for item in items if isinstance(item, dict)]
+    bad = [w for w in words if PLUGIN_WORDS.search(w) or re.search(r"\bterminal[- ]?(state|zustand)\b|\bhooks?\b", w, re.I)]
+    if bad:
+        return ("[docket] The task list is on the user's screen: name each step in everyday words, without the plugin's "
+                f"words (docket, fixer, refiner, hook, terminal state). Refused: `{bad[0][:60]}`.")
+    return ""
+
+
+def closing_decision(paths, session_id):
+    """Whether the rendered closing message asks a decision (its `Entscheidung:` / `Decision:` line)."""
+    text = read_text(closing_path(paths, session_id))
+    return bool(re.search(r"^(Entscheidung|Decision):", text, re.MULTILINE))
 
 
 def ask(reason):
@@ -289,10 +360,10 @@ def pushed_branch(args, paths):
     words = [word for word in args.split() if not word.startswith("-")]
     if len(words) >= 2:
         return words[1].split(":")[-1].replace("refs/heads/", "")
+    import subprocess
     try:
-        import subprocess
-        return subprocess.run(["git", "-C", paths.root, "rev-parse", "--abbrev-ref", "HEAD"],
-                              capture_output=True, text=True, timeout=5).stdout.strip()
+        return (subprocess.run(["git", "-C", paths.root, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True,
+                               encoding="utf-8", errors="replace", timeout=5).stdout or "").strip()
     except (OSError, subprocess.SubprocessError):
         return ""
 

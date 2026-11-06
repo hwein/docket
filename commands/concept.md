@@ -25,7 +25,7 @@ sentence to the user with a recommendation: accepted (the reference docs already
 better behaviour), a new spec (`follows: <id>`), or a user decision. A docket is never edited. A delivered spec
 moves to `done` only here, by you, after weighing.
 
-For a `DOCKET DISSENT`: present the two positions as the docket states them, one sentence each with source, and
+For a docket that ended in DISSENT: present the two positions as its Terminal state names them, one sentence each with source, and
 ask the one question. The user's word settles it; record it in the follow-up spec.
 
 ## Conversation rules

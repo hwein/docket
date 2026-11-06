@@ -1,7 +1,8 @@
 """PostToolUse hook, every tool.
 
 Every tool result carries the clock line `[docket] clock: YYYY-MM-DD HH:MM` as additional context once the
-project is set up: the stamp needs no tool call (M7). A shell command that matched forbidden_commands and ran
+project is set up: the stamp needs no tool call (M7). In a sealed run an agent's spawn adds the rule for the wait:
+no text (V4). Every tool call clears the Stop hook's refusal marker: the next Stop is a first pass again (V9). A shell command that matched forbidden_commands and ran
 was allowed by the user in the dialog: LOG `grant` (M1). So was a concept-mode write outside the work dir.
 
 Dockets are append-only: after an edit every previous line (snapshot taken in pre_tool_use) must
@@ -54,8 +55,17 @@ def main():
     if result:
         return result
     if os.path.isfile(paths.config):
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                                 "additionalContext": clock_line(paths, session_id)}}))
+        state = load_state(paths, session_id)
+        if not hook_input.get("agent_id"):
+            state["refused"] = False  # work went on after a refusal: the next Stop is a first pass again
+        context = clock_line(paths, session_id, state)
+        if (state.get("mode") in ("sealed", "rewrite") and hook_input.get("tool_name") in ("Agent", "Task", "Workflow")
+                and not hook_input.get("agent_id")):
+            # V4: the rule at the moment it applies (luradb-web-client 2026-11-06: 76 of 128 texts were a bare stamp
+            # after a spawn; the prompt hook that states the rule ran twice in three hours).
+            context += (" · While agents run, end the turn without any text; their notifications resume you. If the "
+                        "harness asks what you are doing, answer in at most five words, no stamp.")
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": context}}))
     return 0
 
 

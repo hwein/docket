@@ -1,42 +1,48 @@
-"""Stop hook, layer 1 (deterministic). Layer 2 is the prompt-type judge (templates/judge-hook.json): its
-rejection goes to Claude, which answers with an empty turn (experiment 10d: Claude Code then records no message
-and nothing reaches the screen, not even when the session is opened later); this hook counts the judge's verdicts
-from the transcript at the next Stop. An older acknowledgement line `[docket] noted` is still let through.
+"""Stop hook, layer 1 (deterministic). Layer 2 is the optional prompt-type judge (templates/judge-hook.json), which
+is suspended during a sealed run; outside it, its rejection goes to Claude, which answers with an empty turn, and
+this hook counts the verdicts from the transcript at the next Stop.
 
-sealed:  the final message is one of DOCKET DELIVERED | BLOCKED | DISSENT <spec-id>, the docket
-         exists with no open point, the last line is a fresh stamp. On success the session
-         closes and LOG gets the terminal line.
-concept, spec, init: human register. No hashes, no ids, at most one question, no hedge words,
-         no option menus, no roadmap promises, length limit. A blocker is said once: a line starting with
-         `Blocker` that stood, text-identical, in the previous message is refused (M4).
-The stamp is accepted within five minutes of the real time or when it equals the clock line the hooks last
-gave the model (M7).
+sealed, rewrite (a run): no text reaches the user. A Stop while agents run (background_tasks, or an agent whose
+         notification has not reached the model) is a wait and passes unchecked. Otherwise the spec must have ended
+         in its docket's `## Terminal state` section (`state:` DELIVERED | BLOCKED | DISSENT, `result:`, `open:`,
+         `user:`, `decision:`); DELIVERED needs the evidence (check after the last agent, citations, reference docs,
+         CI hash, refinement decided, review decided). An accepted end closes the spec, writes its metrics and either
+         seals the next spec of the series (a short order on stderr) or starts the closing.
+closing: the hook rendered the run's one message from the dockets and git (docket_lib.render_closing) into a file;
+         the orchestrator sends it verbatim. On a match the session closes and the judge returns; after three
+         misses the gate shows the rendered text itself and the session closes.
+concept, spec, init: human register. No hashes, no ids, at most one question, no hedge words, no option menus,
+         no roadmap promises, length limit. A blocker is said once (M4).
 closed:  short answers only, no questions, no proposals.
-Sent back once (stop_hook_active); a second failure is logged and let through.
+Every message outside a run ends with a fresh stamp: within five minutes of the real time or equal to the clock
+line the hooks last gave the model (M7).
 
-The user has read a message by the time this hook runs, so a refusal never asks to repeat a message
-the user saw: a missing stamp is answered with the stamp line alone, a broken rule with correction
-lines. Only a message the display gate (message_display.py) held back is written again in full;
-that refusal is made even on a second pass, because the user has seen nothing yet.
+A refusal is sent back once: a second Stop right after this hook's own refusal (state `refused`, cleared by any
+tool call) is let through and logged; in a run it tells the user in one line that the run stopped.
+The user has read a message by the time this hook runs, so a refusal never asks to repeat a message the user saw;
+only a message the display gate (message_display.py) held back is written again in full.
 """
 import json
 import os
 import posixpath
 import re
 import sys
+import time
 from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, box_questions, check_commands, closing_line, collect_judge,
+from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, agent_returns, box_questions, check_commands, claim_lock,
+                        closing_path, collect_judge, frontmatter,
                         config_values, hook_outputs, language_problem, load_state, log_event, log_lines, log_time,
-                        message_text, missing_citations, point_counts, previous_turn_texts, read_input, refuse,
-                        release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
-                        spec_title, take_lock, transcript_blocks, violations_line)
+                        message_text, missing_citations, normalized_lines, notice, point_counts,
+                        position, previous_turn_texts, read_input, read_text, refinement_problem, refuse,
+                        release_lock, render_closing, resume_judge, review_problem, save_display, save_state, say,
+                        section_text, session_live, lock_holder, set_context, set_spec_state, settled_display,
+                        spec_title, take_lock, terminal_base, terminal_section, text_of, transcript_blocks,
+                        waiting, write_atomically, write_metrics)
 
-TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
-STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
-                   re.IGNORECASE)
+TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\b", re.IGNORECASE)
 WATERMARK = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?!\d)", re.IGNORECASE)
 # A hash stands on its own: hex runs inside a path, a UUID, an id or a file name are not hashes
 # (a Windows scratchpad path tripped the rule in luradb-web-client, 2026-11-05).
@@ -59,19 +65,17 @@ ROADMAP = re.compile(r"\b(next,? i will|afterwards i will|then i will|als n[äa]
 PROPOSAL = re.compile(r"\b(i suggest|i propose|should we|shall i|vorschlag|soll ich|wollen wir)\b", re.IGNORECASE)
 SELF = re.compile(r"\b(sorry|apologi[sz]e|my mistake|my fault|took me|i spent|this took|hours of work|"
                   r"entschuldig\w*|tut mir leid|mein fehler|leider)\b", re.IGNORECASE)
-# Line 3 of a terminal message: what only the user must do, or that nothing is left to them (either language).
-ACTION_LINE = re.compile(r"^\s*(?:\*\*)?(du musst|you must|nichts zu tun|nothing to do)\b", re.IGNORECASE)
 # Sections of the docket whose citations are checked at DELIVERED; refinement lines were checked when written.
 EVIDENCE_SECTIONS = ("Evidence", "Deviations", "Reference update")
 BLOCKER =re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\b", re.IGNORECASE)
 BLOCKER_UNCHANGED = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\s+(?:unver[äa]ndert|unchanged)(?:\*\*)?[.!]?\s*$",
                                re.IGNORECASE)
 TOLERANCE = timedelta(minutes=5)
-MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 8, "sealed": 25}
-# The display gate holds messages back in these modes; in sealed and rewrite it also replaces every message
-# that is not the terminal one with a status line of its own (luradb-web-client 2026-11-06: 25 status lines in
-# the plugin's words and three DOCKET DELIVERED reached the user).
-GATED_MODES = ("concept", "spec", "init", "closed", "sealed", "rewrite")
+MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 8}
+CLOSING_TRIES = 3
+# The display gate holds messages back in these modes; in a run it replaces every text with the hook's status
+# line, and in closing it shows only the rendered closing message.
+GATED_MODES = ("concept", "spec", "init", "closed", "sealed", "rewrite", "closing")
 
 
 def main():
@@ -85,15 +89,19 @@ def main():
     set_context(paths, state.get("spec", ""))
     if os.path.isfile(paths.config):
         collect_judge(paths, session_id, state, hook_input.get("transcript_path"))
-    text = message_text(hook_input)
+    if mode in ("sealed", "rewrite"):
+        return run_stop(paths, session_id, state, hook_input)
+    if mode == "closing":
+        return closing_stop(paths, session_id, state, hook_input)
+    # After a judge verdict Claude answers with an empty turn: in closed mode that turn ends the closing message's
+    # turn and is no message of its own.
+    text = message_text(hook_input, strict=(mode == "closed"))
     if text is None:
         return 0
-    # stop_hook_active stays true for the rest of a turn a Stop hook once blocked. A block that went on to the next
-    # queued spec is not a refusal of this message: the next spec's first Stop is a first pass.
-    advanced = state.pop("queue_advanced", False)
-    if advanced:
-        save_state(paths, session_id, state)
-    second_pass = bool(hook_input.get("stop_hook_active")) and not advanced
+    # stop_hook_active stays true for the rest of a turn any Stop hook once blocked; only this hook's own refusal
+    # makes the next Stop a second pass (luradb-web-client 2026-11-06: the judge's verdicts used up stop.py's one
+    # refusal).
+    second_pass = bool(hook_input.get("stop_hook_active")) and bool(state.get("refused"))
 
     display = settled_display(paths, session_id) if mode in GATED_MODES else None
     clock = state.get("clock", "")
@@ -102,27 +110,17 @@ def main():
         held = sorted({problem for entry in display["hidden"] for problem in entry.get("problems", [])})
         display.update({"hidden": [], "retry": True})
         save_display(paths, session_id, display)
+        mark_refused(paths, session_id, state)
         return refuse("[docket] Your last message was held back and never shown to the user: " + "; ".join(held)
                       + ". Write it again in full, corrected, and end it with the stamp line fetched now. This "
                       "overrides any instruction in this feedback to send correction lines, `[docket] noted` or an "
                       "empty answer.")
 
-    if is_judge_ack(text) and mode not in ("sealed", "rewrite"):
+    if is_judge_ack(text):
         problems = []  # the acknowledgement of a judge verdict; the display gate hid it
     elif mode == "none":
         # No command active, but the project is set up: the stamp is a rule of every session.
         problems = watermark_problems(lines_of(text), clock=clock)
-    elif mode in ("sealed", "rewrite"):
-        if hook_input.get("background_tasks"):
-            # The turn resumes when the background agent reports; not a terminal moment, but still a message.
-            problems = watermark_problems(lines_of(text), clock=clock)
-        else:
-            problems = sealed_problems(text, state, paths, hook_input)
-            if not problems:
-                if display is not None and display["retry"]:
-                    display["retry"] = False
-                    save_display(paths, session_id, display)
-                return finish(paths, session_id, state, text)
     elif mode == "closed":
         problems = closed_problems(text, clock, paths)
     else:
@@ -137,24 +135,197 @@ def main():
         if display is not None and display["retry"]:
             display["retry"] = False
             save_display(paths, session_id, display)
+        if state.get("refused"):
+            state["refused"] = False
+            save_state(paths, session_id, state)
         if problems:
             log_event(paths, session_id, state.get("spec", ""), "stop-forced", "; ".join(problems)[:120])
         return 0
     if display is not None:
         display["retry"] = True  # the answer to this refusal is shown, whatever it holds
         save_display(paths, session_id, display)
+    mark_refused(paths, session_id, state)
     only_stamp = all("stamp" in problem for problem in problems)
     if only_stamp:
         # The message itself stands; only the watermark is missing or stale. Never repeat the message.
         return refuse("[docket] " + "; ".join(problems) + ". Fetch the time now and end the turn with the stamp "
                       "line alone, nothing else.")
-    if mode in ("sealed", "rewrite"):
-        return refuse("[docket] Your last message does not end the run: " + "; ".join(problems)
-                      + ". Fix that, then end the turn with the terminal message only.")
     # The user has read the message: never repeat it, correct the broken sentences only.
     return refuse("[docket] The user has already read your last message: do not repeat or rewrite it. It broke: "
                   + "; ".join(problems) + ". Answer with one line `[docket] Korrektur: <the corrected sentence>` "
                   "per broken rule, in the language of the message, then the stamp line fetched now, nothing else.")
+
+
+def mark_refused(paths, session_id, state):
+    state["refused"] = True
+    save_state(paths, session_id, state)
+
+
+# --- a run ---------------------------------------------------------------------
+
+def run_stop(paths, session_id, state, hook_input):
+    """A Stop in a sealed run. Waiting for agents ends a turn without text and is not checked (V4); otherwise the
+    spec must have ended in its docket (V3)."""
+    transcript = hook_input.get("transcript_path")
+    spec_id = state.get("spec", "")
+    terminal = terminal_section(paths, spec_id, skip=int(state.get("terminal_base", 0) or 0))
+    if waiting(hook_input, transcript, bool(terminal["kind"])):
+        state["waiting"] = time.time()  # a run that waits for its agents stays live for other sessions
+        save_state(paths, session_id, state)
+        return 0
+    text = text_of(hook_input.get("last_assistant_message"))
+    problems = []
+    if text and TERMINAL.match(lines_of(text)[0]):
+        problems.append(say(paths, "docket_message"))
+    if terminal["kind"]:
+        problems += terminal_problems(terminal, spec_id, paths, hook_input)
+        if not problems:
+            return end_spec(paths, session_id, state, terminal["kind"], transcript)
+    elif not problems:
+        problems.append(say(paths, "no_terminal"))
+    if bool(hook_input.get("stop_hook_active")) and state.get("refused"):
+        # The second Stop right after this hook's refusal, with no tool call between: the run has stopped.
+        state.update({"refused": False, "halted": True})
+        save_state(paths, session_id, state)
+        log_event(paths, session_id, spec_id, "stop-forced", "; ".join(problems)[:120])
+        title = spec_title(paths, spec_id) or spec_id
+        rest = ", ".join([spec_id] + list(state.get("queue") or []))
+        print(json.dumps({"systemMessage": "[docket] " + say(paths, "halted", title=title, specs=rest)},
+                         ensure_ascii=True))
+        return 0
+    mark_refused(paths, session_id, state)
+    return refuse("[docket] " + say(paths, "not_finished", problem="; ".join(problems)))
+
+
+def terminal_problems(terminal, spec_id, paths, hook_input):
+    """The end of a spec as the docket states it. Its lines go into the run's closing message, so they are in the
+    user's language and carry no ids or hashes; DELIVERED needs the evidence."""
+    kind = terminal["kind"]
+    problems = []
+    if not terminal["result"]:
+        problems.append("the Terminal state needs a `result:` line: what works now, one sentence in everyday words")
+    if kind == "blocked" and not (terminal["reason"] or terminal["user"]):
+        problems.append("BLOCKED names what only the user can resolve: `state: BLOCKED: <that>` or a `user:` line")
+    if kind == "dissent" and not (terminal["reason"] or terminal["dissent"]):
+        problems.append("DISSENT names both positions: `dissent:` lines, one sentence each with its source")
+    if any("/docket:" not in line for line in terminal["decision"]):
+        problems.append("a `decision:` line asks one question with its recommendation and names the command that "
+                        "carries it out (`/docket:spec`, `/docket:concept`)")
+    prose = "\n".join([terminal["result"], terminal["reason"]] + terminal["open"] + terminal["user"]
+                      + terminal["decision"] + terminal["dissent"])
+    if HASH_IN_TEXT.search(prose):
+        problems.append("no commit hashes in the Terminal state lines: they are read by the user; the hash stays in "
+                        "the Evidence section")
+    if ID_IN_TEXT.search(prose):
+        problems.append("no spec or concept ids in the Terminal state lines: name the title")
+    problems += [p.replace("the message is", "the Terminal state is") for p in language_problem(prose, paths)]
+    if kind != "delivered":
+        return problems
+    docket = paths.docket_file(spec_id)
+    if docket is None:
+        return problems + ["the docket file does not exist"]
+    body = read_text(docket)
+    open_points = point_counts(body)[" "]
+    if open_points:
+        problems.append(f"{open_points} docket point(s) still open `[ ]`; each needs `[x]` with evidence or `[~]` "
+                        "with a deviation line")
+    problems += provenance_problems(body, spec_id, paths, hook_input)
+    for problem in (refinement_problem(paths, spec_id), review_problem(paths, spec_id)):
+        if problem:
+            problems.append(problem.replace("[docket] ", "", 1))
+    return problems
+
+
+def end_spec(paths, session_id, state, kind, transcript):
+    """The spec is closed: LOG, spec state, lock, metrics. After DELIVERED the series goes on with its next spec,
+    sealed here and announced to the model in one short order; otherwise, or when the series is done, the closing
+    begins."""
+    spec_id = state.get("spec", "")
+    release_lock(paths, spec_id)
+    set_spec_state(paths, spec_id, "done" if kind == "delivered" else "ready")
+    write_metrics(paths, spec_id, transcript, kind)  # before the LOG line: its commit carries the metrics
+    log_event(paths, session_id, spec_id, kind, "spec closed")
+    state.setdefault("outcomes", {})[spec_id] = kind
+    queue = [s for s in (state.get("queue") or []) if s]
+    if kind == "delivered" and not state.get("stop_requested"):
+        while queue:
+            following = queue.pop(0)
+            if (frontmatter(paths.spec_file(following) or "").get("state", "").lower() not in ("ready", "in-progress")
+                    or claim_lock(paths, following, session_id)):
+                continue  # sealed or finished elsewhere meanwhile: named as not started at the end
+            state.update({"mode": "sealed", "spec": following, "queue": queue, "refused": False,
+                          "terminal_base": terminal_base(paths, following)})
+            save_state(paths, session_id, state)
+            log_event(paths, session_id, following, "sealed", "from queue")
+            set_spec_state(paths, following, "in-progress")
+            i, n = position(state)
+            order = say(paths, "handover", i=i, n=n, title=spec_title(paths, following) or following, spec=following)
+            return notice("[docket] " + order)
+    if queue:
+        log_event(paths, session_id, spec_id, "queue-dropped", ", ".join(queue))
+    state["queue"] = []
+    return start_closing(paths, session_id, state)
+
+
+def start_closing(paths, session_id, state):
+    log_event(paths, session_id, state.get("spec", ""), "closing")  # first: a work dir of its own is committed
+    text = render_closing(paths, state)
+    path = closing_path(paths, session_id)
+    try:
+        os.makedirs(paths.state_dir, exist_ok=True)
+        write_atomically(path, text)
+    except OSError:
+        pass
+    state.update({"mode": "closing", "closing": {"file": path, "attempts": 0}, "refused": False,
+                  "clock": text.rstrip().splitlines()[-1][len("stamp: "):]})
+    save_state(paths, session_id, state)
+    return notice("[docket] " + say(paths, "closing_order", path=path))
+
+
+def closing_stop(paths, session_id, state, hook_input):
+    """The run's one message: the rendered text, verbatim. A miss is asked for again (the gate showed nothing);
+    after three the gate showed the rendered text itself and the session closes anyway."""
+    info = state.get("closing") or {}
+    path = info.get("file") or closing_path(paths, session_id)
+    rendered = read_text(path)
+    display = settled_display(paths, session_id)
+    if display["hidden"] or display["retry"]:
+        display.update({"hidden": [], "retry": False})
+        save_display(paths, session_id, display)
+    text = text_of(hook_input.get("last_assistant_message"))
+    if text is not None and normalized_lines(text) == normalized_lines(rendered):
+        return finish_run(paths, session_id, state, forced=False)
+    attempts = int(info.get("attempts", 0)) + 1
+    if attempts >= CLOSING_TRIES:
+        log_event(paths, session_id, state.get("spec", ""), "stop-forced", "closing message sent by the gate")
+        if text is None and rendered:
+            # No text the gate could replace: the user gets the rendered message from the hook.
+            print(json.dumps({"systemMessage": rendered.rstrip()}, ensure_ascii=True))
+        return finish_run(paths, session_id, state, forced=True)
+    info.update({"file": path, "attempts": attempts})
+    state["closing"] = info
+    save_state(paths, session_id, state)
+    return refuse("[docket] " + say(paths, "closing_again", path=path, problem=closing_difference(text, rendered)))
+
+
+def closing_difference(text, rendered):
+    if text is None:
+        return "no message"
+    sent, wanted = normalized_lines(text), normalized_lines(rendered)
+    for index, line in enumerate(wanted):
+        if index >= len(sent) or sent[index] != line:
+            return f"line {index + 1} should read `{line[:60]}`"
+    return f"{len(sent) - len(wanted)} line(s) too many"
+
+
+def finish_run(paths, session_id, state, forced):
+    outcomes = state.get("outcomes") or {}
+    state.update({"mode": "closed", "terminal": list(outcomes.values())[-1] if outcomes else "", "refused": False})
+    save_state(paths, session_id, state)
+    log_event(paths, session_id, state.get("spec", ""), "run-closed", "forced" if forced else "")
+    if resume_judge(paths, session_id):
+        log_event(paths, session_id, state.get("spec", ""), "judge-resumed")
+    return 0
 
 
 def is_judge_ack(text):
@@ -167,88 +338,8 @@ def lines_of(text):
     return [line.rstrip() for line in text.strip().splitlines() if line.strip()]
 
 
-def sealed_problems(text, state, paths, hook_input):
-    lines = lines_of(text)
-    problems = []
-    spec_id = state.get("spec", "")
-    clock = state.get("clock", "")
-    head = TERMINAL.match(lines[0]) if lines else None
-    if head is None:
-        problems.append(f"the first line must be `DOCKET DELIVERED {spec_id}`, `DOCKET BLOCKED {spec_id}` or "
-                        f"`DOCKET DISSENT {spec_id}` (a sealed run ends only with a terminal state)")
-    elif head.group(2).lower() != spec_id.lower():
-        problems.append(f"the terminal line names {head.group(2)}, this session is sealed on {spec_id}")
-    if head is not None:
-        problems += terminal_form_problems(lines, spec_id, paths)
-    docket = paths.docket_file(spec_id)
-    delivered = bool(head) and head.group(1).upper() == "DELIVERED"
-    counts = None
-    if docket is None:
-        if delivered:
-            problems.append("the docket file does not exist yet (write the skeleton first, one line per spec point)")
-    else:
-        try:
-            with open(docket, encoding="utf-8-sig", errors="ignore") as handle:
-                body = handle.read()
-        except OSError:
-            body = ""
-        counts = point_counts(body)
-        if counts[" "] and delivered:
-            problems.append(f"{counts[' ']} docket point(s) still open `[ ]`; each needs `[x]` with evidence "
-                            "or `[~]` with a deviation line")
-        if delivered:
-            problems += provenance_problems(body, spec_id, paths, hook_input)
-    stamp = STAMP.match(lines[-1]) if lines else None
-    if stamp is None:
-        problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM <spec-id> <delivered>/<points>` with the "
-                        "current time, fetched now, and the docket's counts")
-        problems += [p for p in watermark_problems(lines, clock=clock) if "minutes off" in p or "not a valid" in p]
-    else:
-        # The stamp carries the state of the acceptance list: delivered/points as the docket shows them.
-        if counts is not None:
-            total = counts["x"] + counts["~"] + counts[" "]
-            if stamp.group(7) is None:
-                if delivered:
-                    problems.append(f"the stamp must end with the docket's counts `{counts['x']}/{total}` (delivered/points)")
-            elif (int(stamp.group(7)), int(stamp.group(8))) != (counts["x"], total):
-                problems.append(f"the stamp says {stamp.group(7)}/{stamp.group(8)} but the docket shows "
-                                f"{counts['x']}/{total} delivered/points: the stamp is read from the docket, not remembered")
-        if stamp.group(6).lower() != spec_id.lower():
-            problems.append("the stamp names another spec")
-        problems += watermark_problems(lines, clock=clock)
-    if len(lines) > MAX_LINES["sealed"]:
-        problems.append(f"at most {MAX_LINES['sealed']} lines")
-    return problems
-
-
-def terminal_form_problems(lines, spec_id, paths):
-    """The terminal message is read by someone who did not watch the run (luradb-web-client 2026-11-06: twelve
-    lines of `Point n` and hook internals, no title, no `finished`, the user asked half an hour later whether
-    the run was done): line 2 names the spec by its title, one line says what only the user must do or that
-    nothing is left, no line explains hooks, and the whole is in the project's language."""
-    problems = []
-    title = " ".join(spec_title(paths, spec_id).split()).lower()
-    if title and (len(lines) < 2 or title not in " ".join(lines[1].split()).lower()):
-        problems.append(f"line 2 names the spec by its title `{spec_title(paths, spec_id)}` and the result in one "
-                        "sentence (points delivered of all, where the work is, run finished)")
-    body = lines[1:-1] if len(lines) > 2 else []
-    if not any(ACTION_LINE.match(line) for line in body):
-        problems.append("one line starts with `Du musst` / `You must` (what only the user has to do, each step) or "
-                        "`Nichts zu tun` / `Nothing to do`")
-    if any(HOOK_WORD.search(line) for line in body):
-        problems.append("nothing about hooks in the terminal message: say what is true now, not how it was checked")
-    problems += language_problem("\n".join(body), paths)
-    return problems
-
-
-def section_text(body, title):
-    match = re.search(r"^##\s+" + re.escape(title) + r"\b.*?$(.*?)(?=^##\s|\Z)", body,
-                      re.MULTILINE | re.DOTALL | re.IGNORECASE)
-    return match.group(1) if match else ""
-
-
 def provenance_problems(body, spec_id, paths, hook_input):
-    """The evidence standard, checked at the one moment it matters: DOCKET DELIVERED.
+    """The evidence standard, checked at the one moment it matters: a Terminal state DELIVERED.
 
     1. Every command of the project's check (DOCKET.md `check`, as many as the project has) ran in this session
        after the last agent returned, alone or together with others, and its last run did not fail.
@@ -260,10 +351,7 @@ def provenance_problems(body, spec_id, paths, hook_input):
     blocks = transcript_blocks(hook_input.get("transcript_path"))
     commands = check_commands(paths)
     if commands and blocks:
-        agent_ids = {b.get("id") for _, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
-                     and b.get("name") == "Agent"}
-        last_return = max((i for i, role, b in blocks if role == "user" and b.get("type") == "tool_result"
-                           and b.get("tool_use_id") in agent_ids), default=-1)
+        last_return = max(agent_returns(hook_input.get("transcript_path")).values(), default=-1)
         failed = {b.get("tool_use_id") for _, role, b in blocks
                   if role == "user" and b.get("type") == "tool_result" and b.get("is_error")}
         shell = [(i, b) for i, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
@@ -453,52 +541,6 @@ def hook_quote_problems(text, transcript_path):
         return []
     return [f"`{missing[0][:50]}` is text from the hook's source, but no hook said it in this session: "
             "cite the file and line you read, not the hook"]
-
-
-def finish(paths, session_id, state, text):
-    """A terminal message was accepted. The spec closes; a queue continues in this session after DELIVERED (the
-    Stop is blocked with the order for the next spec), and is dropped after BLOCKED or DISSENT, named to the user.
-    Either way the hook adds its own closing line for the user, in the project's language."""
-    spec_id = state.get("spec", "")
-    queue = [s for s in (state.get("queue") or []) if s]
-    kind = close(paths, session_id, state, text)
-    if kind == "delivered" and queue and not state.get("stop_requested"):
-        following, rest = queue[0], queue[1:]
-        state.update({"mode": "sealed", "spec": following, "queue": rest, "queue_advanced": True, "terminal": ""})
-        save_state(paths, session_id, state)
-        take_lock(paths, following, session_id)
-        log_event(paths, session_id, following, "sealed", "from queue")
-        set_spec_state(paths, following, "in-progress")
-        reason = (f"[docket] {spec_id} is delivered and recorded. The session is now sealed on {following}"
-                  + (f"; queued after it: {', '.join(rest)}" if rest else "") + ". Start it from step 0 of the "
-                  "implement command: preconditions, refinement, pre-registration, points, close, one terminal message "
-                  f"`DOCKET DELIVERED {following}`. Nothing of {spec_id} is a fact for it unless you read it again. "
-                  + (violations_line(paths, following) or "")).rstrip()
-        print(json.dumps({"decision": "block", "reason": reason,
-                          "systemMessage": closing_line(paths, spec_id, kind, rest, continued=following)}))
-        return 0
-    if queue:
-        for dropped in queue:
-            release_lock(paths, dropped)
-        state["queue"] = []
-        save_state(paths, session_id, state)
-        log_event(paths, session_id, spec_id, "queue-dropped", ", ".join(queue))
-    print(json.dumps({"systemMessage": closing_line(paths, spec_id, kind, queue)}))
-    return 0
-
-
-def close(paths, session_id, state, text):
-    lines = lines_of(text)
-    head = TERMINAL.match(lines[0])
-    kind = head.group(1).lower()
-    state["mode"] = "closed"
-    state["terminal"] = kind
-    save_state(paths, session_id, state)
-    release_lock(paths, state.get("spec", ""))
-    # The spec's own state follows the terminal state: done when delivered, ready again otherwise.
-    set_spec_state(paths, state.get("spec", ""), "done" if kind == "delivered" else "ready")
-    log_event(paths, session_id, state.get("spec", ""), kind, "closed")
-    return kind
 
 
 def without_stamp(text):

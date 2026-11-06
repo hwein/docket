@@ -3,20 +3,34 @@
 Every hook fails open: unreadable input or missing files never block Claude Code.
 Nothing here prints to stdout; stdout of a hook enters the model's context.
 """
+import calendar
 import hashlib
 import json
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
+
+# Claude Code reads a hook's stdout and stderr as UTF-8; Python on Windows writes the locale's code page (cp1252),
+# which turned „…“ and umlauts of the German notices into replacement characters.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
 SPEC_ID = re.compile(r"\bs-[0-9a-f]{8}\b")
 CONCEPT_ID = re.compile(r"\bc-[0-9a-f]{8}\b")
-MODES = ("none", "concept", "spec", "init", "sealed", "rewrite", "closed")
+# closing: the run is over, the hook has rendered the closing message and waits for it verbatim.
+MODES = ("none", "concept", "spec", "init", "sealed", "rewrite", "closing", "closed")
+RUN_MODES = ("sealed", "rewrite", "closing")
 STATE_VERSION = 1
+PLUGIN_ROOT = posixpath.dirname(posixpath.dirname(os.path.abspath(__file__).replace("\\", "/")))
 
 
 def read_input():
@@ -58,8 +72,8 @@ def home():
 
 def remote_key(root):
     try:
-        url = subprocess.run(["git", "-C", root, "remote", "get-url", "origin"],
-                             capture_output=True, text=True, timeout=5).stdout.strip()
+        url = (subprocess.run(["git", "-C", root, "remote", "get-url", "origin"], capture_output=True,
+                              encoding="utf-8", errors="replace", timeout=5).stdout or "").strip()
     except (OSError, subprocess.SubprocessError):
         url = ""
     if url:
@@ -167,40 +181,164 @@ def language_code(paths):
     return "de" if name.startswith(("de", "ger")) else "en"
 
 
+# What the hooks say to the user, and to the model where the user may read along, in DOCKET.md `user_language`.
+# luradb-web-client 2026-11-06 (series of four): every spec ended in a receipt of up to 2,500 characters and a
+# hook line "run finished" in the middle of the series; the user asked whether it was done. Now a spec ends in its
+# docket, and the run ends in one message the hook renders from files and git (render_closing).
 SAY = {
     "de": {
-        "preparing": "Vorbereitung: Spec wird gelesen und gegen den Code geprüft",
-        "rewrite": "Spec wird vom Konzept-Agenten umgeschrieben",
-        "points": "{x} von {n} Punkten geliefert, {d} abweichend, {o} offen",
-        "running": "Lauf läuft",
-        "delivered": "geliefert {x}/{n}, Lauf beendet, Sitzung geschlossen",
-        "blocked": "blockiert bei {x}/{n}, Lauf beendet; /docket:implement {spec} nimmt ihn wieder auf",
-        "dissent": "Dissens bei {x}/{n}, Lauf beendet; die Entscheidung steht in der Nachricht darüber",
-        "next": "Nächste Spec im Zustand ready: {spec} ({title}), in einer neuen Sitzung mit /docket:implement {spec}",
-        "none_ready": "Keine weitere Spec im Zustand ready",
-        "continue": "Weiter in dieser Sitzung mit {spec} ({title}); danach noch {rest}",
-        "nothing_more": "nichts weiter",
-        "dropped": "Nicht gestartet: {specs}; dafür einen neuen Befehl geben",
+        "position": "Spec {i} von {n} · ",
+        "preparing": "wird vorab aus drei Blickwinkeln geprüft",
+        "rewrite": "die Spec wird nach der Prüfung korrigiert",
+        "points": "{x} von {n} Punkten geliefert",
+        "deviating": ", {d} abweichend",
+        "closing": "der Lauf ist zu Ende, die Abschlussmeldung folgt",
+        "handover": ("Spec {i} von {n} ist versiegelt: {title} ({spec}). Beginne sie bei Schritt 0 des Implement-Befehls; "
+                     "aus der vorigen Spec ist nichts ein Fakt, was du nicht neu liest. Bis zum Ende des Laufs schreibst "
+                     "du keinen Text."),
+        "closing_order": ("Der Lauf ist zu Ende. Lies {path} mit Read und sende den Inhalt als deine einzige Nachricht: "
+                          "wörtlich, ohne Zusatz, ohne Codeblock."),
+        "closing_again": ("Die Nachricht stimmt nicht mit {path} überein ({problem}) und wurde nicht angezeigt. Sende den "
+                          "Inhalt der Datei wörtlich, ohne Zusatz, ohne Codeblock."),
+        "not_finished": ("Der Lauf ist nicht fertig: {problem}. Arbeite weiter. Eine Spec endet nur mit ihrem Abschnitt "
+                         "„Terminal state“ im Docket, danach endet der Turn ohne Text; ein Turn, in dem Agenten laufen, "
+                         "endet ebenfalls ohne Text."),
+        "no_terminal": "kein Agent läuft, und der Abschnitt „Terminal state“ des Dockets hat keine Zeile `state:`",
+        "docket_message": ("eine Nachricht `DOCKET …` gibt es nicht mehr: das Ende einer Spec steht in ihrem Docket, die "
+                           "eine Nachricht des Laufs rendert der Hook am Ende"),
+        "halted": "{title}: Der Lauf hat angehalten, ohne fertig zu sein. `/docket:implement {specs}` setzt ihn fort.",
+        "inbox_halted": ("Notiert. Der Lauf ist angehalten; `/docket:implement {specs}` setzt ihn fort und liest dann "
+                         "deine Nachricht."),
+        "sealed_elsewhere": "„{title}“ läuft in einer anderen Sitzung. Dort beenden oder mit `/docket:stop` anhalten.",
+        "queued_in": "„{title}“ wartet in der Reihe einer anderen Sitzung. Die Reihe dort erreicht sie, oder `/docket:stop` dort.",
+        "sealed_on": "Diese Sitzung arbeitet an „{title}“. Erst beenden oder `/docket:stop`.",
+        "forbidden_precondition": ("Die Vorbedingung `{command}` von „{title}“ steht unter forbidden_commands in "
+                                   "DOCKET.md; prüfe sie selbst und nimm sie aus der Spec."),
+        "inbox": ("Notiert. Der Lauf liest deine Nachricht nach dem nächsten Schritt; was daraus wurde, steht in der "
+                  "Abschlussmeldung. `/docket:stop` beendet den Lauf."),
+        "precondition": ("Vorbedingung von „{title}“ nicht erfüllt: `{command}` sollte {expected} liefern ({got}). "
+                         "Erst das erledigen, dann den Lauf starten."),
+        "head_one": "Lauf beendet: {title} ist umgesetzt",
+        "head_done": "Lauf beendet: {d} von {n} Specs umgesetzt",
+        "head_blocked": "Lauf angehalten: „{title}“ ist blockiert, {d} von {n} Specs umgesetzt",
+        "head_dissent": "Lauf angehalten: bei „{title}“ gibt es Dissens, {d} von {n} Specs umgesetzt",
+        "head_stopped": "Lauf auf deinen Wunsch beendet: {d} von {n} Specs umgesetzt",
+        "pushed": "auf `{branch}` gepusht",
+        "not_pushed": "{k} Commits auf `{branch}` nicht gepusht",
+        "not_pushed_one": "1 Commit auf `{branch}` nicht gepusht",
+        "no_upstream": "`{branch}` hat kein Upstream, nichts gepusht",
+        "ci_green": "CI grün",
+        "ci_red": "CI rot",
+        "spec_delivered": "{title}: {x} von {n} Punkten geliefert",
+        "spec_blocked": "{title}: blockiert bei {x} von {n} Punkten",
+        "spec_dissent": "{title}: Dissens bei {x} von {n} Punkten",
+        "spec_not_started": "{title}: nicht begonnen",
+        "checked": "Geprüft",
+        "refinement": "vorab {f} Hinweise, {a} übernommen",
+        "review": "Code-Review mit {c} Befunden, {fx} behoben",
+        "review_clean": "Code-Review ohne Befund",
+        "check_green": "Projekt-Check nach der letzten Änderung grün",
+        "open": "Offen",
+        "nothing": "Nichts offen, nichts zu tun.",
+        "must": "Du musst",
+        "decision": "Entscheidung",
+        "note": "Deine Nachricht von {time}",
+        "note_unhandled": "noch nicht bearbeitet",
+        "deviates": "„{point}“ weicht von der Spec ab",
+        "dirty": "der Arbeitsbaum hat uncommittete Änderungen",
+        "work_dirty": "die Protokolle in `{path}` sind nicht committet",
+        "resume_series": "danach setzt `/docket:implement {specs}` die Reihe fort",
+        "more": "{k} weitere im Protokoll",
+        "log": "Protokolle: `{path}`",
+        "delivered": "geliefert",
+        "blocked": "blockiert",
+        "dissent": "Dissens",
+        "interrupted": "unterbrochen",
+        "running": "läuft",
+        "not_started": "nicht begonnen",
+        "series_interrupted": "Unterbrochene Reihe: {items}. `/docket:implement {specs}` setzt sie fort.",
+        "series_running": "Reihe: {items}.",
     },
     "en": {
-        "preparing": "preparing: the spec is read and checked against the code",
-        "rewrite": "the spec is being rewritten by the conceptor",
-        "points": "{x} of {n} points delivered, {d} deviating, {o} open",
-        "running": "run in progress",
-        "delivered": "delivered {x}/{n}, run finished, session closed",
-        "blocked": "blocked at {x}/{n}, run finished; /docket:implement {spec} resumes it",
-        "dissent": "dissent at {x}/{n}, run finished; the decision is in the message above",
-        "next": "next spec in state ready: {spec} ({title}), in a new session with /docket:implement {spec}",
-        "none_ready": "no further spec in state ready",
-        "continue": "continuing in this session with {spec} ({title}); after it {rest}",
-        "nothing_more": "nothing more",
-        "dropped": "not started: {specs}; give a new command for them",
+        "position": "spec {i} of {n} · ",
+        "preparing": "checked in advance from three angles",
+        "rewrite": "the spec is corrected after the check",
+        "points": "{x} of {n} points delivered",
+        "deviating": ", {d} deviating",
+        "closing": "the run is over, the closing message follows",
+        "handover": ("Spec {i} of {n} is sealed: {title} ({spec}). Start it at step 0 of the implement command; nothing of "
+                     "the previous spec is a fact unless you read it again. Until the run ends you write no text."),
+        "closing_order": ("The run is over. Read {path} with Read and send its content as your only message: verbatim, "
+                          "nothing added, no code block."),
+        "closing_again": ("The message does not match {path} ({problem}) and was not shown. Send the file's content "
+                          "verbatim, nothing added, no code block."),
+        "not_finished": ("The run is not finished: {problem}. Go on working. A spec ends only with its docket's "
+                         "`Terminal state` section, then the turn ends without text; a turn while agents run also ends "
+                         "without text."),
+        "no_terminal": "no agent is running and the docket's `Terminal state` section has no `state:` line",
+        "docket_message": ("there is no `DOCKET …` message any more: a spec ends in its docket, and the hook renders the "
+                           "run's one message at the end"),
+        "halted": "{title}: the run stopped without being finished. `/docket:implement {specs}` resumes it.",
+        "inbox_halted": "Noted. The run has stopped; `/docket:implement {specs}` resumes it and then reads your message.",
+        "sealed_elsewhere": "“{title}” runs in another session. Finish it there or stop it with `/docket:stop`.",
+        "queued_in": "“{title}” waits in another session's series. That series reaches it, or `/docket:stop` there.",
+        "sealed_on": "This session works on “{title}”. Finish it or `/docket:stop` first.",
+        "forbidden_precondition": ("The precondition `{command}` of “{title}” matches forbidden_commands in DOCKET.md; "
+                                   "check it yourself and take it out of the spec."),
+        "inbox": ("Noted. The run reads your message after its next step; what came of it is in the closing message. "
+                  "`/docket:stop` ends the run."),
+        "precondition": ("Precondition of “{title}” not met: `{command}` should give {expected} ({got}). Settle "
+                         "that first, then start the run."),
+        "head_one": "Run finished: {title} is implemented",
+        "head_done": "Run finished: {d} of {n} specs implemented",
+        "head_blocked": "Run stopped: “{title}” is blocked, {d} of {n} specs implemented",
+        "head_dissent": "Run stopped: “{title}” has a dissent, {d} of {n} specs implemented",
+        "head_stopped": "Run ended at your request: {d} of {n} specs implemented",
+        "pushed": "pushed to `{branch}`",
+        "not_pushed": "{k} commits on `{branch}` not pushed",
+        "not_pushed_one": "1 commit on `{branch}` not pushed",
+        "no_upstream": "`{branch}` has no upstream, nothing pushed",
+        "ci_green": "CI green",
+        "ci_red": "CI red",
+        "spec_delivered": "{title}: {x} of {n} points delivered",
+        "spec_blocked": "{title}: blocked at {x} of {n} points",
+        "spec_dissent": "{title}: dissent at {x} of {n} points",
+        "spec_not_started": "{title}: not started",
+        "checked": "Checked",
+        "refinement": "{f} findings in advance, {a} adopted",
+        "review": "code review with {c} findings, {fx} fixed",
+        "review_clean": "code review without findings",
+        "check_green": "project check green after the last change",
+        "open": "Open",
+        "nothing": "Nothing open, nothing to do.",
+        "must": "You must",
+        "decision": "Decision",
+        "note": "Your message of {time}",
+        "note_unhandled": "not handled yet",
+        "deviates": "“{point}” deviates from the spec",
+        "dirty": "the working tree has uncommitted changes",
+        "work_dirty": "the records in `{path}` are not committed",
+        "resume_series": "then `/docket:implement {specs}` resumes the series",
+        "more": "{k} more in the records",
+        "log": "Records: `{path}`",
+        "delivered": "delivered",
+        "blocked": "blocked",
+        "dissent": "dissent",
+        "interrupted": "interrupted",
+        "running": "running",
+        "not_started": "not started",
+        "series_interrupted": "Interrupted series: {items}. `/docket:implement {specs}` resumes it.",
+        "series_running": "Series: {items}.",
     },
 }
 
 
 def say(paths, key, **values):
     return SAY[language_code(paths) or "en"][key].format(**values)
+
+
+def quoted(paths, title):
+    return f"„{title}“" if language_code(paths) == "de" else f"“{title}”"
 
 
 def spec_title(paths, spec_id):
@@ -277,39 +415,45 @@ def docket_counts(paths, spec_id):
         return None
 
 
+def series_of(state):
+    """The specs of this session's run in order: the series named at sealing, else the spec and its queue."""
+    series = [s for s in (state.get("series") or []) if s]
+    if not series:
+        series = [s for s in [state.get("spec", "")] + list(state.get("queue") or []) if s]
+    return series
+
+
+def position(state):
+    series = series_of(state)
+    spec_id = state.get("spec", "")
+    return (series.index(spec_id) + 1 if spec_id in series else 1), max(len(series), 1)
+
+
 def status_line(paths, state):
-    """What the user sees instead of an orchestrator's message in a sealed run: title, points, clock."""
+    """What the user sees live instead of an orchestrator's text in a sealed run: where the series stands, no
+    clock (luradb-web-client 2026-11-06: 105 status lines, 30 equal to the one before, 51 changed only the minute;
+    the gate now shows a line only when it differs from the last one shown)."""
     spec_id = state.get("spec", "")
     counts = docket_counts(paths, spec_id)
-    if state.get("mode") == "rewrite":
+    if state.get("mode") == "closing":
+        progress = say(paths, "closing")
+    elif state.get("mode") == "rewrite":
         progress = say(paths, "rewrite")
     elif counts is None:
         progress = say(paths, "preparing")
     else:
-        progress = say(paths, "points", x=counts["x"], n=counts["x"] + counts["~"] + counts[" "], d=counts["~"],
-                       o=counts[" "])
-    title = spec_title(paths, spec_id) or spec_id
-    return f"[docket] {title}: {progress} · {say(paths, 'running')} · {state.get('clock', '')}".rstrip(" ·")
+        progress = say(paths, "points", x=counts["x"], n=counts["x"] + counts["~"] + counts[" "])
+        if counts["~"]:
+            progress += say(paths, "deviating", d=counts["~"])
+    i, n = position(state)
+    prefix = say(paths, "position", i=i, n=n) if n > 1 else ""
+    if prefix and language_code(paths) != "de":
+        prefix = prefix[0].upper() + prefix[1:]
+    return f"[docket] {prefix}{spec_title(paths, spec_id) or spec_id}: {progress}"
 
 
-def closing_line(paths, spec_id, kind, queue=(), continued=""):
-    """The hook's own line after a terminal message: what happened and what comes next, in the project's language.
-    `continued` is the queued spec the session goes on with; `queue` the ids still waiting (or dropped)."""
-    counts = docket_counts(paths, spec_id) or {"x": 0, "~": 0, " ": 0}
-    title = spec_title(paths, spec_id) or spec_id
-    outcome = say(paths, kind, x=counts["x"], n=counts["x"] + counts["~"] + counts[" "], spec=spec_id)
-    if continued:
-        rest = ", ".join(queue) if queue else say(paths, "nothing_more")
-        tail = say(paths, "continue", spec=continued, title=spec_title(paths, continued) or continued, rest=rest)
-    elif queue:
-        tail = say(paths, "dropped", specs=", ".join(queue))
-    else:
-        following = [(s, t) for s, t in ready_specs(paths) if s.lower() != spec_id.lower()]
-        tail = say(paths, "next", spec=following[0][0], title=following[0][1]) if following else say(paths, "none_ready")
-    return f"[docket] {title}: {outcome}. {tail}."
-
-
-FILE_LINE = re.compile(r"(?<![\w/:])((?:[\w.-]+/)*[\w.-]+\.[a-z]{1,5}):(\d{1,6})\b", re.IGNORECASE)
+FILE_LINE = re.compile(r"(?<![\w/:.@])((?:[\w.-]+/)*[\w.-]+\.[a-z]{1,5}):(\d{1,6})\b(?!/)", re.IGNORECASE)
+HOST_SUFFIX = re.compile(r"\.(com|net|org|de|io|local|internal|corp|lan|dev|test|app|cloud)$", re.IGNORECASE)
 
 
 def missing_citations(text, paths):
@@ -320,6 +464,8 @@ def missing_citations(text, paths):
         rel, line = match.group(1), int(match.group(2))
         candidates = [posixpath.join(paths.root, rel), posixpath.join(paths.work, rel), rel]
         found = next((c for c in candidates if os.path.isfile(c)), None)
+        if found is None and "/" not in rel and HOST_SUFFIX.search(rel):
+            continue  # a host and its port (staging.example.com:8443), not a file
         if found is None:
             missing.append(f"{rel}:{line}")
             continue
@@ -513,7 +659,7 @@ def prune_states(directory, max_age_days=14):
     try:
         for name in os.listdir(directory):
             path = posixpath.join(directory, name)
-            if now - os.path.getmtime(path) > max_age_days * 86400:
+            if name != "judge-suspended.json" and now - os.path.getmtime(path) > max_age_days * 86400:
                 os.remove(path)
     except OSError:
         pass
@@ -556,7 +702,7 @@ def log_has(paths, doc_id, event):
 def log_time(line):
     """The UTC epoch of a LOG line, or None."""
     try:
-        return time.mktime(time.strptime(line[:20], "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+        return calendar.timegm(time.strptime(line[:20], "%Y-%m-%dT%H:%M:%SZ"))
     except ValueError:
         return None
 
@@ -767,6 +913,29 @@ def take_lock(paths, spec_id, session_id):
         pass
 
 
+def claim_lock(paths, spec_id, session_id):
+    """The lock, created exclusively; a lock of this session or of a session no longer running is taken over.
+    Returns the other live holder, or "" when this session holds it now (review 2026-11-06: two sessions could seal
+    one spec while the first ran its preconditions)."""
+    path = paths.lock_file(spec_id)
+    try:
+        os.makedirs(posixpath.dirname(path), exist_ok=True)
+        handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(handle, (session_id or "").encode("utf-8"))
+        os.close(handle)
+        return ""
+    except FileExistsError:
+        holder = lock_holder(paths, spec_id)
+        if holder and holder != session_id and session_live(paths, holder):
+            other = load_state(paths, holder)
+            if other.get("spec") == spec_id or spec_id in (other.get("queue") or []):
+                return holder
+        take_lock(paths, spec_id, session_id)
+        return ""
+    except OSError:
+        return ""
+
+
 def release_lock(paths, spec_id):
     try:
         os.remove(paths.lock_file(spec_id))
@@ -806,9 +975,11 @@ def last_assistant_text(transcript_path):
     return text
 
 
-def message_text(hook_input, transcript_key="transcript_path"):
+def message_text(hook_input, transcript_key="transcript_path", strict=False):
+    """The message that ends the turn. `strict`: only `last_assistant_message`; an empty turn stays empty and never
+    falls back to an older text of the transcript (a sealed run ends its waits without text)."""
     text = text_of(hook_input.get("last_assistant_message"))
-    if text is not None:
+    if text is not None or strict:
         return text
     return last_assistant_text(hook_input.get(transcript_key))
 
@@ -876,6 +1047,11 @@ def collect_judge(paths, session_id, state, transcript_path):
     save_state(paths, session_id, state)
     doc_id = state.get("spec", "")
     for reason in reasons:
+        if state.get("mode") in RUN_MODES:
+            # The judge has no place in a sealed run (framework/ENTSCHEIDUNGEN.md, Stop-Hook): where it could not be
+            # suspended (a tracked settings file), its verdict is recorded and counts as nothing.
+            log_event(paths, session_id, doc_id, "judge-ignored", reason[:120])
+            continue
         log_event(paths, session_id, doc_id, "judge", reason[:120])
         for tag in judge_tags(reason) or ["unnamed"]:
             record_violation(paths, doc_id, f"judge {tag}")
@@ -981,7 +1157,10 @@ def violations_line(paths, doc_id):
 
 
 def point_counts(body):
-    """Boxes of a docket: delivered [x], deviations [~], open [ ] (backticked ones ignored)."""
+    """Boxes of a docket: delivered [x], deviations [~], open [ ] (backticked ones ignored); only those of the
+    points section when the docket has one."""
+    match = re.search(r"^##\s+Points\b.*?$(.*?)(?=^##\s|\Z)", body or "", re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    body = match.group(1) if match else (body or "")
     return {mark: len(re.findall(r"(?<!`)\[" + re.escape(mark) + r"\](?!`)", body)) for mark in ("x", "~", " ")}
 
 
@@ -990,3 +1169,848 @@ def refuse(message):
     if CONTEXT.get("paths") is not None:
         record_violation(CONTEXT["paths"], CONTEXT.get("doc_id", ""), message)
     return 2
+
+
+def notice(message):
+    """A hook's word to the model (and, where the client shows it, to the user) that is no refusal: exit 2 with the
+    message on stderr, nothing counted."""
+    print(message, file=sys.stderr)
+    return 2
+
+
+def write_atomically(path, text, bom=False):
+    temporary = f"{path}.docket-{os.getpid()}.tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8-sig" if bom else "utf-8", newline="") as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8-sig", errors="ignore") as handle:
+            return handle.read()
+    except (OSError, TypeError):
+        return ""
+
+
+def section_text(body, title):
+    """The text of every `## <title>…` section of a markdown body, joined (a docket may carry a section twice when
+    lines were added below an older copy)."""
+    pattern = r"^##\s+" + re.escape(title) + r"\b.*?$(.*?)(?=^##\s|\Z)"
+    return "\n".join(m.group(1) for m in re.finditer(pattern, body or "", re.MULTILINE | re.DOTALL | re.IGNORECASE))
+
+
+def has_section(body, title):
+    return bool(re.search(r"^##\s+" + re.escape(title) + r"\b", body or "", re.MULTILINE | re.IGNORECASE))
+
+
+def bullets(block):
+    """The filled bullet lines of a section: placeholders (`- `) and prose without a bullet do not count."""
+    return [line.strip()[1:].strip() for line in (block or "").splitlines()
+            if re.match(r"\s*[-*]\s+\S", line)]
+
+
+# --- end of a spec: the docket's Terminal state section (V3) ---------------------
+# The orchestrator ends a spec by writing lines into its docket, not by a message: `state:` DELIVERED / BLOCKED /
+# DISSENT, `result:` one sentence, `open:` and `user:` and `decision:` as many as there are, `dissent:` for DISSENT.
+TERMINAL_LINE = re.compile(r"^[`*]*(state|result|open|user|decision|dissent)[`*]*\s*:[`*]*\s*(.*?)\s*$", re.IGNORECASE)
+TERMINAL_STATE = re.compile(r"^[`*]*(DELIVERED|BLOCKED|DISSENT)[`*]*(?!\w)[\s.:;,\-–—(]*(.*?)[\s.)]*$", re.IGNORECASE)
+# "none", "keine Schritte nötig", "nothing to do": a line that says there is nothing (experiment 12: "Du musst: keine
+# Schritte nötig" stood twice in the closing message).
+NONE_VALUE = re.compile(r"^[\s`*]*(?:-|–|—|n/a|(?:none|nothing|no|keine?|kein|nichts)\b[^.;:]{0,30})[\s`*.]*$", re.IGNORECASE)
+
+
+def terminal_blocks(paths, spec_id):
+    """Every block of the docket's Terminal state section, in order: a block starts at a valid `state:` line. A line
+    may carry a bullet, bold or backticks around the key (`- **state:** DELIVERED`, `` `state: DELIVERED` ``)."""
+    docket = paths.docket_file(spec_id)
+    section = section_text(read_text(docket), "Terminal state") if docket else ""
+    blocks = []
+    for raw in section.splitlines():
+        line = re.sub(r"^\s*[-*]\s+", "", raw.strip())
+        if line.count("`") == 2 and line.startswith("`") and line.endswith("`"):
+            line = line[1:-1]
+        match = TERMINAL_LINE.match(line)
+        if not match:
+            continue
+        key, value = match.group(1).lower(), match.group(2).strip()
+        if key == "state":
+            state = TERMINAL_STATE.match(value)
+            if state:
+                blocks.append({"kind": state.group(1).lower(), "reason": (state.group(2) or "").strip().strip("`"),
+                               "result": "", "open": [], "user": [], "decision": [], "dissent": []})
+            continue
+        if not blocks or not value:
+            continue
+        if key == "result":
+            blocks[-1]["result"] = value  # "Nothing was built." is a result
+        elif not NONE_VALUE.match(value):
+            blocks[-1][key].append(value)
+    return blocks
+
+
+def terminal_section(paths, spec_id, skip=0):
+    """The last block counts, from its `state:` line on: the docket is append-only, so a wrong block is corrected by
+    writing it again below. `skip`: blocks an earlier run left (review 2026-11-06: a resumed spec was closed at once
+    from its old BLOCKED block)."""
+    blocks = terminal_blocks(paths, spec_id)[skip:]
+    if blocks:
+        return blocks[-1]
+    return {"kind": "", "reason": "", "result": "", "open": [], "user": [], "decision": [], "dissent": []}
+
+
+def terminal_base(paths, spec_id):
+    return len(terminal_blocks(paths, spec_id))
+
+
+def deviation_points(body):
+    """The names of the `[~]` points in the docket's points table."""
+    names = []
+    for line in (body or "").splitlines():
+        if line.strip().startswith("|") and "[~]" in line:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) >= 2 and cells[1]:
+                names.append(cells[1])
+    return names
+
+
+DECISION_WORDS = re.compile(r"\b(adopted|rejected|rewrite|rewritten|dissent|moot)\b", re.IGNORECASE)
+REVIEW_DECISION = re.compile(r"\b(fixed|rejected|deferred|no findings|behoben|abgelehnt|zurückgestellt|keine befunde)\b",
+                             re.IGNORECASE)
+
+
+def refinement_problem(paths, spec_id):
+    """Every refinement line carries a decision, in every `## Refinement…` section (luradb-web-client 2026-11-06:
+    lines added under a second Refinement heading were never checked)."""
+    docket = paths.docket_file(spec_id)
+    if docket is None:
+        return "[docket] No docket yet: write the skeleton (one row per spec point) before the first implementer."
+    body = read_text(docket)
+    open_lines = [line for line in bullets(section_text(body, "Refinement")) if not DECISION_WORDS.search(line)]
+    if open_lines:
+        return ("[docket] Refinement lines without a decision (adopted / rejected / rewrite / dissent): "
+                + " | ".join(line[:70] for line in open_lines[:3]) + ". Close them before the first implementer.")
+    return ""
+
+
+def review_problem(paths, spec_id):
+    """V14: one reviewer reads the whole diff of the spec before the push; each finding is a docket line with its
+    decision, or the one line `no findings`."""
+    body = read_text(paths.docket_file(spec_id))
+    if not has_section(body, "Review"):
+        return ("[docket] The docket has no `## Review` section yet: a reviewer agent reads the whole diff before the "
+                "push; each finding is a line with its decision (fixed / rejected with reason / deferred), or the line "
+                "`- no findings`.")
+    lines = bullets(section_text(body, "Review"))
+    if not lines:
+        return "[docket] The docket's Review section is empty: one line per finding with its decision, or `- no findings`."
+    undecided = [line for line in lines if not REVIEW_DECISION.search(line)]
+    if undecided:
+        return ("[docket] Review lines without a decision (fixed / rejected / deferred): "
+                + " | ".join(line[:70] for line in undecided[:3]) + ".")
+    return ""
+
+
+def section_stats(body):
+    refinement = bullets(section_text(body, "Refinement"))
+    review = bullets(section_text(body, "Review"))
+    findings = [line for line in review if not re.search(r"no findings|keine befunde", line, re.IGNORECASE)]
+    return {"refinement": len([line for line in refinement if DECISION_WORDS.search(line)]),
+            "adopted": len([line for line in refinement if re.search(r"\badopted\b|übernommen", line, re.IGNORECASE)]),
+            "review": len(findings),
+            "fixed": len([line for line in findings if re.search(r"\bfixed\b|behoben", line, re.IGNORECASE)]),
+            "reviewed": bool(review)}
+
+
+# --- waiting for agents (V4) ---------------------------------------------------
+LAUNCHED = re.compile(r"(?:Async agent launched successfully|Workflow launched in background)", re.IGNORECASE)
+NOTIFIED = re.compile(r"<tool-use-id>\s*([^<\s]+)\s*</tool-use-id>")
+PENDING_MAX_HOURS = 3
+
+
+def iso_age_seconds(stamp):
+    try:
+        return time.time() - calendar.timegm(time.strptime(str(stamp)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (TypeError, ValueError):
+        return 0
+
+
+def pending_agents(transcript_path, queued_only=False):
+    """Background agents and workflows launched in the main line whose notification the model has not seen yet.
+    A notification arrives either as a user entry (between turns) or as a queued_command attachment (mid-turn,
+    seen by the model with its next assistant entry); a queued one the model has not answered yet still counts as
+    waiting, the turn resumes with it (luradb-web-client 2026-11-06: three waits were refused because
+    background_tasks was already empty). `queued_only`: only those, for a client that reports background_tasks."""
+    calls, launched, delivered, queued = {}, {}, set(), set()
+    for entry in transcript_entries(transcript_path):
+        if entry.get("isSidechain"):
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if entry.get("type") == "attachment":
+            attachment = entry.get("attachment") or {}
+            if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+                prompt = attachment.get("prompt")
+                queued.update(NOTIFIED.findall(prompt if isinstance(prompt, str) else json.dumps(prompt)))
+            continue
+        if entry.get("type") == "assistant":
+            delivered |= queued  # the model has seen what was queued before this entry
+            queued = set()
+        if entry.get("type") == "assistant" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task", "Workflow"):
+                    calls[block.get("id")] = entry.get("timestamp", "")
+        elif entry.get("type") == "user":
+            if isinstance(content, str):
+                delivered.update(NOTIFIED.findall(content))
+                continue
+            for block in content if isinstance(content, list) else []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    delivered.update(NOTIFIED.findall(block.get("text", "")))
+                elif block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
+                    inner = block.get("content")
+                    inner = inner if isinstance(inner, str) else " ".join(
+                        b.get("text", "") for b in inner or [] if isinstance(b, dict))
+                    if LAUNCHED.match((inner or "").lstrip()):
+                        launched[block.get("tool_use_id")] = calls[block.get("tool_use_id")]
+    if queued_only:
+        return {tool_id for tool_id in queued if tool_id in launched}
+    return {tool_id for tool_id, stamp in launched.items()
+            if tool_id not in delivered and iso_age_seconds(stamp) < PENDING_MAX_HOURS * 3600}
+
+
+AGENT_TASKS = ("subagent", "workflow", "agent")
+
+
+def agent_returns(transcript_path):
+    """{tool_use_id: line index of its return} for the main line's agents: the tool result of a foreground agent, the
+    notification of a background one (its tool result only says it was launched)."""
+    returns, launched = {}, set()
+    for index, entry in enumerate(transcript_entries(transcript_path)):
+        if entry.get("isSidechain"):
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if entry.get("type") == "assistant":
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task"):
+                    returns.setdefault(block.get("id"), -1)
+            continue
+        texts = []
+        if entry.get("type") == "attachment" and isinstance(entry.get("attachment"), dict):
+            prompt = entry["attachment"].get("prompt")
+            texts.append(prompt if isinstance(prompt, str) else "")
+        elif entry.get("type") == "user":
+            if isinstance(content, str):
+                texts.append(content)
+            for block in content if isinstance(content, list) else []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    texts.append(block.get("text", ""))
+                elif block.get("type") == "tool_result" and block.get("tool_use_id") in returns:
+                    inner = block.get("content")
+                    inner = inner if isinstance(inner, str) else " ".join(
+                        b.get("text", "") for b in inner or [] if isinstance(b, dict))
+                    if LAUNCHED.match((inner or "").lstrip()):
+                        launched.add(block.get("tool_use_id"))
+                    else:
+                        returns[block.get("tool_use_id")] = index
+        for text in texts:
+            for tool_id in NOTIFIED.findall(text):
+                if tool_id in launched:
+                    returns[tool_id] = index
+    return {k: v for k, v in returns.items() if v >= 0}
+
+
+def waiting(hook_input, transcript_path, terminal_written):
+    """A Stop that waits for work in the background: no check, no text needed (V4). Claude Code reports that work in
+    `background_tasks`; once the spec's Terminal state is written, only agents count, not a dev server or a monitor
+    left running (review 2026-11-06: a background shell turned the spec end into an endless wait). A notification
+    queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
+    transcript."""
+    if "background_tasks" not in hook_input:
+        return bool(pending_agents(transcript_path))
+    tasks = [t for t in hook_input.get("background_tasks") or [] if t]
+    if terminal_written:
+        tasks = [t for t in tasks if not isinstance(t, dict) or str(t.get("type", "")).lower() in AGENT_TASKS]
+    return bool(tasks) or bool(pending_agents(transcript_path, queued_only=True))
+
+
+# --- live sessions (V13) -------------------------------------------------------
+LIVE_MINUTES = 60  # without a tool call and without a recorded wait
+
+
+def session_live(paths, session_id):
+    """A session counts as running while its state says sealed, rewrite or closing and was touched within the hour:
+    every tool call of the session and of its agents writes the clock into it. The LOG names a session by its first
+    eight characters; such a prefix is matched against the state files."""
+    if session_id and not os.path.isfile(state_path(paths, session_id)):
+        session_id = next((s for s in other_sessions(paths, "") if s.startswith(session_id)), "")
+    if not session_id:
+        return False
+    state = load_state(paths, session_id)
+    if state.get("mode") not in RUN_MODES:
+        return False
+    if time.time() - float(state.get("waiting") or 0) < PENDING_MAX_HOURS * 3600:
+        return True  # it ended a turn to wait for its agents (stop.py records the moment)
+    try:
+        return time.time() - os.path.getmtime(state_path(paths, session_id)) < LIVE_MINUTES * 60
+    except OSError:
+        return False
+
+
+def other_sessions(paths, session_id):
+    try:
+        names = os.listdir(paths.state_dir)
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        match = re.fullmatch(r"state-([A-Za-z0-9_-]+)\.json", name)
+        if match and match.group(1) != session_id:
+            found.append(match.group(1))
+    return found
+
+
+def queued_elsewhere(paths, spec_id, session_id):
+    """The live session whose series still has this spec ahead of it, or ""."""
+    for other in other_sessions(paths, session_id):
+        state = load_state(paths, other)
+        if spec_id in (state.get("queue") or []) and session_live(paths, other):
+            return other
+    return ""
+
+
+# --- the judge in a sealed run (V5) ---------------------------------------------
+JUDGE_MARK = "You judge the final message"
+
+
+def judge_record_path(paths):
+    return posixpath.join(paths.state_dir, "judge-suspended.json")
+
+
+def settings_files(paths):
+    return [posixpath.join(paths.root, ".claude", name) for name in ("settings.json", "settings.local.json")]
+
+
+def git_keeps(paths, path):
+    """Whether a commit could carry the file: tracked, or untracked and not ignored (`git add -A` would take it).
+    Outside a repository, or ignored, it is the user's alone."""
+    try:
+        code = subprocess.run(["git", "-C", paths.root, "check-ignore", "-q", path], capture_output=True,
+                              timeout=10).returncode
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return code == 1
+
+
+def is_judge(hook):
+    return isinstance(hook, dict) and hook.get("type") == "prompt" and JUDGE_MARK in str(hook.get("prompt", ""))
+
+
+def load_settings(path):
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None, ""
+    try:
+        settings = json.loads(raw.lstrip("﻿")) if raw.strip() else {}
+    except ValueError:
+        return None, raw
+    return (settings if isinstance(settings, dict) else None), raw
+
+
+def save_settings(path, settings, raw):
+    text = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+    write_atomically(path, text.replace("\n", "\r\n") if "\r\n" in raw else text, bom=raw.startswith("﻿"))
+
+
+def load_judge_record(paths):
+    try:
+        with open(judge_record_path(paths), encoding="utf-8") as handle:
+            record = json.load(handle)
+        return record if isinstance(record, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def suspend_judge(paths, session_id):
+    """A sealed run has no judge (ENTSCHEIDUNGEN.md, Stop-Hook; luradb-web-client 2026-11-06: 24 verdicts on
+    three-line waits the judge's own exceptions let through). Claude Code picks up hook edits in the settings files
+    during a session; the judge entry is moved into a record and put back when the run ends. A settings file that
+    git tracks is left alone: its change would end up in a commit. True when the judge is suspended now."""
+    record = load_judge_record(paths)
+    if record and record.get("entries"):
+        sessions = set(record.get("sessions") or [])
+        sessions.add(session_id or "")
+        record["sessions"] = sorted(sessions)
+        _save_json(judge_record_path(paths), record)
+        return True
+    entries, changes = [], []
+    for path in settings_files(paths):
+        if not os.path.isfile(path) or git_keeps(paths, path):
+            continue
+        settings, raw = load_settings(path)
+        hooks = settings.get("hooks") if isinstance(settings, dict) else None
+        stop = hooks.get("Stop") if isinstance(hooks, dict) else None
+        if not isinstance(stop, list):
+            continue
+        kept, removed = [], []
+        for group in stop:
+            members = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(members, list) or not any(is_judge(hook) for hook in members):
+                kept.append(group)
+                continue
+            removed += [hook for hook in members if is_judge(hook)]
+            rest = [hook for hook in members if not is_judge(hook)]
+            if rest:
+                kept.append(dict(group, hooks=rest))
+        if not removed:
+            continue
+        if kept:
+            hooks["Stop"] = kept
+        else:
+            del hooks["Stop"]
+        entries += [{"file": path, "hook": hook} for hook in removed]
+        changes.append((path, settings, raw))
+    if not entries:
+        return False
+    # The record first: a judge taken out is never without a way back.
+    if not _save_json(judge_record_path(paths), {"sessions": [session_id or ""], "entries": entries}):
+        return False
+    for path, settings, raw in changes:
+        try:
+            save_settings(path, settings, raw)
+        except OSError:
+            pass
+    return True
+
+
+def resume_judge(paths, session_id, force=False):
+    """Puts the suspended judge back once no sealed run needs it away. True when it was put back."""
+    record = load_judge_record(paths)
+    if not record:
+        return False
+    # A session that no longer runs needs the judge away no more (a crashed run would keep it out for good).
+    sessions = [s for s in (record.get("sessions") or []) if s != (session_id or "") and session_live(paths, s)]
+    if sessions and not force:
+        record["sessions"] = sessions
+        _save_json(judge_record_path(paths), record)
+        return False
+    left = []
+    for entry in record.get("entries") or []:
+        path, hook = entry.get("file"), entry.get("hook")
+        if not path or not is_judge(hook):
+            continue
+        settings, raw = load_settings(path) if os.path.isfile(path) else ({}, "")
+        if not isinstance(settings, dict) or not isinstance(settings.setdefault("hooks", {}), dict):
+            left.append(entry)  # unreadable now: kept in the record for the next try
+            continue
+        stop = settings["hooks"].setdefault("Stop", [])
+        if not isinstance(stop, list):
+            left.append(entry)
+            continue
+        if not any(isinstance(g, dict) and hook in (g.get("hooks") or []) for g in stop):
+            stop.append({"hooks": [hook]})
+            try:
+                os.makedirs(posixpath.dirname(path), exist_ok=True)
+                save_settings(path, settings, raw)
+            except OSError:
+                left.append(entry)
+    if left:
+        _save_json(judge_record_path(paths), {"sessions": [], "entries": left})
+        return False
+    try:
+        os.remove(judge_record_path(paths))
+    except OSError:
+        pass
+    return True
+
+
+def _save_json(path, data):
+    try:
+        os.makedirs(posixpath.dirname(path), exist_ok=True)
+        write_atomically(path, json.dumps(data, indent=1, ensure_ascii=False))
+        return True
+    except OSError:
+        return False
+
+
+# --- the closing message (V1) ----------------------------------------------------
+STAMP_LINE = re.compile(r"^stamp:\s*\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}", re.IGNORECASE)
+
+
+def normalized_lines(text):
+    """A message as compared with the rendered closing message: whitespace, bold markers, code fences and the stamp
+    line do not count."""
+    lines = []
+    for line in (text or "").splitlines():
+        line = " ".join(line.replace("**", "").split())
+        if line and not line.startswith("```") and not STAMP_LINE.match(line):
+            lines.append(line)
+    return lines
+
+
+def git_out(root, *args):
+    try:
+        result = subprocess.run(["git", "-C", root] + list(args), capture_output=True, encoding="utf-8",
+                                errors="replace", timeout=10)
+        return result.returncode, (result.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+
+
+def relative_to_root(paths, path):
+    if under(path, paths.root):
+        return norm(path)[len(paths.root):].lstrip("/") or "."
+    homedir = home()
+    return "~" + norm(path)[len(homedir):] if under(path, homedir) else norm(path)
+
+
+def repo_facts(paths):
+    """Branch, upstream, commits not pushed and whether the working tree is clean, from git; {} outside a repo."""
+    code, top = git_out(paths.root, "rev-parse", "--show-toplevel")
+    if code != 0 or not top:
+        return {}
+    code, branch = git_out(paths.root, "rev-parse", "--abbrev-ref", "HEAD")
+    if code != 0 or not branch:
+        return {}
+    code, upstream = git_out(paths.root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    ahead = None
+    if code == 0 and upstream:
+        code, out = git_out(paths.root, "rev-list", "--count", "@{u}..HEAD")
+        ahead = int(out) if code == 0 and out.isdigit() else None
+    else:
+        upstream = ""
+    spec = ["--", "."]
+    for own in (paths.work, paths.state_dir):
+        if under(own, paths.root):
+            spec.append(":(exclude)" + relative_to_root(paths, own))
+    code, status = git_out(paths.root, "status", "--porcelain", *spec)
+    return {"branch": branch, "upstream": upstream, "ahead": ahead, "dirty": code == 0 and bool(status)}
+
+
+def work_dir_dirty(paths):
+    code, status = git_out(paths.work, "status", "--porcelain", "--", ".")
+    return code == 0 and bool(status)
+
+
+def ci_state(body):
+    """The state word of the docket's last `CI: <state> <hash>` line."""
+    words = re.findall(r"\bCI:\s*\**`?([A-Za-zäöüÄÖÜ]+)", body or "")
+    if not words:
+        return ""
+    word = words[-1].lower()
+    if word in ("red", "rot", "failure", "failed", "fail", "rejected"):
+        return "red"
+    if word in ("green", "grün", "success", "passed", "ok", "pass"):
+        return "green"
+    return ""
+
+
+def inbox_notes(paths, spec_id, since=""):
+    """The times of the user's messages left in the inbox for the spec, those since `since` (local
+    "YYYY-MM-DD HH:MM", the inbox's own clock) when given."""
+    found = re.findall(r"^##\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})",
+                       read_text(posixpath.join(paths.inbox, f"{spec_id}.md")), re.MULTILINE)
+    return [moment for day, moment in found if f"{day} {moment:0>5}" >= since]
+
+
+def sealed_local(paths, spec_id):
+    """The local time of the spec's last sealing, as the inbox writes its headers."""
+    stamps = [log_time(line) for line in log_lines(paths, spec_id) if " sealed " in line]
+    stamps = [s for s in stamps if s]
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(max(stamps))) if stamps else ""
+
+
+def spec_facts(paths, spec_id):
+    body = read_text(paths.docket_file(spec_id))
+    counts = point_counts(body) if body else {"x": 0, "~": 0, " ": 0}
+    facts = {"id": spec_id, "title": spec_title(paths, spec_id) or spec_id, "body": body,
+             "x": counts["x"], "n": counts["x"] + counts["~"] + counts[" "], "deviations": deviation_points(body),
+             "ci": ci_state(body), "notes": inbox_notes(paths, spec_id, sealed_local(paths, spec_id)),
+             "inbox": bullets(section_text(body, "Inbox"))}
+    facts.update(terminal_section(paths, spec_id))
+    facts.update(section_stats(body))
+    return facts
+
+
+def _sentence(text, limit=200):
+    text = " ".join(str(text).split()).rstrip(" .;")
+    if len(text) > limit:  # a line of the closing message stays a line (replay of bd33991a: 190-character point names)
+        text = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:(") + " …"
+    return text[:1].upper() + text[1:] if text else ""
+
+
+def _short(text, limit=60):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:(") + " …"
+
+
+def _end(text):
+    return text if text.endswith(("…", "?", "!")) else text + "."
+
+
+def _items(paths, label, items, limit=6):
+    items = [i for i in dict.fromkeys(_sentence(i) for i in items) if i]
+    if not items:
+        return []
+    shown = items[:limit]
+    if len(items) > limit:
+        shown.append(say(paths, "more", k=len(items) - limit))
+    if len(shown) == 1:
+        return [_end(f"{label}: {shown[0]}")]
+    return [f"{label}:"] + [_end(f"- {item}") for item in shown]
+
+
+def _unprefixed(items):
+    """(title, text) pairs: a text several specs share is named once, without a title (experiment 12: the same
+    decision stood twice, once per spec)."""
+    texts = [text for _, text in items]
+    seen, out = set(), []
+    for title, text in items:
+        key = " ".join(text.split()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text if texts.count(text) > 1 or not title else f"{title}: {text}")
+    return out
+
+
+def render_closing(paths, state):
+    """The one message of a run, rendered from the dockets, each spec's outcome and git: what was implemented by
+    name, pushed, CI, what was checked, what is open, what only the user can do, which decision is due. The
+    orchestrator sends it verbatim; ids and hashes stay in the dockets."""
+    series = series_of(state)
+    outcomes = state.get("outcomes") or {}
+    facts = [spec_facts(paths, spec_id) for spec_id in series]
+    many = len(series) > 1
+    delivered = [f for f in facts if outcomes.get(f["id"]) == "delivered"]
+    ended = next((f for f in facts if outcomes.get(f["id"]) in ("blocked", "dissent")), None)
+    stopped = bool(state.get("stop_requested")) and len(delivered) < len(series)
+    if stopped:
+        head = say(paths, "head_stopped", d=len(delivered), n=len(series))
+    elif ended is not None:
+        head = say(paths, "head_" + outcomes[ended["id"]], title=ended["title"], d=len(delivered), n=len(series))
+    elif not many and delivered:
+        head = say(paths, "head_one", title=quoted(paths, delivered[0]["title"]))
+    else:
+        head = say(paths, "head_done", d=len(delivered), n=len(series))
+    git = repo_facts(paths)
+    parts = []
+    if git and delivered:
+        if not git["upstream"]:
+            parts.append(say(paths, "no_upstream", branch=git["branch"]))
+        elif git["ahead"]:
+            parts.append(say(paths, "not_pushed_one" if git["ahead"] == 1 else "not_pushed", k=git["ahead"],
+                             branch=git["branch"]))
+        else:
+            parts.append(say(paths, "pushed", branch=git["branch"]))
+    ci = {f["ci"] for f in delivered if f["ci"]}
+    if ci:
+        parts.append(say(paths, "ci_red" if "red" in ci else "ci_green"))
+    lines = [head + (", " + ", ".join(parts) if parts else "") + "."]
+
+    for f in facts:
+        kind = outcomes.get(f["id"], "")
+        if kind:
+            line = say(paths, "spec_" + kind, title=f["title"], x=f["x"], n=f["n"])
+            if f["result"]:
+                line += ". " + _sentence(f["result"])
+        else:
+            line = say(paths, "spec_not_started", title=f["title"])
+        lines.append(_end(f"- {line}"))
+
+    if delivered:
+        checked = []
+        refined = sum(f["refinement"] for f in delivered)
+        if refined:
+            checked.append(say(paths, "refinement", f=refined, a=sum(f["adopted"] for f in delivered)))
+        if all(f["reviewed"] for f in delivered):
+            found = sum(f["review"] for f in delivered)
+            checked.append(say(paths, "review", c=found, fx=sum(f["fixed"] for f in delivered)) if found
+                           else say(paths, "review_clean"))
+        if check_commands(paths):
+            checked.append(say(paths, "check_green"))  # DELIVERED needs every command after the last agent, green
+        if checked:
+            lines.append(say(paths, "checked") + ": " + "; ".join(checked) + ".")
+
+    title = (lambda f: f["title"]) if many else (lambda f: "")
+    open_items, must, decisions = [], [], []
+    for f in facts:
+        open_items += [(title(f), item) for item in f["open"]]
+        for point in f["deviations"]:
+            if not any(point.lower() in item.lower() for item in f["open"]):
+                open_items.append((title(f), say(paths, "deviates", point=_short(point))))
+        must += [(title(f), item) for item in f["user"]]
+        if outcomes.get(f["id"]) == "blocked" and f["reason"] and not stopped:
+            must.append((title(f), f["reason"]))
+        decisions += [(title(f), item) for item in f["decision"]]
+        if outcomes.get(f["id"]) == "dissent":
+            decisions += [(title(f), item) for item in ([f["reason"]] if f["reason"] else []) + f["dissent"]]
+    open_items, must, decisions = _unprefixed(open_items), _unprefixed(must), _unprefixed(decisions)
+    resume = [f["id"] for f in facts if outcomes.get(f["id"]) in (None, "", "blocked")]
+    if resume and any(not outcomes.get(f["id"]) for f in facts):
+        must.append(say(paths, "resume_series", specs=", ".join(resume)))
+    if git.get("dirty"):
+        open_items.append(say(paths, "dirty"))
+    if work_dir_dirty(paths):
+        open_items.append(say(paths, "work_dirty", path=relative_to_root(paths, paths.work)))
+    if not (open_items or must or decisions):
+        lines.append(say(paths, "nothing"))
+    lines += _items(paths, say(paths, "open"), open_items)
+    lines += _items(paths, say(paths, "must"), must)
+    for item in decisions:
+        lines.append(_end(f"{say(paths, 'decision')}: {_sentence(item)}"))
+    for f in facts:
+        # The run's notes in order, each with the Inbox line the orchestrator wrote for it, the newest lines last.
+        answers = f["inbox"][-len(f["notes"]):] if f["notes"] else []
+        for index, moment in enumerate(f["notes"]):
+            handled = answers[index] if index < len(answers) else say(paths, "note_unhandled")
+            lines.append(_end(say(paths, "note", time=moment) + ": " + _sentence(handled, 160)))
+    lines.append(say(paths, "log", path=relative_to_root(paths, paths.dockets) + "/"))
+    lines.append("stamp: " + time.strftime("%Y-%m-%d %H:%M"))
+    return "\n".join(lines) + "\n"
+
+
+def closing_path(paths, session_id):
+    if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
+        session_id = "shared"
+    return posixpath.join(paths.state_dir, f"closing-{session_id}.md")
+
+
+# --- metrics (V6) ------------------------------------------------------------------
+
+def write_metrics(paths, spec_id, transcript_path, kind):
+    """metrics/<spec>.json, written by the hook when the spec ends: points, refinement and review counts, agents by
+    kind since sealing, implementer models, inbox notes. The orchestrator no longer spends a fixer on it."""
+    body = read_text(paths.docket_file(spec_id))
+    sealed = max((line[:20] for line in log_lines(paths, spec_id) if " sealed " in line), default="")
+    agents, models = Counter(), []
+    entries = transcript_entries(transcript_path)
+    refused = {block.get("tool_use_id") for entry in entries if entry.get("type") == "user"
+               for block in ((entry.get("message") or {}).get("content") or [])
+               if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")}
+    for entry in entries:
+        if entry.get("isSidechain") or entry.get("type") != "assistant" or str(entry.get("timestamp", ""))[:19] < sealed[:19]:
+            continue
+        message = entry.get("message")
+        for block in (message.get("content") if isinstance(message, dict) else None) or []:
+            if (isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task")
+                    and block.get("id") not in refused):
+                kind_of = str((block.get("input") or {}).get("subagent_type") or "general").split(":")[-1]
+                agents[kind_of] += 1
+                if kind_of == "implementer":
+                    models.append(str((block.get("input") or {}).get("model") or "inherit"))
+    stats = section_stats(body)
+    counts = point_counts(body) if body else {"x": 0, "~": 0, " ": 0}
+    data = {"spec": spec_id, "title": spec_title(paths, spec_id), "outcome": kind, "sealed": sealed,
+            "closed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "points": {"delivered": counts["x"], "deviations": counts["~"], "open": counts[" "]},
+            "refinement": {"decided": stats["refinement"], "adopted": stats["adopted"]},
+            "review": {"findings": stats["review"], "fixed": stats["fixed"]},
+            "agents": dict(agents), "implementer_models": models, "inbox_notes": len(inbox_notes(paths, spec_id))}
+    path = posixpath.join(paths.metrics, f"{spec_id}.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            old = json.load(handle)
+        if isinstance(old, dict):
+            old.update(data)
+            data = old
+    except (OSError, ValueError):
+        pass
+    _save_json(path, data)
+
+
+# --- user-only preconditions (V12) --------------------------------------------------
+PRECONDITION = re.compile(r"`([^`\n]+)`\s*(?:→|->)\s*(.+?)\s*$")
+
+
+def preconditions(paths, spec_id):
+    """`command` → expected lines of the spec's `## Preconditions` section: what only the user can provide (a key, a
+    running server), checked before the session seals."""
+    found = []
+    for line in bullets(section_text(read_text(paths.spec_file(spec_id)), "Preconditions")):
+        match = PRECONDITION.search(line)
+        if match and not match.group(1).strip().startswith("<"):  # the template's placeholder is no command
+            found.append((match.group(1).strip(), match.group(2).strip().strip("`").strip()))
+    return found
+
+
+def precondition_result(paths, command, expected, timeout=20):
+    """(ok, what came back): ok when the command exits 0 and its output contains the expected text (`exit 0` or
+    nothing: the exit code alone). The output goes to a temporary file, not a pipe, so a process the command leaves
+    behind cannot hold the hook; on timeout the whole process tree is killed. What came back names the exit code or
+    that the text was missing, never the output: a precondition may print a key."""
+    import tempfile
+    bash = shutil.which("bash")
+    with tempfile.TemporaryFile() as sink:
+        try:
+            process = subprocess.Popen([bash, "-c", command] if bash else command, shell=not bash, cwd=paths.root,
+                                       stdout=sink, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                       start_new_session=os.name != "nt")
+        except (OSError, ValueError) as error:
+            return False, type(error).__name__
+        try:
+            code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, timeout=10)
+            else:
+                try:
+                    os.killpg(process.pid, 9)
+                except OSError:
+                    process.kill()
+            return False, f"timeout {timeout} s"
+        sink.seek(0)
+        output = sink.read(65536).decode("utf-8", errors="replace")
+    if code != 0:
+        return False, f"exit {code}"
+    if expected.lower() not in ("", "exit 0") and expected not in output:
+        return False, "exit 0, without that text"
+    return True, "exit 0"
+
+
+# --- series in the LOG (V13) --------------------------------------------------------
+
+def logged_series(paths):
+    """Every series the LOG knows (a `sealed` line and its `queued` line): the ids in order, the session, and each
+    spec's state since the series began: delivered, blocked, dissent, interrupted or not_started."""
+    lines = log_lines(paths)
+    found = []
+    for index, line in enumerate(lines):
+        parts = line.split()
+        if len(parts) < 4 or parts[2] != "queued":
+            continue
+        session = (re.search(r"session=(\S+)", line) or [None, ""])[1]
+        ids = [parts[1]] + SPEC_ID.findall(line.split("session=", 1)[-1])
+        status = {}
+        for later in lines[index + 1:]:
+            bits = later.split()
+            if len(bits) > 2 and bits[1] in ids:
+                if bits[2] == "sealed":
+                    status[bits[1]] = "interrupted"
+                elif bits[2] in ("delivered", "blocked", "dissent"):
+                    status[bits[1]] = bits[2]
+        status.setdefault(ids[0], "interrupted")
+        found.append({"ids": ids, "session": session, "status": {i: status.get(i, "not_started") for i in ids}})
+    return found
+
+
+def series_line(paths, series, live=False):
+    """One line for a series: each spec by title with its state. A live series runs; another one with a spec sealed
+    and never ended was interrupted, and the line names the command that resumes it."""
+    status = {i: ("running" if live and s == "interrupted" else s) for i, s in series["status"].items()}
+    items = ", ".join(f"{quoted(paths, spec_title(paths, i) or i)} {say(paths, status[i])}" for i in series["ids"])
+    rest = [i for i in series["ids"] if status[i] in ("interrupted", "not_started")]
+    if rest and "interrupted" in status.values():
+        return "[docket] " + say(paths, "series_interrupted", items=items, specs=", ".join(rest))
+    return "[docket] " + say(paths, "series_running", items=items)

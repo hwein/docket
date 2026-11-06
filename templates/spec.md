@@ -32,6 +32,14 @@ outcome in prose.
 |---|---|---|
 | 1 | | |
 
+## Preconditions (user only)
+
+What only the user can provide before the run (a key, a running server, an account), one line each:
+`<command>` → `<expected output>`. `/docket:implement` runs them before it seals the session and names the first
+one that fails. `none` when there is nothing.
+
+- none
+
 ## Reference update
 
 Which reference docs change because of this spec (file → what), or `none` with the reason.

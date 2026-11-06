@@ -13,10 +13,11 @@ it runs after the message is on the screen, so a rewrite shows the message twice
   answer to a refusal is never held back and nothing is lost.
 - The terminal client streams a message in batches; each batch is held until the last one, then the
   whole message is shown at once. Claude Code Desktop and the SDK send one batch per message.
-- In a sealed run (sealed, rewrite) every message that does not begin with `DOCKET DELIVERED|BLOCKED|DISSENT`
-  is replaced by the hook's status line (title, points, clock, in the project's language); a terminal message is
-  held back while the Stop hook would refuse it, so the user sees one terminal message, not three
-  (luradb-web-client 2026-11-06).
+- In a run (sealed, rewrite) every text of the orchestrator is replaced by the hook's status line (where the
+  series stands, in the project's language), and only when that line differs from the one shown last; else the
+  text is hidden (luradb-web-client 2026-11-06: 105 status lines, 81 of them without news).
+- In closing only the closing message the hook rendered is shown; another text is hidden and the Stop hook asks
+  for the rendered one; at the third try the gate shows the rendered text itself.
 - The judge's verdict is answered with an empty turn (templates/judge-hook.json), so there is nothing to hide.
   An older acknowledgement line `[docket] noted` is still hidden live; the desktop app renders the transcript's
   original text when a session is opened later (experiment 10), so hiding is not durable and the empty answer is
@@ -30,13 +31,13 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from docket_lib import (HIDDEN, SESSION_ID, Paths, answers_judge, buffer_path, load_display, load_state, read_input,
-                        save_display, status_line)
-from stop import GATED_MODES, TERMINAL, WATERMARK, box_problems, content_problems, lines_of, sealed_problems
+from docket_lib import (HIDDEN, SESSION_ID, Paths, answers_judge, buffer_path, closing_path, load_display, load_state,
+                        normalized_lines, read_input, read_text, save_display, status_line)
+from stop import CLOSING_TRIES, GATED_MODES, WATERMARK, box_problems, content_problems, lines_of
 
 
 def show(text):
-    # ASCII escapes: stdout of a hook on Windows is cp1252, which cannot carry the zero-width space or emoji.
+    # ASCII escapes in the JSON: safe whatever encoding the client assumes (docket_lib sets UTF-8 for the streams).
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "MessageDisplay", "displayContent": text}}))
     return 0
 
@@ -48,14 +49,16 @@ def main():
         return 0
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
-    if os.path.isfile(paths.config) and answers_judge(hook_input.get("transcript_path")):
-        return show(HIDDEN)  # the acknowledgement of a judge verdict: the user has read the message it answers
     state = load_state(paths, session_id)
     mode = state.get("mode", "none")
+    # The acknowledgement of a judge verdict: the user has read the message it answers. Not in closing, where the
+    # closing branch alone decides (review 2026-11-06: a verdict next to the closing order hid the closing message).
+    if mode != "closing" and os.path.isfile(paths.config) and answers_judge(hook_input.get("transcript_path")):
+        return show(HIDDEN)
     if mode not in GATED_MODES or not os.path.isfile(paths.config):
         return 0
     record = load_display(paths, session_id)
-    sealed = mode in ("sealed", "rewrite")
+    sealed = mode in ("sealed", "rewrite", "closing")
     if record.get("retry") and not sealed:
         return 0
     final = bool(hook_input.get("final"))
@@ -80,21 +83,32 @@ def main():
     record = load_display(paths, session_id)
     record["pending"].pop(message_id, None)
     lines = lines_of(text)
-    if sealed:
-        # A sealed run speaks to the user once. Everything else the orchestrator writes (status between tool
-        # calls, waits for agents, answers to the Stop hook) is replaced by the hook's status line; the terminal
-        # message is shown only when the Stop hook will accept it, so the user sees one DOCKET line, not three.
-        save_display(paths, session_id, record)
-        if not lines or not TERMINAL.match(lines[0]):
-            return show(status_line(paths, state))
-        if record.get("retry"):
-            return 0
-        problems = sealed_problems(text, state, paths, hook_input)
-        if problems:
-            record["hidden"].append({"at": time.time(), "problems": problems})
+    if mode in ("sealed", "rewrite"):
+        # A run speaks to the user once, at its end. Its texts (answers to the harness, notes between tool calls) are
+        # replaced by the status line when it carries news, else hidden.
+        line = status_line(paths, state)
+        if record.get("last_status") == line:
             save_display(paths, session_id, record)
             return show(HIDDEN)
-        return show(text)
+        record["last_status"] = line
+        save_display(paths, session_id, record)
+        return show(line)
+    if mode == "closing":
+        info = state.get("closing") or {}
+        rendered = read_text(info.get("file") or closing_path(paths, session_id))
+        if record.get("closing_shown"):
+            save_display(paths, session_id, record)
+            return show(HIDDEN)  # the user has the closing message already: once
+        if rendered and normalized_lines(text) == normalized_lines(rendered):
+            record["closing_shown"] = True
+            save_display(paths, session_id, record)
+            return show(text)
+        if rendered and int(info.get("attempts", 0)) >= CLOSING_TRIES - 1:
+            record["closing_shown"] = True
+            save_display(paths, session_id, record)
+            return show(rendered.rstrip())  # the last try: the user gets the rendered message
+        save_display(paths, session_id, record)
+        return show(HIDDEN)
     problems = (content_problems(text, mode, paths) + box_problems(text, hook_input.get("transcript_path"))
                 if lines and WATERMARK.match(lines[-1]) else [])
     if problems:
