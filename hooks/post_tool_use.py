@@ -1,4 +1,8 @@
-"""PostToolUse hook, matcher Edit|Write|MultiEdit.
+"""PostToolUse hook, every tool.
+
+Every tool result carries the clock line `[docket] clock: YYYY-MM-DD HH:MM` as additional context once the
+project is set up: the stamp needs no tool call (M7). A shell command that matched forbidden_commands and ran
+was allowed by the user in the dialog: LOG `grant` (M1).
 
 Dockets are append-only: after an edit every previous line (snapshot taken in pre_tool_use) must
 still be there, in order. A violation is reported to the model with exit 2 and logged; the hook
@@ -10,6 +14,7 @@ every point, no open user decision and a filled reference-update section; otherw
 the state back to `draft` (so the file stays writable) and sends the gaps back. A passed gate is
 logged once as `ready`.
 """
+import json
 import os
 import posixpath
 import re
@@ -17,8 +22,8 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (Paths, absolute, frontmatter, load_state, log_event, log_has, read_input, refuse,
-                        set_context, under)
+from docket_lib import (Paths, absolute, clock_line, config_values, frontmatter, load_state, log_event, log_has,
+                        read_input, refuse, set_context, under)
 
 CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b|==)", re.IGNORECASE)
 
@@ -26,17 +31,38 @@ CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b
 def main():
     hook_input = read_input()
     tool_input = hook_input.get("tool_input") if isinstance(hook_input.get("tool_input"), dict) else {}
-    file_path = tool_input.get("file_path")
-    if not isinstance(file_path, str) or not file_path:
-        return 0
     paths = Paths(hook_input)
-    path = absolute(file_path, paths.cwd)
     session_id = hook_input.get("session_id")
-    if under(path, paths.dockets):
-        return docket_check(path, paths, session_id)
-    if under(path, paths.specs):
-        return ready_gate(path, paths, session_id)
+    file_path = tool_input.get("file_path")
+    result = 0
+    if isinstance(file_path, str) and file_path:
+        path = absolute(file_path, paths.cwd)
+        if under(path, paths.dockets):
+            result = docket_check(path, paths, session_id)
+        elif under(path, paths.specs):
+            result = ready_gate(path, paths, session_id)
+    elif hook_input.get("tool_name") in ("Bash", "PowerShell"):
+        log_grant(tool_input, paths, session_id)
+    if result:
+        return result
+    if os.path.isfile(paths.config):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                 "additionalContext": clock_line(paths, session_id)}}))
     return 0
+
+
+def log_grant(tool_input, paths, session_id):
+    """A command that matches forbidden_commands ran: pre_tool_use asked, the user allowed it (M1)."""
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not os.path.isfile(paths.config):
+        return
+    forbidden = config_values(paths).get("forbidden_commands", "")
+    try:
+        if forbidden and re.search(forbidden, command):
+            state = load_state(paths, session_id)
+            log_event(paths, session_id, state.get("spec", ""), "grant", " ".join(command.split())[:100])
+    except re.error:
+        pass
 
 
 # --- dockets -----------------------------------------------------------------

@@ -14,8 +14,9 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (SPEC_ID, Paths, display_path, load_state, lock_holder, log_event, read_input, refuse, save_display,
-                        save_state, set_context, set_spec_state, take_lock, violations_line)
+from docket_lib import (SPEC_ID, Paths, clock_line, display_path, load_state, lock_holder, log_event, read_input, refuse,
+                        save_display, save_state, set_context, set_spec_state, strip_harness_blocks, take_lock,
+                        violations_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
@@ -41,8 +42,9 @@ REMINDERS = {
                "propose nothing, start nothing. A new command opens the next mode."),
     "none": "",
 }
-WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock now, "
-             "never remembered; the hook refuses the message otherwise. Sent back: do exactly what the hook asks "
+WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`: the time of the latest `[docket] clock:` line "
+             "(the hooks give it with every prompt and every tool result; no tool call needed) or fetched from the clock "
+             "now, never remembered; the hook refuses the message otherwise. Sent back: do exactly what the hook asks "
              "(the stamp line alone, correction lines, or the line `[docket] noted`); repeat a message only when it says "
              "it was held back.")
 
@@ -128,6 +130,7 @@ def main():
         lines.append(ambition())
     if mode != "none" or os.path.isfile(paths.config):
         lines.append("[docket] " + WATERMARK)
+        lines.append(clock_line(paths, session_id, state))
     if feedback:
         lines.append(feedback)
     if state.get("degraded") and os.path.isfile(paths.config):
@@ -155,14 +158,6 @@ def held_by_live_session(paths, holder, spec_id):
     """A lock counts only while its session's state still says sealed on that spec; stale locks are taken over."""
     other = load_state(paths, holder)
     return other.get("mode") in ("sealed", "rewrite") and other.get("spec") == spec_id
-
-
-HARNESS_BLOCK = re.compile(r"<(system-reminder|task-notification|side-sessions-event|cross-session-message)\b[^>]*>.*?</\1>",
-                           re.DOTALL)
-
-
-def strip_harness_blocks(prompt):
-    return HARNESS_BLOCK.sub("", prompt)
 
 
 def store_inbox(paths, spec_id, text):

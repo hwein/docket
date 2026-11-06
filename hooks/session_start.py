@@ -37,7 +37,8 @@ def main():
         lines.append("[docket] Required reading before any other action, each file completely with Read: "
                      + ", ".join(required) + ". Until then writes, shell commands and agents are refused.")
         lines.append("[docket] Rule of every session here: each message ends with the line `stamp: YYYY-MM-DD HH:MM`, "
-                     "the time fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
+                     "the time of the latest `[docket] clock:` line the hooks give with every prompt and tool result, "
+                     "or fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
                      "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or the line `[docket] noted`; "
                      "repeat a message only when the hook says it was held back and never shown.")
     else:

@@ -1039,6 +1039,11 @@ class JudgeLog(Project):
         self.assertNotIn("impossible", prompt)  # experiment 9: with it the verdict never reaches the transcript
         self.assertNotIn("Korrektur", prompt)
         self.assertNotIn("]: ", prompt)  # the reason is what follows the quoted prompt's first "]: "
+        # M2/M3 (2026-11-05): the blocker's one step is not a manual task; no-source and identifier are not
+        # decidable without the tool calls and made the model repeat every command on screen.
+        self.assertIn("not a manual task", prompt)
+        self.assertNotIn("no-source", prompt)
+        self.assertNotIn("identifier", prompt)
 
 
 class CiHash(Project):
@@ -1111,6 +1116,130 @@ class SelfTalk(Project):
         code, err, _ = self.stop(f"Sorry, this took me two hours.\n{hstamp()}")
         self.assertEqual(code, 2)
         self.assertIn("yourself", err)
+
+
+class Grants(Project):
+    """M1: a forbidden command is put to the user (permissionDecision ask) instead of refused. On 2026-11-05 the
+    hook said 'it needs the user' and had no way to take the user's yes."""
+
+    def setUp(self):
+        super().setUp()
+        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
+                                             "| forbidden_commands | `gh workflow run\\|git -C concept push` | |\n", "utf-8")
+
+    def post(self, command):
+        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Bash",
+                                             "tool_input": {"command": command}}, self.p)
+
+    def test_forbidden_command_asks_the_user_and_its_run_is_a_grant(self):
+        self.set_state(mode="spec")
+        code, err, out = self.tool("Bash", command="git -C concept push")
+        self.assertEqual(code, 0, err)
+        decision = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(decision["permissionDecision"], "ask")
+        self.assertIn("forbidden_commands", decision["permissionDecisionReason"])
+        self.assertIn(" ask ", self.log())
+        self.assertFalse((self.work / "metrics").exists())  # asking is not a violation
+        self.assertEqual(self.post("git -C concept push")[0], 0)
+        self.assertIn(" grant ", self.log())
+        self.assertIn("git -C concept push", self.log())
+        self.post("git status")
+        self.assertEqual(self.log().count(" grant "), 1)
+
+    def test_sealed_run_has_no_user_and_still_refuses(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, out = self.tool("Bash", command="gh workflow run deploy.yml")
+        self.assertEqual(code, 2)
+        self.assertIn("forbidden_commands", err)
+        self.assertEqual(out.strip(), "")
+
+    def test_forbidden_paths_stay_refused(self):
+        (self.work / "DOCKET.md").write_text("| forbidden_paths | `secrets/**` | |\n", "utf-8")
+        self.set_state(mode="spec")
+        self.assertEqual(self.tool("Write", file_path=f"{self.p}/secrets/key.pem", content="x")[0], 2)
+
+
+class RepeatedBlocker(Project):
+    """M4: a blocker is said once. On 2026-11-05 the same blocker stood in seven messages in a row and the user
+    read the seventh as a refusal."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="spec")
+        self.path = self.tmp / "transcript.jsonl"
+
+    def turn(self, user, *assistant):
+        entries = [{"type": "user", "message": {"role": "user", "content": user}}]
+        entries += [{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": t}]}}
+                    for t in assistant]
+        with self.path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry) + "\n")
+
+    def stop_t(self, message):
+        self.turn("bitte pushen", message)  # the current turn
+        return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
+                                    "stop_hook_active": False, "transcript_path": str(self.path)}, self.p)
+
+    def test_the_same_blocker_line_again_is_refused(self):
+        self.turn("alles pushen", f"Blocker: the push of the concept repo needs your click.\n{hstamp()}")
+        code, err, _ = self.stop_t("Pushed the client repo (git push).\n"
+                                   f"- **Blocker:** the push of the concept repo needs your click.\n{hstamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("say it once", err)
+
+    def test_new_facts_or_blocker_unchanged_pass(self):
+        self.turn("alles pushen", f"Blocker: the push of the concept repo needs your click.\n{hstamp()}")
+        self.assertEqual(self.stop_t(f"Blocker unverändert.\n{hstamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"Blocker: GitHub rejected the push (remote: fatal error).\n{hstamp()}")[0], 0)
+
+    def test_tool_results_and_hook_feedback_do_not_end_a_turn(self):
+        self.turn("alles pushen", f"Blocker: the push needs your click.\n{hstamp()}")
+        self.turn("Stop hook feedback:\n[docket] the last line must be a stamp", hstamp())  # same turn, sent back
+        self.turn([{"type": "tool_result", "content": "x"}], "looked again")
+        code, err, _ = self.stop_t(f"Blocker: the push needs your click.\n{hstamp()}")
+        self.assertEqual(code, 2, err)
+        self.assertIn("say it once", err)
+
+    def test_a_blocker_two_turns_ago_is_not_the_previous_message(self):
+        self.turn("alles pushen", f"Blocker: the push needs your click.\n{hstamp()}")
+        self.turn("ok", f"Pushed (git push).\n{hstamp()}")
+        self.assertEqual(self.stop_t(f"Blocker: the push needs your click.\n{hstamp()}")[0], 0)
+
+
+class Clock(Project):
+    """M7: the hooks hand the time to the model with every prompt and tool result; the stamp needs no tool call
+    (25 of 174 calls fetched the time on 2026-11-05)."""
+
+    def post(self):
+        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                             "tool_input": {"file_path": f"{self.p}/README.md"}}, self.p)
+
+    def test_prompt_and_tool_results_carry_the_clock(self):
+        self.set_state(mode="concept")
+        _, _, out = self.prompt("how are the tests?")
+        clock = self.state()["clock"]
+        self.assertRegex(clock, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+        self.assertIn(f"[docket] clock: {clock}", out)
+        code, err, out = self.post()
+        self.assertEqual(code, 0, err)
+        self.assertIn("[docket] clock: ", json.loads(out)["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["hookEventName"], "PostToolUse")
+
+    def test_stamp_equal_to_the_given_clock_passes_after_a_long_turn(self):
+        when = datetime.now() - timedelta(minutes=40)
+        self.set_state(mode="concept", clock=f"{when:%Y-%m-%d %H:%M}")
+        code, err, _ = self.stop(f"The default stays at 512 (config_reference.md).\nstamp: {when:%Y-%m-%d %H:%M}")
+        self.assertEqual(code, 0, err)
+        code, err, _ = self.stop(f"The default stays at 512 (config_reference.md).\n{hstamp(-30)}")
+        self.assertEqual(code, 2)
+        self.assertIn("minutes off", err)
+        self.assertIn("clock", err)
+
+    def test_no_clock_without_docket_md(self):
+        (self.work / "DOCKET.md").unlink()
+        code, _, out = self.post()
+        self.assertEqual((code, out.strip()), (0, ""))
 
 
 if __name__ == "__main__":

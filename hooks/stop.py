@@ -6,7 +6,10 @@ sealed:  the final message is one of DOCKET DELIVERED | BLOCKED | DISSENT <spec-
          exists with no open point, the last line is a fresh stamp. On success the session
          closes and LOG gets the terminal line.
 concept, spec, init: human register. No hashes, no ids, at most one question, no hedge words,
-         no option menus, no roadmap promises, length limit.
+         no option menus, no roadmap promises, length limit. A blocker is said once: a line starting with
+         `Blocker` that stood, text-identical, in the previous message is refused (M4).
+The stamp is accepted within five minutes of the real time or when it equals the clock line the hooks last
+gave the model (M7).
 closed:  short answers only, no questions, no proposals.
 Sent back once (stop_hook_active); a second failure is logged and let through.
 
@@ -24,8 +27,9 @@ from datetime import datetime, timedelta
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (CONCEPT_ID, JUDGE_ACK, SPEC_ID, Paths, collect_judge, config_values, load_state, log_event,
-                        log_lines, log_time, message_text, point_counts, read_input, refuse, release_lock, save_display,
-                        save_state, set_context, set_spec_state, settled_display, transcript_blocks)
+                        log_lines, log_time, message_text, point_counts, previous_turn_texts, read_input, refuse,
+                        release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
+                        transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
 STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
@@ -47,6 +51,9 @@ PROPOSAL = re.compile(r"\b(i suggest|i propose|should we|shall i|vorschlag|soll 
 SELF = re.compile(r"\b(sorry|apologi[sz]e|my mistake|my fault|took me|i spent|this took|hours of work|"
                   r"entschuldig\w*|tut mir leid|mein fehler|leider)\b", re.IGNORECASE)
 FILE_LINE = re.compile(r"(?<![\w/:])((?:[\w.-]+/)*[\w.-]+\.[a-z]{1,5}):(\d{1,6})\b", re.IGNORECASE)
+BLOCKER = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\b", re.IGNORECASE)
+BLOCKER_UNCHANGED = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\s+(?:unver[äa]ndert|unchanged)(?:\*\*)?[.!]?\s*$",
+                               re.IGNORECASE)
 TOLERANCE = timedelta(minutes=5)
 MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 8, "sealed": 25}
 GATED_MODES = ("concept", "spec", "init", "closed")  # the display gate holds messages back in these modes
@@ -69,6 +76,7 @@ def main():
     second_pass = bool(hook_input.get("stop_hook_active"))
 
     display = settled_display(paths, session_id) if mode in GATED_MODES else None
+    clock = state.get("clock", "")
     if display and display["hidden"]:
         # The gate held a message back: the user has seen nothing, so here a full rewrite is right.
         held = sorted({problem for entry in display["hidden"] for problem in entry.get("problems", [])})
@@ -82,20 +90,20 @@ def main():
         problems = []  # the acknowledgement of a judge verdict; the display gate hid it
     elif mode == "none":
         # No command active, but the project is set up: the stamp is a rule of every session.
-        problems = watermark_problems(lines_of(text))
+        problems = watermark_problems(lines_of(text), clock=clock)
     elif mode in ("sealed", "rewrite"):
         if hook_input.get("background_tasks"):
             # The turn resumes when the background agent reports; not a terminal moment, but still a message.
-            problems = watermark_problems(lines_of(text))
+            problems = watermark_problems(lines_of(text), clock=clock)
         else:
             problems = sealed_problems(text, state, paths, hook_input)
             if not problems:
                 close(paths, session_id, state, text)
                 return 0
     elif mode == "closed":
-        problems = closed_problems(text)
+        problems = closed_problems(text, clock)
     else:
-        problems = human_problems(text, mode)
+        problems = human_problems(text, mode, clock) + repeat_problems(text, hook_input.get("transcript_path"))
     if any("stamp is" in problem for problem in problems):
         state.update({"degraded": True, "read": []})  # a lost watermark means the rules blurred
         save_state(paths, session_id, state)
@@ -138,6 +146,7 @@ def sealed_problems(text, state, paths, hook_input):
     lines = lines_of(text)
     problems = []
     spec_id = state.get("spec", "")
+    clock = state.get("clock", "")
     head = TERMINAL.match(lines[0]) if lines else None
     if head is None:
         problems.append(f"the first line must be `DOCKET DELIVERED {spec_id}`, `DOCKET BLOCKED {spec_id}` or "
@@ -166,7 +175,7 @@ def sealed_problems(text, state, paths, hook_input):
     if stamp is None:
         problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM <spec-id> <delivered>/<points>` with the "
                         "current time, fetched now, and the docket's counts")
-        problems += [p for p in watermark_problems(lines) if "minutes off" in p or "not a valid" in p]
+        problems += [p for p in watermark_problems(lines, clock=clock) if "minutes off" in p or "not a valid" in p]
     else:
         # The stamp carries the state of the acceptance list: delivered/points as the docket shows them.
         if counts is not None:
@@ -179,7 +188,7 @@ def sealed_problems(text, state, paths, hook_input):
                                 f"{counts['x']}/{total} delivered/points: the stamp is read from the docket, not remembered")
         if stamp.group(6).lower() != spec_id.lower():
             problems.append("the stamp names another spec")
-        problems += watermark_problems(lines)
+        problems += watermark_problems(lines, clock=clock)
     if len(lines) > MAX_LINES["sealed"]:
         problems.append(f"at most {MAX_LINES['sealed']} lines")
     return problems
@@ -295,24 +304,54 @@ def reference_problems(body, spec_id, paths):
     return problems
 
 
-def watermark_problems(lines, require_spec=None):
-    """Every message in every mode ends with a stamp fetched from the clock: `stamp: YYYY-MM-DD HH:MM`
-    (sealed runs add the spec id and the docket counts). A stale stamp means the rules blurred."""
+def watermark_problems(lines, require_spec=None, clock=""):
+    """Every message in every mode ends with a stamp from the clock: `stamp: YYYY-MM-DD HH:MM` (sealed runs add
+    the spec id and the docket counts). Accepted within TOLERANCE of the real time, or equal to the clock line
+    the hooks last gave the model (a long turn without a tool call). A stale stamp means the rules blurred."""
     problems = []
     stamp = WATERMARK.match(lines[-1]) if lines else None
     if stamp is None:
-        problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM` with the current time, fetched now"
+        problems.append("the last line must be `stamp: YYYY-MM-DD HH:MM` with the current time (the latest "
+                        "`[docket] clock:` line, or fetched now)"
                         + (f" (sealed: `stamp: YYYY-MM-DD HH:MM {require_spec} <delivered>/<points>`)" if require_spec else ""))
         return problems
     try:
         when = datetime(*(int(stamp.group(i)) for i in range(1, 6)))
         deviation = abs(datetime.now() - when)
-        if deviation > TOLERANCE:
+        if deviation > TOLERANCE and when != clock_time(clock):
             problems.append(f"the stamp is {round(deviation.total_seconds() / 60)} minutes off the real time: "
-                            "fetch the time, do not remember it; then check whether other rules blurred too")
+                            "take the latest `[docket] clock:` line or fetch the time, do not remember it; "
+                            "then check whether other rules blurred too")
     except ValueError:
         problems.append("the stamp is not a valid date and time")
     return problems
+
+
+def clock_time(clock):
+    try:
+        return datetime.strptime(clock, "%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return None
+
+
+def blocker_key(line):
+    return " ".join(re.sub(r"^\s*(?:[-*]\s+)?", "", line).replace("**", "").lower().split())
+
+
+def repeat_problems(text, transcript_path):
+    """A blocker is said once (M4). On 2026-11-05 the same blocker stood in seven messages in a row and the
+    user read the seventh as a refusal. A `Blocker` line that stood, text-identical, in the previous message
+    is refused; afterwards only new facts or the one line `Blocker unverändert`."""
+    current = [line for line in lines_of(without_stamp(text)) if BLOCKER.match(line) and not BLOCKER_UNCHANGED.match(line)]
+    if not current:
+        return []
+    previous = {blocker_key(line) for earlier in previous_turn_texts(transcript_path)
+                for line in lines_of(earlier) if BLOCKER.match(line)}
+    repeated = [line for line in current if blocker_key(line) in previous]
+    if not repeated:
+        return []
+    return [f"the blocker `{blocker_key(repeated[0])[:50]}` already stood in your previous message: say it once; "
+            "after that only new facts or the one line `Blocker unverändert`"]
 
 
 def close(paths, session_id, state, text):
@@ -333,12 +372,12 @@ def without_stamp(text):
     return "\n".join(lines[:-1]) if lines and WATERMARK.match(lines[-1]) else text
 
 
-def human_problems(text, mode):
-    return watermark_problems(lines_of(text)) + content_problems(text, mode)
+def human_problems(text, mode, clock=""):
+    return watermark_problems(lines_of(text), clock=clock) + content_problems(text, mode)
 
 
-def closed_problems(text):
-    return watermark_problems(lines_of(text)) + content_problems(text, "closed")
+def closed_problems(text, clock=""):
+    return watermark_problems(lines_of(text), clock=clock) + content_problems(text, "closed")
 
 
 def content_problems(text, mode):

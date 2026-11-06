@@ -88,9 +88,16 @@ Hooks check provenance, form and state, never content.
 - Specs freeze at `ready`; the docket is append-only; `LOG.md` is written by hooks only.
 - `DOCKET DELIVERED` passes only if the check ran after the last agent returned, every cited `file:line`
   exists, and every reference doc the spec names is updated or accounted for.
-- Project rules from `DOCKET.md` (branch, commit form, forbidden paths and commands) apply to every command.
-- Every message in every session of the project ends with a time stamp fetched from the clock. No hashes, ids
-  or hedges reach you.
+- Project rules from `DOCKET.md` (branch, commit form, forbidden paths) apply to every command. A forbidden
+  command is not refused but put to you as a permission dialog: one click runs it once, and the LOG records the
+  grant. A sealed run has nobody to ask, so there it stays refused.
+- Every message in every session of the project ends with a time stamp; the hooks hand the time to the model with
+  every prompt and tool result, so no tool call is spent on it. No hashes, ids or hedges reach you, and a blocker
+  is said once: the same `Blocker` line twice in a row is refused.
+- The optional judge (a prompt hook, per project) checks the form of a message after you read it: one question
+  at most, no option menus, no manual tasks for you beyond the one step of a blocker, no promises, no self-talk.
+  Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts go to Claude and the
+  log, never to your screen.
 
 ## Install
 
@@ -123,7 +130,7 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.2, an early stage of development, already in use in several repositories.
+0.2.3, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

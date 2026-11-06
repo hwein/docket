@@ -38,10 +38,24 @@ Collect what users or operators would notice. Ask one question per message, in e
 recommendation; record the answer with date in the spec. Nothing already decided in DOCKET.md, CONTRIBUTING.md
 or an earlier ready spec is asked again.
 
+## Blockers, grants, commits
+
+- A command that matches `forbidden_commands` in DOCKET.md is not refused: the hook puts it to the user as a
+  dialog, one click grants it once, the LOG records `ask` and `grant`. Run the command; never ask for it in prose.
+- A rule that blocks what the user explicitly asked for becomes a decision question about the rule (should it
+  fall? with recommendation and the rule's place in DOCKET.md), never a manual task for the user.
+- A blocker is said once, in one line starting with `Blocker`. Afterwards only new facts or the one line
+  `Blocker unverändert`; the hook refuses a blocker line that stood in the previous message.
+- On `commit`, every change of the session goes in, plus the files the new content cites; changes in the working
+  tree that are not the session's are named in one line, never left out silently.
+- The line `[docket] noted` is the answer to a judge verdict and nothing else: it is never explained to the user
+  and never mentioned in a message, whatever the user has seen.
+
 ## Ready gate
 
 Set `state: ready` only when: every point has a verifiable criterion, the reference-update section is filled,
 no user decision is open, and the goal cites no hypothetical state. From then on the file is frozen; the hook
 enforces it. Report in one sentence: the spec title is ready, and the one thing the user has to decide, if any.
-Every message to the user ends with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock at the
-moment of writing; the hook refuses a message without it or with a stale one.
+Every message to the user ends with the line `stamp: YYYY-MM-DD HH:MM`: the time of the latest `[docket] clock:`
+line the hooks give with every prompt and tool result, or fetched from the clock at the moment of writing; the hook
+refuses a message without it or with a stale one.

@@ -8,7 +8,11 @@ Write rights by state x path (roles are write rights, not sessions):
 Done specs and dockets are not a reference source: Read/Grep on them outside concept mode is refused.
 Sealed: AskUserQuestion refused. Closed: writes and agents refused. Degraded: writes, shell and agents
 refused until the required reading has been observed. Shell read commands are redirected to Read.
+forbidden_commands (DOCKET.md) are not refused but put to the user: permissionDecision `ask` shows the command,
+one click grants it once (LOG `ask`, then `grant` from post_tool_use when it ran). In a sealed run, which has no
+user, they stay refused. forbidden_paths stay refused everywhere.
 """
+import json
 import os
 import posixpath
 import re
@@ -99,6 +103,12 @@ def main():
     if tool in ("Bash", "PowerShell"):
         command = tool_input.get("command")
         if isinstance(command, str):
+            forbidden = forbidden_command(command, config)
+            if forbidden and mode in ("sealed", "rewrite"):
+                return refuse(forbidden + " A sealed run has no user: name the command in DOCKET BLOCKED.")
+            if forbidden:
+                log_event(paths, session_id, state.get("spec", ""), "ask", " ".join(command.split())[:100])
+                return ask(forbidden + " Allowing it here grants it once; the LOG records the grant.")
             problem = project_rule_problem(command, config, paths)
             if problem:
                 return refuse(problem)
@@ -204,16 +214,29 @@ def refinement_problem(paths, spec_id):
     return ""
 
 
-def project_rule_problem(command, config, paths):
-    """CONTRIBUTING rules made deterministic through DOCKET.md: forbidden_commands (regex), push_branch
-    (regex the pushed branch must match), commit_regex (the first line of every commit message)."""
+def ask(reason):
+    """permissionDecision `ask`: Claude Code shows the user the command and the reason; one click runs it once.
+    Not a violation: the rule says the command needs the user, and this is the way the user is asked."""
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                             "permissionDecisionReason": reason}}))
+    return 0
+
+
+def forbidden_command(command, config):
+    """forbidden_commands in DOCKET.md: a regex of commands that run only with the user's click."""
     forbidden = config.get("forbidden_commands", "")
     if forbidden:
         try:
             if re.search(forbidden, command):
-                return f"[docket] This command matches forbidden_commands in DOCKET.md (`{forbidden}`); it needs the user."
+                return f"[docket] This command matches forbidden_commands in DOCKET.md (`{forbidden}`); it runs only with the user's click."
         except re.error:
             pass
+    return ""
+
+
+def project_rule_problem(command, config, paths):
+    """CONTRIBUTING rules made deterministic through DOCKET.md: push_branch (regex the pushed branch must
+    match), commit_regex (the first line of every commit message)."""
     push_branch = config.get("push_branch", "")
     push = GIT_PUSH.search(command)
     if push_branch and push:

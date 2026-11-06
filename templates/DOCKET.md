@@ -17,7 +17,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | push_branch | `<regex the pushed branch must match, e.g. "feature/.*" or "main">` | question 1 |
 | commit_regex | `<regex for the first line of a commit message; escape pipes as \|>` | question 2 |
 | forbidden_paths | `<comma-separated globs no agent writes, e.g. "secrets/**, .env">` | question 10 |
-| forbidden_commands | `<regex of shell commands that need the user, e.g. "gh workflow run\|terraform apply">` | question 11 |
+| forbidden_commands | `<regex of shell commands that run only after the user's click in a dialog, e.g. "gh workflow run\|terraform apply">` | question 11 |
 
 ## Repository behaviour
 

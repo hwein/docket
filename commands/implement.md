@@ -76,7 +76,8 @@ set (LOG line `stop-requested`), end with `DOCKET BLOCKED <id>` and the reason "
 Reference update: for every file the spec names, an implementer updates it; the docket records `updated <file>` or
 `<file>: not needed, <reason>`. The Stop hook checks both: every named file is accounted for, and an `updated` file
 has changed since sealing. Merge and push per CONTRIBUTING.md (the hook enforces `push_branch`, `commit_regex`,
-`forbidden_paths` and `forbidden_commands` from DOCKET.md where they are set). CI state belongs to the pushed hash
+`forbidden_paths` and `forbidden_commands` from DOCKET.md where they are set; a sealed run has no user to grant a
+forbidden command, so it stays refused and is named in DOCKET BLOCKED). CI state belongs to the pushed hash
 and is read by you: the docket line is `CI: <state> <hash>`, and the hook checks that the hash is reachable from
 HEAD and that a push ran in this session; with `ci` configured, DELIVERED needs such a line.
 Metrics to `metrics/<spec id>.json` via `fixer`: rounds per point, model per round, refinement findings, inbox notes.
@@ -96,7 +97,8 @@ DOCKET DELIVERED <spec id>        (or DOCKET BLOCKED <spec id> / DOCKET DISSENT 
 stamp: YYYY-MM-DD HH:MM <spec id> <delivered>/<points>
 ```
 
-The stamp is fetched from the clock at the moment of writing, never remembered, and ends with the docket's counts
+The stamp is the time of the latest `[docket] clock:` line the hooks give with every prompt and tool result, or
+fetched from the clock at the moment of writing, never remembered, and ends with the docket's counts
 (`[x]` boxes / all points) read from the docket, not remembered. The hook refuses the message otherwise and closes
 the session on success; afterwards you answer only from the docket. A message that ends a turn while agents still
 run in the background (a wait) also ends with `stamp: YYYY-MM-DD HH:MM`. The spec's own state follows the run:

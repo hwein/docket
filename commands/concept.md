@@ -38,6 +38,16 @@ ask the one question. The user's word settles it; record it in the follow-up spe
 - Steps assigned to the user are decisions, never tasks. A step the team can run, the team runs.
 - A plan has no conditional steps ("if X still happens, then Y").
 - Extensive findings go into a file under `concepts/<topic>/` or the spec, not into the chat.
+- A command that matches `forbidden_commands` in DOCKET.md is not refused: the hook puts it to the user as a
+  dialog, one click grants it once, the LOG records `ask` and `grant`. Run the command; never ask for it in prose.
+- A rule that blocks what the user explicitly asked for becomes a decision question about the rule (should it
+  fall? with recommendation and the rule's place in DOCKET.md), never a manual task for the user.
+- A blocker is said once, in one line starting with `Blocker`. Afterwards only new facts or the one line
+  `Blocker unverändert`; the hook refuses a blocker line that stood in the previous message.
+- On `commit`, every change of the session goes in, plus the files the new content cites; changes in the working
+  tree that are not the session's are named in one line, never left out silently.
+- The line `[docket] noted` is the answer to a judge verdict and nothing else: it is never explained to the user
+  and never mentioned in a message, whatever the user has seen.
 
 ## Writing
 
@@ -47,5 +57,6 @@ ask the one question. The user's word settles it; record it in the follow-up spe
   to the user; name the title.
 
 Date and time are fetched, never remembered, whenever a document gets a date. Every message to the user ends
-with the line `stamp: YYYY-MM-DD HH:MM`, the time fetched from the clock at the moment of writing; the hook
-refuses a message without it or with a stale one (a stale stamp means the rules blurred: required reading again).
+with the line `stamp: YYYY-MM-DD HH:MM`: the time of the latest `[docket] clock:` line the hooks give with every
+prompt and tool result, or fetched from the clock at the moment of writing; the hook refuses a message without it or
+with a stale one (a stale stamp means the rules blurred: required reading again).

@@ -357,7 +357,53 @@ def commit_work_dir(paths, message):
         pass
 
 
+# --- clock (M7) --------------------------------------------------------------
+# The hooks hand the time to the model with every prompt and every tool result, so the stamp needs no tool
+# call (25 of 174 calls fetched the time on 2026-11-05). stop.py accepts a stamp equal to the last given value.
+
+def clock_line(paths, session_id, state=None):
+    """Saves the current time in the session state and returns the context line that carries it."""
+    state = state if state is not None else load_state(paths, session_id)
+    state["clock"] = time.strftime("%Y-%m-%d %H:%M")
+    save_state(paths, session_id, state)
+    return f"[docket] clock: {state['clock']}"
+
+
 # --- transcript --------------------------------------------------------------
+HARNESS_BLOCK = re.compile(r"<(system-reminder|task-notification|side-sessions-event|cross-session-message)\b[^>]*>.*?</\1>",
+                           re.DOTALL)
+STOP_FEEDBACK = "Stop hook feedback"
+
+
+def strip_harness_blocks(prompt):
+    return HARNESS_BLOCK.sub("", prompt)
+
+
+def previous_turn_texts(transcript_path):
+    """The assistant's texts of the previous turn: what stood between the second-last and the last prompt of the
+    user. Tool results, harness notices and the Stop hook's feedback do not start a turn."""
+    turns = [[]]
+    for entry in transcript_entries(transcript_path):
+        if entry.get("isSidechain"):
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if entry.get("type") == "user":
+            if isinstance(content, list):
+                if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+                    continue
+                content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+            if not isinstance(content, str) or content.lstrip().startswith(STOP_FEEDBACK):
+                continue
+            if not strip_harness_blocks(content).strip():
+                continue
+            turns.append([])
+        elif entry.get("type") == "assistant":
+            text = text_of(content)
+            if text is not None:
+                turns[-1].append(text)
+    return turns[-2] if len(turns) >= 2 else []
+
 
 def transcript_blocks(transcript_path):
     """(index, role, block) for every content block of the main line of a transcript, in order."""
