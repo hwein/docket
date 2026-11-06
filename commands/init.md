@@ -7,15 +7,17 @@ description: "Project setup: audits the repo, interviews you only where it is si
 Runs any time, never required. The repo is the first interview partner, the user the second: the user decides
 only where the repo is silent or contradicts itself. Nothing is written before the diff is approved.
 
-1. Findings, with a source for each (file, command, number), for the eleven questions:
+1. Findings, with a source for each (file, command, number), for the twelve questions:
    branch model (`git branch -a`, default branch, branch protection); commit form (last 200 messages: convention,
    language, ticket numbers); way into the target branch (merged PRs vs direct commits, squash vs merge commits);
    who merges; gate before merge (workflows on pull_request, check scripts); release (tags, release workflow,
    CHANGELOG, version field); storage of specs and dockets (existing spec folders, external repos in CLAUDE.md);
-   language (comments, README, issues; and, as a question of its own, the language of every message to the user,
-   default the language the user writes in this session); commenting (comment lines per code line per language: sparse < 5 %,
+   language of the repo (code, comments, README, issues); commenting (comment lines per code line per language: sparse < 5 %,
    normal, verbose > 15 %; existing section markers); forbidden paths and content (.gitignore, guard hooks,
-   CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules).
+   CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules); language of every
+   message to the user, in every mode, which is a question of its own because it is not the language of the repo
+   (an English repo, a German author: luradb-web-client 2026-11-06) and is answered from the language the user
+   writes in this session.
    Also: existing CLAUDE.md, AGENTS.md, CONTRIBUTING.md, hooks, commands, skills, permissions; the commands that
    make up the project's own check (CI workflow, package scripts, Makefile, CONTRIBUTING), as many as it has. For
    every existing hook, command or skill, say what it does in one line and
@@ -39,10 +41,10 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    (`npm run check`, `npm test` from `.github/workflows/ci.yml:19-20`); docket adds no file of its own to the repo.
    When the work dir is the home default, the hooks keep it under its own git history
    (`git init` on the first LOG line); for `docket/` inside the repo or a second repo, the diff says which.
-   New repo: `git init`, remote (existing / create via `gh repo create` / none), all eleven questions.
+   New repo: `git init`, remote (existing / create via `gh repo create` / none), all twelve questions.
    Questions 1, 2, 10 and 11 also become the configuration keys `push_branch`, `commit_regex`, `forbidden_paths`
    and `forbidden_commands` (regexes and globs the hooks enforce); a pipe inside a regex is written `\|`.
-   Question 8 also becomes `language`: the language of every message to the user in every mode; the hooks write
+   Question 12 becomes `language`: the language of every message to the user in every mode; the hooks write
    their own lines to the user (status line of a sealed run, closing line) in it and refuse a message in another
    language.
 5. Show the diff and ask for the go. The hook refuses every write to DOCKET.md, CONTRIBUTING.md, CLAUDE.md,
