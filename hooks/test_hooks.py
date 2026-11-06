@@ -121,6 +121,16 @@ class ModeSwitch(Project):
         self.assertEqual(code, 2)
         self.assertIn("spec id", err)
 
+    def test_implement_with_several_ids_is_refused_and_names_them(self):
+        # luradb-web-client 2026-11-06: five ids in one call, the first was sealed, the other four vanished unnamed.
+        code, err, _ = self.prompt(f"/docket:implement {SPEC},s-aaaa1111,s-bbbb2222")
+        self.assertEqual(code, 2)
+        self.assertIn("one spec per run", err)
+        self.assertIn(f"{SPEC}, s-aaaa1111, s-bbbb2222", err)
+        self.assertIn(f"/docket:implement {SPEC}", err)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertNotIn("sealed", self.log())
+
     def test_namespaced_commands_are_the_same_commands(self):
         code, _, _ = self.prompt(f"/docket:implement {SPEC}")
         self.assertEqual(code, 0)
@@ -357,7 +367,7 @@ class SealedStop(Project):
         self.docket.write_text("# Docket\n- [x] point 1: tests 3 passed\n", "utf-8")
 
     def test_delivered_closes_session_and_logs(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works, 3 tests, CI green.\n{stamp()}")
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works, 3 tests, CI green.\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.state()["mode"], "closed")
         self.assertIn("delivered", self.log())
@@ -370,19 +380,19 @@ class SealedStop(Project):
         self.assertEqual(self.state()["mode"], "sealed")
 
     def test_stale_stamp_is_sent_back(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(-21)}")
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(-21)}")
         self.assertEqual(code, 2)
         self.assertIn("minutes off", err)
 
     def test_open_point_blocks_delivered_but_not_blocked(self):
         self.docket.write_text("# Docket\nflip `[ ]` to `[x]`\n| 1 | login | `cargo test` | [ ] |\n", "utf-8")
-        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='0/1')}")[0], 2)
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nDocker is not running.\n{stamp(counts='0/1')}")[0], 0)
+        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='0/1')}")[0], 2)
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nDocker is not running.\nYou must start Docker.\n{stamp(counts='0/1')}")[0], 0)
         self.assertEqual(self.state()["terminal"], "blocked")
 
     def test_blocked_without_docket_closes(self):
         self.docket.unlink()
-        code, err, _ = self.stop(f"DOCKET BLOCKED {SPEC}\nWorking tree not clean.\n{stamp()}")
+        code, err, _ = self.stop(f"DOCKET BLOCKED {SPEC}\nWorking tree not clean.\nYou must commit or stash it.\n{stamp()}")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.state()["terminal"], "blocked")
 
@@ -562,10 +572,8 @@ class DisplayGate(Project):
         self.assertEqual(self.display(last, index=1), "The default stays at 512\n" + last)
         self.assertEqual(self.record()["pending"], {})
 
-    def test_mode_none_and_sealed_are_not_gated(self):
+    def test_mode_none_is_not_gated(self):
         self.assertIsNone(self.display(f"It probably works.\n{hstamp()}"))
-        self.set_state(mode="sealed", spec=SPEC)
-        self.assertIsNone(self.display(f"It probably works.\n{hstamp()}", message_id="m2"))
 
     def test_project_without_docket_md_is_not_gated(self):
         (self.work / "DOCKET.md").unlink()
@@ -676,10 +684,10 @@ class SpecState(Project):
         self.prompt(f"/implement {SPEC}")
         self.assertIn("state: in-progress          # draft | ready", self.spec.read_text("utf-8"))
         self.docket.write_text("- [x] point 1\n", "utf-8")
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.\n{stamp()}")[0], 0)
         self.assertIn("state: ready", self.spec.read_text("utf-8"))
         self.set_state(mode="sealed", spec=SPEC)
-        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 0)
         self.assertIn("state: done", self.spec.read_text("utf-8"))
 
 
@@ -729,7 +737,7 @@ class Locks(Project):
         code, _, _ = self.prompt(f"/implement {SPEC}")
         self.assertEqual(code, 0)
         self.docket.write_text("- [x] point 1\n", "utf-8")
-        self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertFalse((self.work / "locks" / SPEC).exists())
 
 
@@ -757,7 +765,7 @@ class Provenance(Project):
             ("user", {"type": "tool_result", "tool_use_id": "a1", "content": "done"}),
             ("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}}),
         ])
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 0, err)
 
     def test_check_before_last_agent_return_is_refused(self):
@@ -766,24 +774,24 @@ class Provenance(Project):
             ("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {"prompt": "x"}}),
             ("user", {"type": "tool_result", "tool_use_id": "a1", "content": "done"}),
         ])
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 2)
         self.assertIn("before the last agent returned", err)
 
     def test_check_never_run_is_refused_but_blocked_passes(self):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
-        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 2)
-        self.assertEqual(self.stop_t(f"DOCKET BLOCKED {SPEC}\nno docker\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 2)
+        self.assertEqual(self.stop_t(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.\n{stamp()}")[0], 0)
 
     def test_cited_location_must_exist(self):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
         (self.root / "src").mkdir()
         (self.root / "src" / "auth.rs").write_text("a\nb\nc\n", "utf-8")
         self.docket.write_text("- [x] point 1: `cargo test` → 3 passed, see src/auth.rs:2\n", "utf-8")
-        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 0)
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("- [x] point 1: see src/auth.rs:40 and src/gone.rs:1\n", "utf-8")
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 2)
         self.assertIn("src/gone.rs:1", err)
         self.assertIn("src/auth.rs:40", err)
@@ -792,13 +800,13 @@ class Provenance(Project):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
         self.spec.write_text(f"---\nid: {SPEC}\nstate: ready\n---\n## Reference update\n\n| File | Change |\n|---|---|\n"
                              "| docs/auth.md | login |\n| README.md | none |\n", "utf-8")
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 2)
         self.assertIn("docs/auth.md", err)
         self.docket.write_text("- [x] point 1\n- updated docs/auth.md\n- README.md: not needed, unchanged\n", "utf-8")
         (self.root / "docs").mkdir()
         (self.root / "docs" / "auth.md").write_text("login\n", "utf-8")
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 0, err)
 
     def several(self, *commands):
@@ -812,7 +820,7 @@ class Provenance(Project):
                                     "content": "Exit code 1" if failed else "ok"}))
         self.write_transcript(blocks)
         self.set_state(mode="sealed", spec=SPEC)
-        return self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        return self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
 
     def test_a_check_of_several_commands_passes_alone_or_together(self):
         self.assertEqual(self.several(("npm run check && npm test", False))[0], 0)
@@ -830,11 +838,11 @@ class Provenance(Project):
     def test_placeholder_check_is_not_a_check(self):
         (self.work / "DOCKET.md").write_text("| check | `<command that exits 0>` | |\n", "utf-8")
         self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
-        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 0)
 
     def test_stale_stamp_sets_degraded(self):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
-        self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(-30)}")
+        self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(-30)}")
         self.assertTrue(self.state()["degraded"])
 
 
@@ -845,16 +853,16 @@ class StampCounts(Project):
         self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [~] |\n| 3 | c | `z` | [x] |\n", "utf-8")
 
     def test_counts_must_match_the_docket(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='3/3')}")
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='3/3')}")
         self.assertEqual(code, 2)
         self.assertIn("2/3", err)
-        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='2/3')}")[0], 0)
+        self.assertEqual(self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='2/3')}")[0], 0)
 
     def test_delivered_without_counts_is_refused_blocked_passes(self):
-        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\n{stamp(counts='')}")
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp(counts='')}")
         self.assertEqual(code, 2)
         self.assertIn("2/3", err)
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\n{stamp(counts='')}")[0], 0)
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.\n{stamp(counts='')}")[0], 0)
 
 
 class Refinement(Project):
@@ -1094,7 +1102,10 @@ class JudgeLog(Project):
         self.assertNotIn("]: ", prompt)  # the reason is what follows the quoted prompt's first "]: "
         # M2/M3 (2026-11-05): the blocker's one step is not a manual task; no-source and identifier are not
         # decidable without the tool calls and made the model repeat every command on screen.
-        self.assertIn("not a manual task", prompt)
+        self.assertIn("not manual tasks", prompt)
+        # 0.2.9: a blocker names every step only the user can take (luradb-web-client 2026-11-06: URL, key and
+        # one test run were three sentences, the judge called two of them manual tasks).
+        self.assertIn("every step only the user can take", prompt)
         self.assertNotIn("no-source", prompt)
         self.assertNotIn("identifier", prompt)
 
@@ -1119,21 +1130,21 @@ class CiHash(Project):
 
     def test_ci_hash_must_be_reachable_and_pushed(self):
         self.docket.write_text(f"- [x] point 1: ok. CI: green {self.head[:10]}\n", "utf-8")
-        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 0)
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("- [x] point 1: ok. CI: green 0123456789abcdef0123456789abcdef01234567\n", "utf-8")
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 2)
         self.assertIn("not reachable", err)
         self.docket.write_text(f"- [x] point 1: ok. CI: green {self.head[:10]}\n", "utf-8")
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}", pushed=False)
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}", pushed=False)
         self.assertEqual(code, 2)
         self.assertIn("git push", err)
 
     def test_configured_ci_needs_a_hash_line(self):
         (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n| ci | `gh run watch` | |\n", "utf-8")
         self.docket.write_text("- [x] point 1: ok. CI: none\n", "utf-8")
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
         self.assertEqual(code, 2)
         self.assertIn("pushed hash", err)
 
@@ -1151,7 +1162,7 @@ class StartSummary(Project):
     def test_stopped_run_with_open_points_is_resumable(self):
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [ ] |\n| 3 | c | `z` | [ ] |\n", "utf-8")
-        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nstopped by user\n{stamp(counts='1/3')}")[0], 0)
+        self.assertEqual(self.stop(f"DOCKET BLOCKED {SPEC}\nstopped by user\nNothing to do.\n{stamp(counts='1/3')}")[0], 0)
         _, _, out = run_hook("session_start.py", {"session_id": "other-session-9", "cwd": self.p, "source": "startup"}, self.p)
         self.assertIn("stopped with open points", out)
         self.assertIn(f"{SPEC} (2 open)", out)
@@ -1546,6 +1557,183 @@ class CopySync(Project):
         self.assertEqual((self.root / ".claude" / "settings.json").read_text("utf-8"), before)
         self.assertNotIn("judge-updated", self.log())
 
+
+
+class SealedGate(Project):
+    """0.2.9: a sealed run speaks to the user once. luradb-web-client 2026-11-06: 25 status lines in the plugin's
+    words and three DOCKET DELIVERED reached the user, who asked half an hour later whether the run was done."""
+
+    HIDDEN = DisplayGate.HIDDEN
+    display = DisplayGate.display
+    record = DisplayGate.record
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login per Token\nstate: in-progress\n---\n# Login per Token\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, clock="2026-11-06 10:00")
+        self.docket.write_text("| 1 | login | `cargo test` | [x] |\n| 2 | logout | `cargo test` | [~] |\n", "utf-8")
+
+    def german_config(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| language | `Deutsch` | |\n", "utf-8")
+
+    def terminal(self, body="Login per Token: 1 of 2 points delivered, merged to next, run finished.\nNothing to do.",
+                 counts="1/2"):
+        return f"DOCKET DELIVERED {SPEC}\n{body}\nThe token login works, 3 tests green.\n{stamp(counts=counts)}"
+
+    def test_a_status_message_is_replaced_by_the_hooks_status_line(self):
+        shown = self.display("Three refiners running. Meanwhile checking loadEnv myself.")
+        self.assertIn("[docket] Login per Token: 1 of 2 points delivered, 1 deviating, 0 open", shown)
+        self.assertIn("2026-11-06 10:00", shown)
+        self.assertNotIn("refiners", shown)
+        self.assertEqual(self.record()["hidden"], [])  # not held back: the Stop hook asks for no rewrite
+        # Also after a refusal (retry): the orchestrator's answer to the Stop hook is not for the user either.
+        (self.root / ".claude" / "docket" / f"display-{SID}.json").write_text(
+            json.dumps({"hidden": [], "pending": {}, "retry": True}), "utf-8")
+        self.assertIn("[docket] Login per Token", self.display(f"Fixer running.\n{hstamp()}", message_id="m2"))
+
+    def test_status_line_in_german_before_the_docket_exists(self):
+        self.docket.unlink()
+        self.german_config()
+        shown = self.display("Reading the required files first.")
+        self.assertEqual(shown, "[docket] Login per Token: Vorbereitung: Spec wird gelesen und gegen den Code geprüft"
+                                " · Lauf läuft · 2026-11-06 10:00")
+
+    def test_a_terminal_message_the_stop_hook_would_refuse_is_held_back(self):
+        broken = f"DOCKET DELIVERED {SPEC}\nPoint 1: the fixer flipped the docket row.\n{stamp(counts='1/2')}"
+        self.assertEqual(self.display(broken), self.HIDDEN)
+        held = self.record()["hidden"][0]["problems"]
+        self.assertTrue(any("title `Login per Token`" in p for p in held), held)
+        self.assertTrue(any("Du musst" in p for p in held), held)
+        code, err, _ = self.stop(broken)
+        self.assertEqual(code, 2)
+        self.assertIn("held back and never shown", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_clean_terminal_message_is_shown_and_the_hook_adds_its_closing_line(self):
+        text = self.terminal()
+        self.assertEqual(self.display(text), text)
+        (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
+            "---\nid: s-aaaa1111\ntitle: Logout\nstate: ready\n---\n", "utf-8")
+        code, err, out = self.stop(text)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["mode"], "closed")
+        closing = json.loads(out)["systemMessage"]
+        self.assertEqual(closing, "[docket] Login per Token: delivered 1/2, run finished, session closed. "
+                                  "next spec in state ready: s-aaaa1111 (Logout), in a new session with /docket:implement s-aaaa1111.")
+
+    def test_closing_line_in_german_names_no_next_spec_when_none_is_ready(self):
+        self.german_config()
+        text = (f"DOCKET BLOCKED {SPEC}\nLogin per Token: 1 von 2 Punkten geliefert, Lauf abgebrochen.\n"
+                f"Du musst Docker starten, dann den Lauf erneut beginnen.\n{stamp(counts='1/2')}")
+        code, err, out = self.stop(text)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["systemMessage"],
+                         f"[docket] Login per Token: blockiert bei 1/2, Lauf beendet; /docket:implement {SPEC} nimmt ihn wieder auf. "
+                         "Keine weitere Spec im Zustand ready.")
+
+    def test_terminal_message_about_hooks_or_in_the_wrong_language_is_refused(self):
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin per Token: done.\nNothing to do.\n"
+                                 f"Note: the append-only hook objected to those edits.\n{stamp(counts='1/2')}")
+        self.assertEqual(code, 2)
+        self.assertIn("nothing about hooks", err)
+        self.german_config()
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, _ = self.stop(self.terminal())
+        self.assertEqual(code, 2)
+        self.assertIn("not in Deutsch", err)
+        self.set_state(mode="sealed", spec=SPEC)
+        german = (f"DOCKET DELIVERED {SPEC}\nLogin per Token: 1 von 2 Punkten geliefert, auf next gemerged, Lauf beendet.\n"
+                  f"Nichts zu tun.\nDer Login mit Token funktioniert, drei Tests sind grün (`cargo test` → 3 passed).\n"
+                  f"{stamp(counts='1/2')}")
+        code, err, _ = self.stop(german)
+        self.assertEqual(code, 0, err)
+
+
+class Language(Project):
+    """0.2.9: DOCKET.md `language` is the language of every message to the user; the gate holds another back."""
+
+    def setUp(self):
+        super().setUp()
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| language | `Deutsch` | |\n", "utf-8")
+
+    def display(self, delta, message_id="m1"):
+        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": message_id,
+                                                         "index": 0, "final": True, "delta": delta}, self.p)
+        self.assertEqual(code, 0, err)
+        return json.loads(out)["hookSpecificOutput"]["displayContent"] if out.strip() else None
+
+    def test_an_english_message_in_concept_mode_is_held_back_and_a_german_one_shown(self):
+        self.set_state(mode="concept")
+        english = f"The default stays at 512 and the cache is not touched by this change (config_reference.md).\n{hstamp()}"
+        self.assertEqual(self.display(english), DisplayGate.HIDDEN)
+        code, err, _ = self.stop(english)
+        self.assertEqual(code, 2)
+        self.assertIn("not in Deutsch", err)
+        german = f"Der Standard bleibt bei 512 und der Cache wird von dieser Änderung nicht berührt (config_reference.md).\n{hstamp()}"
+        self.prompt("weiter")
+        self.assertEqual(self.display(german, message_id="m2"), german)
+        self.assertEqual(self.stop(german)[0], 0)
+
+    def test_code_and_short_texts_are_not_judged_and_the_prompt_names_the_language(self):
+        self.set_state(mode="concept")
+        code_heavy = f"Der Befehl ist `npm run check && npm test --reporter dot` (package.json).\n{hstamp()}"
+        self.assertEqual(self.stop(code_heavy)[0], 0)
+        self.assertEqual(self.stop(f"Done.\n{hstamp()}")[0], 0)
+        _, _, out = self.prompt("/docket:concept")
+        self.assertIn("written in Deutsch", out)
+        (self.work / "DOCKET.md").write_text("# DOCKET\n", "utf-8")
+        _, _, out = self.prompt("/docket:concept")
+        self.assertNotIn("written in", out)
+
+
+class CitationsAtWrite(Project):
+    """0.2.9: a docket line that cites a `file:line` which does not exist undoes the write (luradb-web-client
+    2026-11-06: refinement lines cited paths relative to concept/, DELIVERED refused them, the correction broke
+    append-only; three DELIVERED attempts)."""
+
+    def post(self, path, tool="Edit"):
+        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": tool,
+                                             "tool_input": {"file_path": str(path)}}, self.p)
+
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+        (self.root / "src").mkdir()
+        (self.root / "src" / "auth.rs").write_text("a\nb\nc\n", "utf-8")
+
+    def test_a_new_line_with_a_missing_location_undoes_the_edit(self):
+        before = "# Docket\n## Refinement\n- feasibility: ok, see src/auth.rs:2\n"
+        self.docket.write_text(before, "utf-8")
+        self.tool("Edit", file_path=str(self.docket))  # snapshot
+        self.docket.write_text(before + "- concept: AGENTS.md:22 says so\n", "utf-8")
+        code, err, _ = self.post(self.docket)
+        self.assertEqual(code, 2)
+        self.assertIn("undone", err)
+        self.assertIn("AGENTS.md:22", err)
+        self.assertIn("relative to the repo root", err)
+        self.assertEqual(self.docket.read_text("utf-8"), before)
+        self.assertIn("docket-undone", self.log())
+        self.tool("Edit", file_path=str(self.docket))
+        self.docket.write_text(before + "- concept: src/auth.rs:3 says so\n", "utf-8")
+        self.assertEqual(self.post(self.docket)[0], 0)
+
+    def test_a_skeleton_with_a_missing_location_is_removed(self):
+        self.docket.write_text("# Docket\n- feasibility: see src/gone.rs:1\n", "utf-8")
+        code, err, _ = self.post(self.docket, tool="Write")
+        self.assertEqual(code, 2)
+        self.assertFalse(self.docket.exists())
+
+    def test_delivered_checks_the_evidence_sections_only(self):
+        # A refinement line written before 0.2.9 may cite a location that is gone: it never forces an in-place edit.
+        self.docket.write_text("## Refinement\n- concept: see docs/old.md:3\n## Evidence\n- point 1: `cargo test` → ok, src/auth.rs:2\n"
+                               "| 1 | login | x | [x] |\n", "utf-8")
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works.\nNothing to do.\n{stamp()}")
+        self.assertEqual(code, 0, err)
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("## Refinement\n- fine\n## Evidence\n- point 1: see src/auth.rs:9\n| 1 | login | x | [x] |\n", "utf-8")
+        code, err, _ = self.stop(f"DOCKET DELIVERED {SPEC}\nLogin works.\nNothing to do.\n{stamp()}")
+        self.assertEqual(code, 2)
+        self.assertIn("src/auth.rs:9", err)
 
 
 if __name__ == "__main__":

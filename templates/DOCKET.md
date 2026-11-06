@@ -13,6 +13,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | reference_roots | `<docs/, README.md, ...>` (what IS; specs say what SHOULD) | |
 | model_ladder | fixer: claude-haiku-5-5 · implementer round 1: claude-sonnet-5-5 · round 2+: claude-opus-5-5 · refiners: claude-sonnet-5-5 | |
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |
+| language | `<language of every message to the user, e.g. "Deutsch" or "English"; the hooks' own lines follow it>` | question 8 |
 | ci | `<how CI is waited for and read, or "none">` | |
 | push_branch | `<regex the pushed branch must match, e.g. "feature/.*" or "main">` | question 1 |
 | commit_regex | `<regex for the first line of a commit message; escape pipes as \|>` | question 2 |
@@ -31,7 +32,7 @@ Answers to the eleven questions, or a pointer to the project file that already a
 5. Gate before merge:
 6. Release:
 7. Storage of specs and dockets:
-8. Language:
+8. Language (of the repo: code, comments, docs, commits; and of the messages to the user, key `language`):
 9. Commenting:
 10. Forbidden paths and content:
 11. External systems an agent may touch without approval:

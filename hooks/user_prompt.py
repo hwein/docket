@@ -14,9 +14,9 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (SPEC_ID, Paths, clock_line, display_path, load_state, lock_holder, log_event, read_input, refuse,
-                        save_display, save_state, set_context, set_spec_state, strip_harness_blocks, take_lock,
-                        violations_line)
+from docket_lib import (SPEC_ID, Paths, clock_line, config_values, display_path, load_state, lock_holder, log_event,
+                        read_input, refuse, save_display, save_state, set_context, set_spec_state, strip_harness_blocks,
+                        take_lock, violations_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
@@ -33,8 +33,11 @@ REMINDERS = {
     "init": ("Audit first, ask second: evidence from the repo with its source for every question; cards only where "
              "the repo is silent or contradicts itself. Write nothing before the diff is approved."),
     "sealed": ("The spec is sealed. No questions to the user; defaults plus a 'deviation' line in the docket. "
-               "Nothing you did not fetch yourself is a fact. The turn ends with exactly one message: "
-               "DOCKET DELIVERED, DOCKET BLOCKED or DOCKET DISSENT, last line `stamp: YYYY-MM-DD HH:MM <spec-id> "
+               "Nothing you did not fetch yourself is a fact. The user sees none of your messages during the run "
+               "(the hook shows a status line instead), only the terminal message: DOCKET DELIVERED, DOCKET BLOCKED "
+               "or DOCKET DISSENT, line 2 the spec's title and the result in one sentence, line 3 what only the user "
+               "must do (`Du musst …` / `You must …`) or `Nichts zu tun` / `Nothing to do`, then one line per point "
+               "named by its content, nothing about hooks, last line `stamp: YYYY-MM-DD HH:MM <spec-id> "
                "<delivered>/<points>` with the docket's current counts."),
     "rewrite": ("Rewrite mode: only the conceptor agent edits the named spec, and it records the rewrite with date "
                 "and reason in the spec."),
@@ -95,11 +98,16 @@ def main():
         save_state(paths, session_id, state)
 
     if name == "implement":
-        found = SPEC_ID.search(rest)
+        found = list(dict.fromkeys(SPEC_ID.findall(rest)))
         if not found:
             return refuse("[docket] /docket:implement needs a spec id (s-xxxxxxxx). Run /docket:register to see "
                           "the register.")
-        spec_id = found.group(0)
+        if len(found) > 1:
+            # luradb-web-client 2026-11-06: five ids in one call, the first was sealed, four vanished without a word.
+            return refuse(f"[docket] /docket:implement takes one spec per run; given: {', '.join(found)}. "
+                          f"Start with `/docket:implement {found[0]}`; the next one gets a run of its own in a new "
+                          "session once this one is closed.")
+        spec_id = found[0]
         if state.get("mode") in ("sealed", "rewrite") and state.get("spec") != spec_id:
             return refuse(f"[docket] This session is sealed on {state.get('spec')}. Finish it or run /docket:stop.")
         holder = lock_holder(paths, spec_id)
@@ -148,6 +156,10 @@ def main():
                      + ". " + REMINDERS.get(mode, ""))
         if mode != "concept":
             lines.append(ambition())  # in concept mode it pushed past the stop (legacy session 2026-11-05)
+        language = config_values(paths).get("language", "")
+        if language:
+            lines.append(f"[docket] Every message to the user is written in {language} (DOCKET.md `language`); "
+                         "the hook refuses a message in another language. Agents are briefed in the language of the spec.")
     if name == "concept" and asks_for_specs(rest):
         lines.append(SPEC_REQUEST_LINE)  # with the command that carries the order; it stays in the context
     if mode != "none" or os.path.isfile(paths.config):

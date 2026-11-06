@@ -158,6 +158,158 @@ def check_commands(paths):
     return []
 
 
+def language_code(paths):
+    """The language of every message to the user, DOCKET.md `language`: "de" or "en" ("" when unset).
+    The hooks' own lines to the user (status line, closing line) follow it; the model is told the name."""
+    name = config_values(paths).get("language", "").lower()
+    if not name:
+        return ""
+    return "de" if name.startswith(("de", "ger")) else "en"
+
+
+SAY = {
+    "de": {
+        "preparing": "Vorbereitung: Spec wird gelesen und gegen den Code geprüft",
+        "rewrite": "Spec wird vom Konzept-Agenten umgeschrieben",
+        "points": "{x} von {n} Punkten geliefert, {d} abweichend, {o} offen",
+        "running": "Lauf läuft",
+        "delivered": "geliefert {x}/{n}, Lauf beendet, Sitzung geschlossen",
+        "blocked": "blockiert bei {x}/{n}, Lauf beendet; /docket:implement {spec} nimmt ihn wieder auf",
+        "dissent": "Dissens bei {x}/{n}, Lauf beendet; die Entscheidung steht in der Nachricht darüber",
+        "next": "Nächste Spec im Zustand ready: {spec} ({title}), in einer neuen Sitzung mit /docket:implement {spec}",
+        "none_ready": "Keine weitere Spec im Zustand ready",
+    },
+    "en": {
+        "preparing": "preparing: the spec is read and checked against the code",
+        "rewrite": "the spec is being rewritten by the conceptor",
+        "points": "{x} of {n} points delivered, {d} deviating, {o} open",
+        "running": "run in progress",
+        "delivered": "delivered {x}/{n}, run finished, session closed",
+        "blocked": "blocked at {x}/{n}, run finished; /docket:implement {spec} resumes it",
+        "dissent": "dissent at {x}/{n}, run finished; the decision is in the message above",
+        "next": "next spec in state ready: {spec} ({title}), in a new session with /docket:implement {spec}",
+        "none_ready": "no further spec in state ready",
+    },
+}
+
+
+def say(paths, key, **values):
+    return SAY[language_code(paths) or "en"][key].format(**values)
+
+
+def spec_title(paths, spec_id):
+    path = paths.spec_file(spec_id)
+    return frontmatter(path).get("title", "") if path else ""
+
+
+def ready_specs(paths):
+    """(id, title) of every spec in state ready, by path."""
+    found = []
+    if not os.path.isdir(paths.specs):
+        return found
+    for topic in sorted(os.listdir(paths.specs)):
+        folder = posixpath.join(paths.specs, topic)
+        if not os.path.isdir(folder):
+            continue
+        for name in sorted(os.listdir(folder)):
+            if name.lower().endswith(".md"):
+                fields = frontmatter(posixpath.join(folder, name))
+                if fields.get("state", "").lower() == "ready" and SPEC_ID.fullmatch(fields.get("id", "")):
+                    found.append((fields["id"], fields.get("title", "")))
+    return found
+
+
+def docket_counts(paths, spec_id):
+    docket = paths.docket_file(spec_id)
+    if not docket:
+        return None
+    try:
+        with open(docket, encoding="utf-8-sig", errors="ignore") as handle:
+            return point_counts(handle.read())
+    except OSError:
+        return None
+
+
+def status_line(paths, state):
+    """What the user sees instead of an orchestrator's message in a sealed run: title, points, clock."""
+    spec_id = state.get("spec", "")
+    counts = docket_counts(paths, spec_id)
+    if state.get("mode") == "rewrite":
+        progress = say(paths, "rewrite")
+    elif counts is None:
+        progress = say(paths, "preparing")
+    else:
+        progress = say(paths, "points", x=counts["x"], n=counts["x"] + counts["~"] + counts[" "], d=counts["~"],
+                       o=counts[" "])
+    title = spec_title(paths, spec_id) or spec_id
+    return f"[docket] {title}: {progress} · {say(paths, 'running')} · {state.get('clock', '')}".rstrip(" ·")
+
+
+def closing_line(paths, state, kind):
+    """The hook's own line after a terminal message: what happened and what comes next, in the project's language."""
+    spec_id = state.get("spec", "")
+    counts = docket_counts(paths, spec_id) or {"x": 0, "~": 0, " ": 0}
+    title = spec_title(paths, spec_id) or spec_id
+    outcome = say(paths, kind, x=counts["x"], n=counts["x"] + counts["~"] + counts[" "], spec=spec_id)
+    following = [(s, t) for s, t in ready_specs(paths) if s.lower() != spec_id.lower()]
+    tail = say(paths, "next", spec=following[0][0], title=following[0][1]) if following else say(paths, "none_ready")
+    return f"[docket] {title}: {outcome}. {tail}."
+
+
+FILE_LINE = re.compile(r"(?<![\w/:])((?:[\w.-]+/)*[\w.-]+\.[a-z]{1,5}):(\d{1,6})\b", re.IGNORECASE)
+
+
+def missing_citations(text, paths):
+    """Every `path/file.ext:line` in the text that does not exist (relative to the repo root or the work dir) or
+    has fewer lines, at most six."""
+    missing = []
+    for match in FILE_LINE.finditer(text):
+        rel, line = match.group(1), int(match.group(2))
+        candidates = [posixpath.join(paths.root, rel), posixpath.join(paths.work, rel), rel]
+        found = next((c for c in candidates if os.path.isfile(c)), None)
+        if found is None:
+            missing.append(f"{rel}:{line}")
+            continue
+        try:
+            with open(found, encoding="utf-8", errors="ignore") as handle:
+                count = sum(1 for _ in handle)
+        except OSError:
+            continue
+        if line > count:
+            missing.append(f"{rel}:{line} (file has {count} lines)")
+    return sorted(set(missing))[:6]
+
+
+# Language check: the message to the user is in the configured language. Function words decide; code spans and
+# URLs do not count. "in" and "an" stand in both lists and are left out.
+WORDS = {
+    "de": re.compile(r"\b(der|die|das|und|ist|nicht|mit|auf|für|ein|eine|den|dem|sind|wird|von|zu|im|bei|nach|"
+                     r"noch|auch|wurde|wurden|keine|kein|nur|oder|wie|als|aus|sich|du|musst|nichts|offen|fertig)\b",
+                     re.IGNORECASE),
+    "en": re.compile(r"\b(the|and|is|not|with|for|a|are|of|to|on|was|were|no|only|or|as|from|you|must|nothing|"
+                     r"still|also|now|open|done|it|this|that|by|at)\b", re.IGNORECASE),
+}
+
+
+def language_problem(text, paths):
+    """One problem when the text's function words are those of the other language, else []. Short texts
+    (fewer than eight words of prose) are not judged."""
+    code = language_code(paths)
+    if not code:
+        return []
+    prose = re.sub(r"`[^`\n]*`|https?://\S+|^stamp:.*$|^\[docket\].*$|^DOCKET (DELIVERED|BLOCKED|DISSENT).*$", "",
+                   text, flags=re.MULTILINE | re.IGNORECASE)
+    if len(prose.split()) < 8:
+        return []
+    other = "en" if code == "de" else "de"
+    mine, theirs = len(WORDS[code].findall(prose)), len(WORDS[other].findall(prose))
+    if theirs > mine:
+        name = config_values(paths).get("language", code)
+        return [f"the message is not in {name} (DOCKET.md `language`): write it in {name}; only `DOCKET …`, "
+                f"`stamp:` and quoted commands keep their form"]
+    return []
+
+
 def find_document(directory, doc_id):
     """The one file under <directory>/<topic>/ whose name starts with the id."""
     if not doc_id or not os.path.isdir(directory):

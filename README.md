@@ -66,7 +66,7 @@ Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`,
 | `/docket:init` | init | Audits the repo, asks you only where it is silent, writes `DOCKET.md` after your `go`. |
 | `/docket:concept` | concept | Thinks with you. One idea per message, one question at most. |
 | `/docket:spec` | spec | Turns the agreed WHAT into a spec with checkable done criteria, then `ready`. |
-| `/docket:implement <id>` | sealed | Runs the spec autonomously and ends with exactly one message. |
+| `/docket:implement <id>` | sealed | Runs one spec autonomously and ends with exactly one message; a second id is refused, the next spec gets a run of its own. |
 | `/docket:register` | | The register: concepts, specs, dockets, last LOG lines. |
 | `/docket:status` | | One line: mode, spec, open points, last LOG line. |
 | `/docket:stop` | | Ends a sealed run at the next checkpoint. |
@@ -77,15 +77,22 @@ Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`,
 2. A docket skeleton is pre-registered: one line per point with the evidence that will count.
 3. One implementer agent per point. The orchestrator reads every diff and runs the project check itself.
 4. Every delivered point gets its evidence line; what differs from the spec becomes a deviation line.
-5. The run ends with `DOCKET DELIVERED`, `DOCKET BLOCKED` or `DOCKET DISSENT`. The session is then closed.
+5. The run ends with `DOCKET DELIVERED`, `DOCKET BLOCKED` or `DOCKET DISSENT`: the spec's title and the result in
+   one sentence, then what only you have to do (or `Nothing to do`), then one line per point in everyday words, in
+   the language `DOCKET.md` sets. The hook closes the session and adds a line of its own: delivered how many of how
+   many, run finished, and the next spec in state `ready`.
 
-While it runs, your messages go to an inbox the orchestrator reads between points.
+While it runs you see none of the orchestrator's messages, only the hook's status line (title, points delivered,
+clock); your own messages go to an inbox the orchestrator reads between points.
 
 ## What the hooks enforce
 
 Hooks check provenance, form and state, never content.
 
-- Specs freeze at `ready`; the docket is append-only; `LOG.md` is written by hooks only.
+- Specs freeze at `ready`; the docket is append-only; `LOG.md` is written by hooks only. A docket line that cites a
+  `file:line` which does not exist is undone at once, so no citation has to be corrected in place later.
+- Every message to you is in the language `DOCKET.md` sets (`language`, question 8 of `/docket:init`); a message in
+  another language is held back and written again.
 - `DOCKET DELIVERED` passes only if every command of the project's check (as many as the project has, listed in
   `DOCKET.md`) ran after the last agent returned and none failed, every cited `file:line` exists, and every
   reference doc the spec names is updated or accounted for.
@@ -151,7 +158,7 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.8, an early stage of development, already in use in several repositories.
+0.2.9, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

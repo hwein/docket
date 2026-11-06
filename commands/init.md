@@ -12,7 +12,8 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    language, ticket numbers); way into the target branch (merged PRs vs direct commits, squash vs merge commits);
    who merges; gate before merge (workflows on pull_request, check scripts); release (tags, release workflow,
    CHANGELOG, version field); storage of specs and dockets (existing spec folders, external repos in CLAUDE.md);
-   language (comments, README, issues); commenting (comment lines per code line per language: sparse < 5 %,
+   language (comments, README, issues; and, as a question of its own, the language of every message to the user,
+   default the language the user writes in this session); commenting (comment lines per code line per language: sparse < 5 %,
    normal, verbose > 15 %; existing section markers); forbidden paths and content (.gitignore, guard hooks,
    CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules).
    Also: existing CLAUDE.md, AGENTS.md, CONTRIBUTING.md, hooks, commands, skills, permissions; the commands that
@@ -41,6 +42,9 @@ only where the repo is silent or contradicts itself. Nothing is written before t
    New repo: `git init`, remote (existing / create via `gh repo create` / none), all eleven questions.
    Questions 1, 2, 10 and 11 also become the configuration keys `push_branch`, `commit_regex`, `forbidden_paths`
    and `forbidden_commands` (regexes and globs the hooks enforce); a pipe inside a regex is written `\|`.
+   Question 8 also becomes `language`: the language of every message to the user in every mode; the hooks write
+   their own lines to the user (status line of a sealed run, closing line) in it and refuse a message in another
+   language.
 5. Show the diff and ask for the go. The hook refuses every write to DOCKET.md, CONTRIBUTING.md, CLAUDE.md,
    AGENTS.md, .gitignore and settings files until the user answers with the one word `go` (or ok, yes, ja); that
    answer is logged as `init-approved`. Then write, one LOG line. Re-runs show only findings whose fingerprint moved.

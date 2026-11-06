@@ -1,6 +1,6 @@
 ---
 description: "Implement mode: sealed, autonomous run of one ready spec. Refinement, pre-registered docket, implementer agents, checks you run yourself, one terminal message."
-argument-hint: "<spec id>"
+argument-hint: "<spec id> (one spec per run)"
 ---
 
 # Implement mode (sealed)
@@ -50,13 +50,16 @@ per spec point with the evidence line you will accept (`<command> → <expected>
 their decisions. The hook makes the file append-only from here, and it refuses the first implementer until the
 docket exists and every refinement line carries a decision (adopted / rejected / rewrite / dissent).
 Changing the acceptance line later is not allowed; a point that cannot meet it becomes `[~]`.
+Every `path/file.ext:line` in a docket line is relative to the repo root and must exist when the line is written:
+the hook undoes a write that cites a location it cannot find, so the docket never holds a citation that
+DELIVERED would refuse.
 
 ## 3. Points
 
 One fresh `implementer` per point, model from the ladder in DOCKET.md (round 1 sonnet, round 2+ opus; a point
-DOCKET.md marks complex starts at opus). Briefing: spec path and point number, docket path, the project rules
-quoted from DOCKET.md and CONTRIBUTING.md, at most three orchestrator hints, the report format (facts with source,
-`Unverified:` line). While an agent runs you change nothing in the repo.
+DOCKET.md marks complex starts at opus). Briefing, in the language of the spec: spec path and point number, docket
+path, the project rules quoted from DOCKET.md and CONTRIBUTING.md, at most three orchestrator hints, the report
+format (facts with source, `Unverified:` line). While an agent runs you change nothing in the repo.
 
 After each return: read the diff completely, run every command of the check from DOCKET.md yourself (verbatim as
 registered, one call each or together; the Stop hook refuses DOCKET DELIVERED unless each ran after the last agent
@@ -87,20 +90,30 @@ shown again at the next `/implement` of the spec.
 
 ## 5. Terminal message (the only message)
 
-Exactly one message, at most 25 lines, in everyday words, no hashes, no ids except the header:
+The user sees nothing you write during the run: the display hook replaces every message that is not the terminal
+one with a status line of its own (title, points delivered, clock). Text between tool calls is for you, not for the
+user; keep it to a few words. The terminal message is read by someone who did not watch the run and does not
+know the plugin's words: no "point 3", "refiner", "fixer", "flip", "docket row", nothing about hooks. Exactly
+one message, at most 25 lines, in the language DOCKET.md sets (`language`), in everyday words, no hashes, no ids
+except the header and the stamp:
 
 ```
 DOCKET DELIVERED <spec id>        (or DOCKET BLOCKED <spec id> / DOCKET DISSENT <spec id>)
-<one sentence per point: what works now, with its evidence in words>
-<one sentence per deviation: what differs and why>
-<one sentence per reference doc updated>
-<blocker or dissent: what only the user can resolve, two positions with source for dissent>
+<the spec's title>: <the result in one sentence: points delivered of all, where the work is (merged to …, pushed, CI), run finished>
+Du musst … / You must …: <each step only the user can take>        (or: Nichts zu tun / Nothing to do)
+<one line per point, named by what it does, not by its number: what works now, with its evidence in words; a
+ point that differs from the spec says what differs and why>
+<one line per reference doc updated>
+<dissent: two positions, one sentence each with source>
 stamp: YYYY-MM-DD HH:MM <spec id> <delivered>/<points>
 ```
 
-The stamp is the time of the latest `[docket] clock:` line the hooks give with every prompt and tool result, or
-fetched from the clock at the moment of writing, never remembered, and ends with the docket's counts
-(`[x]` boxes / all points) read from the docket, not remembered. The hook refuses the message otherwise and closes
-the session on success; afterwards you answer only from the docket. A message that ends a turn while agents still
-run in the background (a wait) also ends with `stamp: YYYY-MM-DD HH:MM`. The spec's own state follows the run:
-the hooks set `in-progress` on sealing, `done` on DELIVERED, `ready` again after BLOCKED or DISSENT.
+The hook checks line 2 for the spec's title, one line starting with `Du musst` / `You must` / `Nichts zu tun` /
+`Nothing to do`, no line about hooks, the language, and the stamp: the time of the latest `[docket] clock:` line
+the hooks give with every prompt and tool result, or fetched from the clock at the moment of writing, never
+remembered, ending with the docket's counts (`[x]` boxes / all points) read from the docket, not remembered. The
+hook refuses the message otherwise (the user has not seen it) and closes the session on success with a closing
+line of its own that names the next spec in state `ready`; afterwards you answer only from the docket. A message
+that ends a turn while agents still run in the background (a wait) also ends with `stamp: YYYY-MM-DD HH:MM`. The
+spec's own state follows the run: the hooks set `in-progress` on sealing, `done` on DELIVERED, `ready` again after
+BLOCKED or DISSENT.

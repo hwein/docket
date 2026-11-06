@@ -19,6 +19,7 @@ the user saw: a missing stamp is answered with the stamp line alone, a broken ru
 lines. Only a message the display gate (message_display.py) held back is written again in full;
 that refusal is made even on a second pass, because the user has seen nothing yet.
 """
+import json
 import os
 import posixpath
 import re
@@ -27,11 +28,11 @@ from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (JUDGE_ACK, Paths, box_questions, check_commands, collect_judge, config_values, hook_outputs,
-                        load_state,
-                        log_event, log_lines, log_time, message_text, point_counts, previous_turn_texts, read_input,
-                        refuse, release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
-                        transcript_blocks)
+from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, box_questions, check_commands, closing_line, collect_judge,
+                        config_values, hook_outputs, language_problem, load_state, log_event, log_lines, log_time,
+                        message_text, missing_citations, point_counts, previous_turn_texts, read_input, refuse,
+                        release_lock, save_display, save_state, set_context, set_spec_state, settled_display,
+                        spec_title, transcript_blocks)
 
 TERMINAL = re.compile(r"^DOCKET (DELIVERED|BLOCKED|DISSENT)\s+(s-[0-9a-f]{8})\b", re.IGNORECASE)
 STAMP = re.compile(r"^stamp:\s*(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})\s+(s-[0-9a-f]{8})(?:\s+(\d+)/(\d+))?\s*$",
@@ -58,13 +59,19 @@ ROADMAP = re.compile(r"\b(next,? i will|afterwards i will|then i will|als n[äa]
 PROPOSAL = re.compile(r"\b(i suggest|i propose|should we|shall i|vorschlag|soll ich|wollen wir)\b", re.IGNORECASE)
 SELF = re.compile(r"\b(sorry|apologi[sz]e|my mistake|my fault|took me|i spent|this took|hours of work|"
                   r"entschuldig\w*|tut mir leid|mein fehler|leider)\b", re.IGNORECASE)
-FILE_LINE = re.compile(r"(?<![\w/:])((?:[\w.-]+/)*[\w.-]+\.[a-z]{1,5}):(\d{1,6})\b", re.IGNORECASE)
-BLOCKER = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\b", re.IGNORECASE)
+# Line 3 of a terminal message: what only the user must do, or that nothing is left to them (either language).
+ACTION_LINE = re.compile(r"^\s*(?:\*\*)?(du musst|you must|nichts zu tun|nothing to do)\b", re.IGNORECASE)
+# Sections of the docket whose citations are checked at DELIVERED; refinement lines were checked when written.
+EVIDENCE_SECTIONS = ("Evidence", "Deviations", "Reference update")
+BLOCKER =re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\b", re.IGNORECASE)
 BLOCKER_UNCHANGED = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\s+(?:unver[äa]ndert|unchanged)(?:\*\*)?[.!]?\s*$",
                                re.IGNORECASE)
 TOLERANCE = timedelta(minutes=5)
 MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 8, "sealed": 25}
-GATED_MODES = ("concept", "spec", "init", "closed")  # the display gate holds messages back in these modes
+# The display gate holds messages back in these modes; in sealed and rewrite it also replaces every message
+# that is not the terminal one with a status line of its own (luradb-web-client 2026-11-06: 25 status lines in
+# the plugin's words and three DOCKET DELIVERED reached the user).
+GATED_MODES = ("concept", "spec", "init", "closed", "sealed", "rewrite")
 
 
 def main():
@@ -107,13 +114,19 @@ def main():
         else:
             problems = sealed_problems(text, state, paths, hook_input)
             if not problems:
-                close(paths, session_id, state, text)
+                kind = close(paths, session_id, state, text)
+                if display is not None and display["retry"]:
+                    display["retry"] = False
+                    save_display(paths, session_id, display)
+                # The hook's own closing line to the user: what happened and what comes next, in the project's
+                # language (the user asked "ist alles fertig?" 32 minutes after DELIVERED, luradb-web-client 2026-11-06).
+                print(json.dumps({"systemMessage": closing_line(paths, state, kind)}))
                 return 0
     elif mode == "closed":
-        problems = closed_problems(text, clock)
+        problems = closed_problems(text, clock, paths)
     else:
         transcript = hook_input.get("transcript_path")
-        problems = (human_problems(text, mode, clock) + repeat_problems(text, transcript)
+        problems = (human_problems(text, mode, clock, paths) + repeat_problems(text, transcript)
                     + box_problems(text, transcript) + hook_quote_problems(text, transcript))
     if any("stamp is" in problem for problem in problems):
         state.update({"degraded": True, "read": []})  # a lost watermark means the rules blurred
@@ -164,6 +177,8 @@ def sealed_problems(text, state, paths, hook_input):
                         f"`DOCKET DISSENT {spec_id}` (a sealed run ends only with a terminal state)")
     elif head.group(2).lower() != spec_id.lower():
         problems.append(f"the terminal line names {head.group(2)}, this session is sealed on {spec_id}")
+    if head is not None:
+        problems += terminal_form_problems(lines, spec_id, paths)
     docket = paths.docket_file(spec_id)
     delivered = bool(head) and head.group(1).upper() == "DELIVERED"
     counts = None
@@ -205,6 +220,32 @@ def sealed_problems(text, state, paths, hook_input):
     return problems
 
 
+def terminal_form_problems(lines, spec_id, paths):
+    """The terminal message is read by someone who did not watch the run (luradb-web-client 2026-11-06: twelve
+    lines of `Point n` and hook internals, no title, no `finished`, the user asked half an hour later whether
+    the run was done): line 2 names the spec by its title, one line says what only the user must do or that
+    nothing is left, no line explains hooks, and the whole is in the project's language."""
+    problems = []
+    title = " ".join(spec_title(paths, spec_id).split()).lower()
+    if title and (len(lines) < 2 or title not in " ".join(lines[1].split()).lower()):
+        problems.append(f"line 2 names the spec by its title `{spec_title(paths, spec_id)}` and the result in one "
+                        "sentence (points delivered of all, where the work is, run finished)")
+    body = lines[1:-1] if len(lines) > 2 else []
+    if not any(ACTION_LINE.match(line) for line in body):
+        problems.append("one line starts with `Du musst` / `You must` (what only the user has to do, each step) or "
+                        "`Nichts zu tun` / `Nothing to do`")
+    if any(HOOK_WORD.search(line) for line in body):
+        problems.append("nothing about hooks in the terminal message: say what is true now, not how it was checked")
+    problems += language_problem("\n".join(body), paths)
+    return problems
+
+
+def section_text(body, title):
+    match = re.search(r"^##\s+" + re.escape(title) + r"\b.*?$(.*?)(?=^##\s|\Z)", body,
+                      re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
 def provenance_problems(body, spec_id, paths, hook_input):
     """The evidence standard, checked at the one moment it matters: DOCKET DELIVERED.
 
@@ -235,23 +276,13 @@ def provenance_problems(body, spec_id, paths, hook_input):
                 problems.append(f"the check `{command}` last ran before the last agent returned; run it again yourself")
             elif runs[-1][1].get("id") in failed:
                 problems.append(f"the check `{command}` failed in its last run; the point is not delivered")
-    missing = []
-    for match in FILE_LINE.finditer(body):
-        rel, line = match.group(1), int(match.group(2))
-        candidates = [posixpath.join(paths.root, rel), posixpath.join(paths.work, rel), rel]
-        found = next((c for c in candidates if os.path.isfile(c)), None)
-        if found is None:
-            missing.append(f"{rel}:{line}")
-            continue
-        try:
-            with open(found, encoding="utf-8", errors="ignore") as handle:
-                count = sum(1 for _ in handle)
-        except OSError:
-            continue
-        if line > count:
-            missing.append(f"{rel}:{line} (file has {count} lines)")
+    # Citations are checked when a docket line is written (post_tool_use, the write is undone otherwise); here only
+    # the evidence sections, so an old refinement line never forces an in-place edit of an append-only docket
+    # (luradb-web-client 2026-11-06: three DELIVERED attempts, seven append-only violations).
+    evidence = "\n".join(section_text(body, title) for title in EVIDENCE_SECTIONS)
+    missing = missing_citations(evidence if evidence.strip() else body, paths)
     if missing:
-        problems.append("cited locations that do not exist: " + ", ".join(sorted(set(missing))[:6]))
+        problems.append("cited locations that do not exist: " + ", ".join(missing))
     problems += reference_problems(body, spec_id, paths)
     problems += ci_problems(body, paths, blocks)
     return problems
@@ -434,6 +465,7 @@ def close(paths, session_id, state, text):
     # The spec's own state follows the terminal state: done when delivered, ready again otherwise.
     set_spec_state(paths, state.get("spec", ""), "done" if kind == "delivered" else "ready")
     log_event(paths, session_id, state.get("spec", ""), kind, "closed")
+    return kind
 
 
 def without_stamp(text):
@@ -441,21 +473,23 @@ def without_stamp(text):
     return "\n".join(lines[:-1]) if lines and WATERMARK.match(lines[-1]) else text
 
 
-def human_problems(text, mode, clock=""):
-    return watermark_problems(lines_of(text), clock=clock) + content_problems(text, mode)
+def human_problems(text, mode, clock="", paths=None):
+    return watermark_problems(lines_of(text), clock=clock) + content_problems(text, mode, paths)
 
 
-def closed_problems(text, clock=""):
-    return watermark_problems(lines_of(text), clock=clock) + content_problems(text, "closed")
+def closed_problems(text, clock="", paths=None):
+    return watermark_problems(lines_of(text), clock=clock) + content_problems(text, "closed", paths)
 
 
-def content_problems(text, mode):
+def content_problems(text, mode, paths=None):
     """The rules of the register without the stamp; the display gate holds a message back for these."""
     if mode == "closed":
-        return closed_content_problems(text)
+        return closed_content_problems(text) + (language_problem(without_stamp(text), paths) if paths else [])
     lines = lines_of(text)
     problems = []
     text = without_stamp(text)
+    if paths is not None:
+        problems += language_problem(text, paths)
     if len(lines) > MAX_LINES.get(mode, 30):
         problems.append(f"at most {MAX_LINES.get(mode, 30)} lines; extensive findings go into a file")
     if HASH_IN_TEXT.search(text):

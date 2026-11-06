@@ -13,6 +13,10 @@ it runs after the message is on the screen, so a rewrite shows the message twice
   answer to a refusal is never held back and nothing is lost.
 - The terminal client streams a message in batches; each batch is held until the last one, then the
   whole message is shown at once. Claude Code Desktop and the SDK send one batch per message.
+- In a sealed run (sealed, rewrite) every message that does not begin with `DOCKET DELIVERED|BLOCKED|DISSENT`
+  is replaced by the hook's status line (title, points, clock, in the project's language); a terminal message is
+  held back while the Stop hook would refuse it, so the user sees one terminal message, not three
+  (luradb-web-client 2026-11-06).
 - The judge's verdict is answered with an empty turn (templates/judge-hook.json), so there is nothing to hide.
   An older acknowledgement line `[docket] noted` is still hidden live; the desktop app renders the transcript's
   original text when a session is opened later (experiment 10), so hiding is not durable and the empty answer is
@@ -27,8 +31,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from docket_lib import (HIDDEN, SESSION_ID, Paths, answers_judge, buffer_path, load_display, load_state, read_input,
-                        save_display)
-from stop import GATED_MODES, WATERMARK, box_problems, content_problems, lines_of
+                        save_display, status_line)
+from stop import GATED_MODES, TERMINAL, WATERMARK, box_problems, content_problems, lines_of, sealed_problems
 
 
 def show(text):
@@ -46,11 +50,13 @@ def main():
     session_id = hook_input.get("session_id")
     if os.path.isfile(paths.config) and answers_judge(hook_input.get("transcript_path")):
         return show(HIDDEN)  # the acknowledgement of a judge verdict: the user has read the message it answers
-    mode = load_state(paths, session_id).get("mode", "none")
+    state = load_state(paths, session_id)
+    mode = state.get("mode", "none")
     if mode not in GATED_MODES or not os.path.isfile(paths.config):
         return 0
     record = load_display(paths, session_id)
-    if record.get("retry"):
+    sealed = mode in ("sealed", "rewrite")
+    if record.get("retry") and not sealed:
         return 0
     final = bool(hook_input.get("final"))
     buffer = buffer_path(paths, session_id, message_id)
@@ -74,7 +80,22 @@ def main():
     record = load_display(paths, session_id)
     record["pending"].pop(message_id, None)
     lines = lines_of(text)
-    problems = (content_problems(text, mode) + box_problems(text, hook_input.get("transcript_path"))
+    if sealed:
+        # A sealed run speaks to the user once. Everything else the orchestrator writes (status between tool
+        # calls, waits for agents, answers to the Stop hook) is replaced by the hook's status line; the terminal
+        # message is shown only when the Stop hook will accept it, so the user sees one DOCKET line, not three.
+        save_display(paths, session_id, record)
+        if not lines or not TERMINAL.match(lines[0]):
+            return show(status_line(paths, state))
+        if record.get("retry"):
+            return 0
+        problems = sealed_problems(text, state, paths, hook_input)
+        if problems:
+            record["hidden"].append({"at": time.time(), "problems": problems})
+            save_display(paths, session_id, record)
+            return show(HIDDEN)
+        return show(text)
+    problems = (content_problems(text, mode, paths) + box_problems(text, hook_input.get("transcript_path"))
                 if lines and WATERMARK.match(lines[-1]) else [])
     if problems:
         record["hidden"].append({"at": time.time(), "problems": problems})

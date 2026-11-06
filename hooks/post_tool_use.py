@@ -6,7 +6,9 @@ was allowed by the user in the dialog: LOG `grant` (M1). So was a concept-mode w
 
 Dockets are append-only: after an edit every previous line (snapshot taken in pre_tool_use) must
 still be there, in order. A violation is reported to the model with exit 2 and logged; the hook
-cannot undo it, the model must restore the lines. Point flips `[ ]` -> `[x]` / `[~]` become LOG
+cannot undo it, the model must restore the lines. New lines that cite a `file:line` which does not
+exist undo the write (the snapshot is restored, a skeleton removed): a citation is checked at the one
+moment the line may still change. Point flips `[ ]` -> `[x]` / `[~]` become LOG
 events (point-delivered, deviation): the LOG knows every point, written by the hook only.
 
 Specs: the ready gate. A spec whose state became `ready` must have a verifiable criterion for
@@ -23,7 +25,7 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (Paths, absolute, clock_line, config_values, frontmatter, load_state, log_event, log_has,
-                        read_input, refuse, set_context, under)
+                        missing_citations, read_input, refuse, set_context, under)
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b|==)", re.IGNORECASE)
@@ -84,19 +86,45 @@ def docket_check(path, paths, session_id):
     except OSError:
         return 0
     if not os.path.isfile(snap):
-        log_points(paths, session_id, spec_id, "", after)
-        return 0
+        before = None  # the skeleton: no earlier version
+    else:
+        try:
+            with open(snap, encoding="utf-8-sig", errors="ignore") as handle:
+                before = handle.read().rstrip()
+        except OSError:
+            return 0
+    if before is not None and not (after.startswith(before) or before_lines_kept(before, after)):
+        log_event(paths, session_id, spec_id, "docket-rewritten", "append-only violated")
+        return refuse("[docket] The docket is append-only. Restore every previous line unchanged and add your "
+                      "change as new lines below; a point changes state by a new line, never by editing the old one.")
+    missing = missing_citations("\n".join(new_lines(before or "", after)), paths)
+    if missing:
+        # Checked now, at the one moment a line may still change: once written, the docket is append-only, and a
+        # citation found wrong at DELIVERED forced an in-place edit against that rule (luradb-web-client 2026-11-06).
+        undo_write(path, snap, before)
+        log_event(paths, session_id, spec_id, "docket-undone", "cited locations missing: " + ", ".join(missing)[:90])
+        return refuse("[docket] The write was undone, the docket is as before: it cited locations that do not exist: "
+                      + ", ".join(missing) + ". Cite `path/file.ext:line` relative to the repo root, as it is on "
+                      "disk, then write the lines again.")
+    log_points(paths, session_id, spec_id, before or "", after)
+    return 0
+
+
+def new_lines(before, after):
+    old = set(before.splitlines())
+    return [line for line in after.splitlines() if line not in old]
+
+
+def undo_write(path, snap, before):
+    """The docket as it was before the write: the snapshot's text, or no file for the skeleton."""
     try:
-        with open(snap, encoding="utf-8-sig", errors="ignore") as handle:
-            before = handle.read().rstrip()
+        if before is None:
+            os.remove(path)
+        else:
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(before + "\n")
     except OSError:
-        return 0
-    if after.startswith(before) or before_lines_kept(before, after):
-        log_points(paths, session_id, spec_id, before, after)
-        return 0
-    log_event(paths, session_id, spec_id, "docket-rewritten", "append-only violated")
-    return refuse("[docket] The docket is append-only. Restore every previous line unchanged and add your "
-                  "change as new lines below; a point changes state by a new line, never by editing the old one.")
+        pass
 
 
 def placeholder(line):
