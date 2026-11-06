@@ -13,9 +13,10 @@ it runs after the message is on the screen, so a rewrite shows the message twice
   answer to a refusal is never held back and nothing is lost.
 - The terminal client streams a message in batches; each batch is held until the last one, then the
   whole message is shown at once. Claude Code Desktop and the SDK send one batch per message.
-- In every mode of a set-up project, the answer to a judge verdict (`[docket] noted`) is hidden: the judge
-  runs at Stop, after the user has read the message, so its rejection only goes to Claude and the log.
-  Not when stop.py asked in the same feedback for a held-back message in full: that answer is shown.
+- The judge's verdict is answered with an empty turn (templates/judge-hook.json), so there is nothing to hide.
+  An older acknowledgement line `[docket] noted` is still hidden live; the desktop app renders the transcript's
+  original text when a session is opened later (experiment 10), so hiding is not durable and the empty answer is
+  the rule. Not when stop.py asked in the same feedback for a held-back message in full: that answer is shown.
 - Fails open: any error shows the original text.
 Nothing is printed except the hook's JSON answer.
 """

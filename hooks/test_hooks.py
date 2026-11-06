@@ -1000,6 +1000,21 @@ class JudgeLog(Project):
         self.stop_with(f"Next answer.\n{hstamp()}")
         self.assertEqual(self.log().count(" judge "), 1)
 
+    def test_empty_answer_after_a_verdict_passes_and_the_verdict_is_counted(self):
+        # Experiment 10d: after the verdict Claude records no message; the second Stop carries no
+        # last_assistant_message and the transcript's last text is the judged message.
+        self.set_state(mode="concept")
+        reason = 'promise "Morgen schreibe ich dir ein Gedicht"'
+        self.add(self.said(f"Der Mond kreist still um unsere Erde.\n{hstamp()}"), self.feedback(reason),
+                 self.summary("2026-11-05T21:58:53Z", reason),
+                 {"type": "user", "message": {"role": "user", "content": "[Your previous response had no visible output.]"}})
+        code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "stop_hook_active": True,
+                                            "transcript_path": str(self.path)}, self.p)
+        self.assertEqual(code, 0, err)
+        counts = json.loads((self.work / "metrics" / "session.violations.json").read_text("utf-8"))
+        self.assertEqual(counts, {"judge-promise": 1})
+        self.assertEqual(self.log().count(" judge "), 1)
+
     def test_acknowledgement_is_hidden_in_every_mode_of_a_set_up_project(self):
         self.set_state(mode="none")
         self.add(self.feedback('self "Sorry for the delay"'))
@@ -1044,7 +1059,9 @@ class JudgeLog(Project):
     def test_template_asks_for_the_acknowledgement(self):
         template = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))
         prompt = template["hooks"]["Stop"][0]["hooks"][0]["prompt"]
-        self.assertIn("`[docket] noted`", prompt)
+        self.assertIn("empty answer", prompt)  # experiment 10d: an empty turn leaves nothing on screen, the verdict stays
+        self.assertIn("stop_hook_active is true", prompt)  # the second Stop after the empty answer goes through
+        self.assertNotIn("`[docket] noted`", prompt)  # experiment 10: visible when the session is opened later
         self.assertNotIn("impossible", prompt)  # experiment 9: with it the verdict never reaches the transcript
         self.assertNotIn("Korrektur", prompt)
         self.assertNotIn("]: ", prompt)  # the reason is what follows the quoted prompt's first "]: "

@@ -494,9 +494,10 @@ def message_text(hook_input, transcript_key="transcript_path"):
 
 # --- judge -------------------------------------------------------------------
 # The judge (templates/judge-hook.json) is a prompt hook at Stop: it runs after the user has read the message.
-# A rejection goes back to Claude, which answers with the line `[docket] noted`; the display gate hides that
-# answer and stop.py lets it through. The verdict is counted from the transcript's hook records.
+# A rejection goes back to Claude, which answers with an empty turn (experiment 10d: no message is recorded,
+# nothing is shown, the verdict stays in the transcript's hook records and is counted at the next Stop).
 # Experiment 9: with `impossible: true` the verdict never reaches the transcript, so it could not be counted.
+# The older acknowledgement line `[docket] noted` is still accepted and hidden live (not durably: experiment 10).
 JUDGE_PROMPT = "[You judge the final message"  # how Claude Code quotes the judge's prompt in front of its reason
 JUDGE_ACK = "[docket] noted"
 JUDGE_TAGS = ("no-source", "questions", "options", "manual-task", "conditional", "promise", "self", "identifier",

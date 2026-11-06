@@ -97,7 +97,7 @@ Hooks check provenance, form and state, never content.
 - The optional judge (a prompt hook, per project) checks the form of a message after you read it: one question
   at most, no option menus, no manual tasks for you beyond the one step of a blocker, no promises, no self-talk.
   Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts go to Claude and the
-  log, never to your screen.
+  log, never to your screen: Claude answers them with silence.
 
 ## Install
 
@@ -130,7 +130,7 @@ Tests: `python hooks/test_hooks.py`.
 
 ## Status
 
-0.2.4, an early stage of development, already in use in several repositories.
+0.2.5, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

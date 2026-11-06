@@ -42,7 +42,8 @@ def main():
         lines.append("[docket] Rule of every session here: each message ends with the line `stamp: YYYY-MM-DD HH:MM`, "
                      "the time of the latest `[docket] clock:` line the hooks give with every prompt and tool result, "
                      "or fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
-                     "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or the line `[docket] noted`; "
+                     "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or after a judge "
+                     "verdict an empty answer; "
                      "repeat a message only when the hook says it was held back and never shown.")
     if mode in ("sealed", "rewrite"):
         lines.append(f"[docket] A sealed implementation of {spec_id} is in progress: {points_summary(paths, spec_id)}. "

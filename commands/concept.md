@@ -46,8 +46,8 @@ ask the one question. The user's word settles it; record it in the follow-up spe
   `Blocker unverändert`; the hook refuses a blocker line that stood in the previous message.
 - On `commit`, every change of the session goes in, plus the files the new content cites; changes in the working
   tree that are not the session's are named in one line, never left out silently.
-- The line `[docket] noted` is the answer to a judge verdict and nothing else: it is never explained to the user
-  and never mentioned in a message, whatever the user has seen.
+- A judge verdict (Stop hook feedback that quotes the judge's prompt) is answered with an empty turn: no text,
+  no stamp, no tool call. It is never explained or mentioned to the user.
 
 ## Writing
 

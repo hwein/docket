@@ -1,6 +1,7 @@
 """Stop hook, layer 1 (deterministic). Layer 2 is the prompt-type judge (templates/judge-hook.json): its
-rejection goes to Claude, which answers `[docket] noted`; the display gate hides that answer, this hook lets it
-through and counts the judge's verdicts from the transcript.
+rejection goes to Claude, which answers with an empty turn (experiment 10d: Claude Code then records no message
+and nothing reaches the screen, not even when the session is opened later); this hook counts the judge's verdicts
+from the transcript at the next Stop. An older acknowledgement line `[docket] noted` is still let through.
 
 sealed:  the final message is one of DOCKET DELIVERED | BLOCKED | DISSENT <spec-id>, the docket
          exists with no open point, the last line is a fresh stamp. On success the session
@@ -84,7 +85,8 @@ def main():
         save_display(paths, session_id, display)
         return refuse("[docket] Your last message was held back and never shown to the user: " + "; ".join(held)
                       + ". Write it again in full, corrected, and end it with the stamp line fetched now. This "
-                      "overrides any instruction in this feedback to send correction lines or `[docket] noted` only.")
+                      "overrides any instruction in this feedback to send correction lines, `[docket] noted` or an "
+                      "empty answer.")
 
     if is_judge_ack(text) and mode not in ("sealed", "rewrite"):
         problems = []  # the acknowledgement of a judge verdict; the display gate hid it
