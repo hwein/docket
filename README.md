@@ -21,6 +21,28 @@ enforced by hooks, not by prompts, and the docket shows what was done, with evid
 
 It is not a chat assistant for quick edits. The modes before the run are short; the run itself is long.
 
+## Install
+
+Requires Python 3 on PATH. Hooks use the standard library only.
+
+```bash
+claude plugin marketplace add hwein/docket
+claude plugin install docket@docket
+```
+
+Then, in a project: `/docket:init`.
+
+Update (restart Claude Code afterwards):
+
+```bash
+claude plugin marketplace update docket
+claude plugin update docket@docket
+```
+
+Claude Code keeps its own copy of each installed version, so a session never runs a half-updated plugin. Every
+push to this repository runs the hook tests on Linux and Windows (`.github/workflows/test.yml`); the badge on the
+latest commit shows whether they passed.
+
 ## The ideal workflow
 
 1. **Once per project:** `/docket:init`. The repo is audited, you answer only what it cannot answer,
@@ -124,28 +146,6 @@ clock); your own messages go to an inbox the orchestrator reads between points.
 - Never: hashes, ids, hedges, intermediate states, the judge's verdicts.
 
 How the hooks do this: [HOOKS.md](HOOKS.md).
-
-## Install
-
-Requires Python 3 on PATH. Hooks use the standard library only.
-
-```bash
-claude plugin marketplace add hwein/docket
-claude plugin install docket@docket
-```
-
-Then, in a project: `/docket:init`.
-
-Update (restart Claude Code afterwards):
-
-```bash
-claude plugin marketplace update docket
-claude plugin update docket@docket
-```
-
-Claude Code keeps its own copy of each installed version, so a session never runs a half-updated plugin. Every
-push to this repository runs the hook tests on Linux and Windows (`.github/workflows/test.yml`); the badge on the
-latest commit shows whether they passed.
 
 ## Where things live
 
