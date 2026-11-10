@@ -26,7 +26,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import command_line as prompt_command
 from docket_lib import (CONCEPT_ID, REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, claim_lock, clock_line, config_values, display_path,
                         load_state,
-                        lock_holder, log_event, logged_series, open_predecessors, precondition_result,
+                        lock_holder, log_event, logged_series, open_predecessors, precondition_result, project_head,
                         preconditions, queued_elsewhere, read_input, ready_specs, restore_mode, save_display,
                         save_state, say,
                         series_line, session_live, set_context, set_spec_state, spec_title, strip_harness_blocks,
@@ -199,8 +199,8 @@ def main():
                      + ". " + REMINDERS.get(mode, ""))
         if mode in ("sealed", "rewrite") and state.get("queue"):
             lines.append("[docket] Queued after this spec, in order: " + ", ".join(state["queue"])
-                         + ". When this spec's docket states DELIVERED the hook seals the next one in this session and "
-                         "tells you; until then it does not exist for you.")
+                         + ". When this spec has ended the hook seals the next one in this session and tells you; until "
+                         "then it does not exist for you.")
         if mode != "concept":
             lines.append(ambition())  # in concept mode it pushed past the stop (legacy session 2026-11-05)
         language = config_values(paths).get("user_language", "")
@@ -268,15 +268,18 @@ def implement(paths, session_id, state, rest):
     if claim_lock(paths, spec_id, session_id):
         return "", say(paths, "sealed_elsewhere", title=title(spec_id))
     resume = state.get("mode") in RUN_MODES and state.get("spec") == spec_id and found == [spec_id]
-    outcomes, base = {}, terminal_base(paths, spec_id)
+    outcomes, base, head = {}, terminal_base(paths, spec_id), project_head(paths)
     if resume:
         # The resume of the spec at work in this session (the halted line's command): the series stays, and a
         # Terminal state block this run wrote still counts.
         queue, found = list(state.get("queue") or []), list(state.get("series") or found)
         outcomes, base = dict(state.get("outcomes") or {}), int(state.get("terminal_base", 0) or 0)
+        head = state.get("sealed_head", "")
+    # sealed_head: the project's commit when the spec was sealed; a spec that ends BLOCKED with the project still
+    # there lets the series go on (stop.end_spec).
     state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False, "queue": queue, "series": found,
                   "outcomes": outcomes, "refused": False, "closing": None, "halted": False,
-                  "terminal_base": base})
+                  "terminal_base": base, "sealed_head": head})
     save_state(paths, session_id, state)
     log_event(paths, session_id, spec_id, "sealed")
     if queue:
@@ -290,7 +293,7 @@ def implement(paths, session_id, state, rest):
 def resolve_implement(paths, rest):
     """The specs of an implement call, in run order, or a refusal.
 
-    `/docket:implement`            the next ready spec whose predecessors (`follows:`) are done
+    `/docket:implement`            the next ready spec whose predecessors (`follows:`, `after:`) are done
     `/docket:implement c-xxxxxxxx` every ready spec of that concept, in implementation order
     `/docket:implement s-a, s-b`   exactly these, in the given order
     `/docket:implement --all`      every ready spec of the project, in implementation order
@@ -325,8 +328,9 @@ def resolve_implement(paths, rest):
                     "Run /docket:register to see the register.")
     missing = open_predecessors(paths, chosen)
     if missing:
-        return [], ("[docket] Not in order: " + "; ".join(f"{s} follows {p}, which is not done" for s, p in missing)
-                    + ". Run the predecessor first, or name it before its successor.")
+        return [], ("[docket] Not in order: " + "; ".join(f"{s} needs {p} first, which is not done" for s, p in missing)
+                    + " (`follows:` or `after:` in the spec). Run the predecessor first, or name it before its "
+                    "successor.")
     return chosen, ""
 
 

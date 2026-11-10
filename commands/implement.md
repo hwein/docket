@@ -9,12 +9,13 @@ Argument: `$ARGUMENTS`
 
 The hook resolved the argument and sealed the session on one spec; its `[docket] Mode sealed, spec s-…` line names
 it, and that is the spec you work on, whatever the argument says. Without an argument it is the next ready spec
-whose predecessors (`follows:`) are done; a concept id means every ready spec of that concept; several spec ids
-mean exactly these, in that order; `--all` every ready spec of the project. More than one spec is a series: the
-hook keeps the rest in a queue (named in every prompt). When a spec's docket states DELIVERED, the hook seals the
-next one in this session and tells you to start it at step 0. Until then the queued specs do not exist for you:
-you do not read them, plan for them or mention them. After BLOCKED or DISSENT, or after `/docket:stop`, the series
-ends there.
+whose predecessors (`follows:`, `after:`) are done; a concept id means every ready spec of that concept; several
+spec ids mean exactly these, in that order; `--all` every ready spec of the project. More than one spec is a
+series: the hook keeps the rest in a queue (named in every prompt). When a spec has ended, the hook seals the next
+one in this session and tells you to start it at step 0. Until then the queued specs do not exist for you: you do
+not read them, plan for them or mention them. After BLOCKED or DISSENT the hook goes on with the queued specs that
+do not wait for this one, unless the spec left commits or changes in the project; then, and after `/docket:stop`,
+the series ends there.
 
 You are the orchestrator and team lead. You read, plan, brief, verify and decide. You never write code, tests or
 project files yourself; every change to the project goes to an `implementer` or `fixer` agent. The docket is
@@ -217,9 +218,10 @@ on sealing, `done` on DELIVERED, `ready` again after BLOCKED or DISSENT.
 
 ## 5. End of the run: the closing message
 
-When the last spec of the run has ended (or one ended BLOCKED or DISSENT, or the user stopped the run), the hook
-renders the run's one message into a file and tells you its path. Read it with Read and send its content as your
-only message: verbatim, nothing added, no code block. It names every spec by its title with its result, whether the
-work is pushed and CI green, what was checked, what is open, what only the user can do and which decision is due;
-the ids, hashes and evidence stay in the dockets it points to. The gate shows nothing else; after the message the
+When the last spec of the run has ended (or the series ended at a BLOCKED or DISSENT spec, or the user stopped the
+run), the hook renders the run's one message into a file and tells you its path. Read it with Read and send its
+content as your only message: verbatim, nothing added, no code block. It is short: whether the work is pushed and
+CI green, every spec by its title with its result, then only what the user acts on, which is what only the user can
+do and which decision is due. What is open and what to watch it only counts; those lines, the ids, hashes and
+evidence stay in the dockets it points to. The gate shows nothing else; after the message the
 session is closed and you answer only from the dockets.

@@ -31,7 +31,8 @@ spec is `ready`.
   documentation; the reference docs are.
 - Technical decisions: your decisions, with the source that led to them (code location, project rule, previous spec).
 - Dependencies: `follows:` for rework of an earlier spec; `after: <id>` in the goal paragraph when another spec must
-  land first.
+  land first, once per such spec. The hooks read both: the order of implementation, the pane, and the start of a
+  run, which refuses a spec before an undone predecessor. A dependency written any other way holds nothing up.
 - Cite the current state from the reference docs by file; do not restate it.
 
 ## User decisions

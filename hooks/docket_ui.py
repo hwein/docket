@@ -111,7 +111,7 @@ def overview(paths, session_id):
             "points": None if counts is None else {"done": counts["x"], "deviating": counts["~"], "open": counts[" "]},
             "result": {"kind": terminal["kind"], "text": terminal["result"] or terminal["reason"]} if terminal["kind"] else None,
             "decisions": open_decisions(record["path"], "User decisions") if record["state"] == "draft" else 0,
-            "waits_for": [f for f in record["follows"]
+            "waits_for": [f for f in record["predecessors"]
                           if f in by_id and by_id[f]["state"] not in ("done", "superseded")],
             "running": running.get(spec_id, ""),
             "superseded_by": replaced.get(spec_id, "") if record["state"] == "superseded" else "",

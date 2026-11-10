@@ -39,7 +39,8 @@ from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, acceptance_problems, agent_
                         config_values, hook_outputs, language_problem, load_state, log_event, log_lines, log_time,
                         message_text, missing_citations, normalized_lines, notice, observed, point_counts,
                         review_lines, triage_lines, watch_parts, WATCH_PARTS,
-                        position, previous_turn_texts, read_input, read_text, refinement_problem, refuse,
+                        open_predecessors, position, previous_turn_texts, project_head, read_input, read_text,
+                        refinement_problem, refuse, untouched_since,
                         release_lock, render_closing, resume_judge, review_problem, save_display, save_state, say,
                         section_text, session_live, lock_holder, set_context, set_spec_state, settled_display,
                         spec_title, take_lock, terminal_base, terminal_section, text_of, transcript_blocks,
@@ -261,9 +262,11 @@ def terminal_problems(terminal, spec_id, paths, hook_input):
 
 
 def end_spec(paths, session_id, state, kind, transcript):
-    """The spec is closed: LOG, spec state, lock, metrics. After DELIVERED the series goes on with its next spec,
-    sealed here and announced to the model in one short order; otherwise, or when the series is done, the closing
-    begins."""
+    """The spec is closed: LOG, spec state, lock, metrics. The series goes on with its next spec, sealed here and
+    announced to the model in one short order: after DELIVERED, and after BLOCKED or DISSENT when the spec left the
+    project as it found it (luradb-web-client 2026-11-10: a spec blocked at 0 points ended a series of three). A
+    spec that left commits or changes behind ends the series: the next spec's push would carry them. A queued spec
+    whose predecessor is not done is passed over. When the series is done or ends, the closing begins."""
     spec_id = state.get("spec", "")
     release_lock(paths, spec_id)
     set_spec_state(paths, spec_id, "done" if kind == "delivered" else "ready")
@@ -271,14 +274,20 @@ def end_spec(paths, session_id, state, kind, transcript):
     log_event(paths, session_id, spec_id, kind, "spec closed")
     state.setdefault("outcomes", {})[spec_id] = kind
     queue = [s for s in (state.get("queue") or []) if s]
-    if kind == "delivered" and not state.get("stop_requested"):
+    goes_on = kind == "delivered" or untouched_since(paths, state.get("sealed_head", ""))
+    if goes_on and not state.get("stop_requested"):
         while queue:
             following = queue.pop(0)
-            if (frontmatter(paths.spec_file(following) or "").get("state", "").lower() not in ("ready", "in-progress")
-                    or claim_lock(paths, following, session_id)):
-                continue  # sealed or finished elsewhere meanwhile: named as not started at the end
+            if frontmatter(paths.spec_file(following) or "").get("state", "").lower() not in ("ready", "in-progress"):
+                continue  # finished elsewhere meanwhile: named as not started at the end
+            waits = open_predecessors(paths, [following])
+            if waits:
+                log_event(paths, session_id, following, "passed-over", "waits for " + ", ".join(p for _, p in waits))
+                continue  # named at the end as not started, with what it waits for
+            if claim_lock(paths, following, session_id):
+                continue  # sealed elsewhere meanwhile
             state.update({"mode": "sealed", "spec": following, "queue": queue, "refused": False,
-                          "terminal_base": terminal_base(paths, following)})
+                          "terminal_base": terminal_base(paths, following), "sealed_head": project_head(paths)})
             save_state(paths, session_id, state)
             log_event(paths, session_id, following, "sealed", "from queue")
             set_spec_state(paths, following, "in-progress")

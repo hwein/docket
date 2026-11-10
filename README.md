@@ -56,9 +56,10 @@ latest commit shows whether they passed.
    orchestrator, a review of the whole change from two angles, commits per the project's rules. A message you write
    during the run is answered at once; `/docket:stop` ends the run cleanly. Nothing asks you anything until the run
    is over, and nothing you type is ever refused: where a command cannot start, you are told why and what to do.
-5. **Read:** one message for the whole run, in your language: each spec by its title and what it delivered,
-   whether the work is pushed and CI is green, what was checked, what is open, what to watch, what only you can do, and the
-   decision that is due. The dockets hold the evidence. What deviated goes back to step 2.
+5. **Read:** one short message for the whole run, in your language: whether the work is pushed and CI is green,
+   one line per spec with what it delivered, then only what you act on: what only you can do and the decision that
+   is due. The dockets hold the evidence, what is open and what to watch; the message counts them. What deviated
+   goes back to step 2.
 
 Several specs can wait as `ready`; several sessions can run on different specs at once, each locked to its own.
 
@@ -111,7 +112,8 @@ Typed with the plugin's namespace, as Claude Code lists them: `/docket:concept`,
 
 ## One spec or a series
 
-A concept ends in one spec or several, in an order (`follows:` in the spec's header). `/docket:implement` runs
+A concept ends in one spec or several, in an order (`follows:` in the spec's header for a spec that reworks an
+earlier one, `after: <id>` in its goal for a spec that needs another one landed first). `/docket:implement` runs
 them the same way, one after another in one session, each with its own refinement, docket and merge; the run ends
 with one message for all of them:
 
@@ -123,10 +125,12 @@ with one message for all of them:
 | `/docket:implement c-9c8d7e6f` | every ready spec of this concept, in implementation order |
 | `/docket:implement --all` | every ready spec of the project, in implementation order |
 
-Implementation order: a spec after every spec it follows, otherwise by creation date. A call that would run a spec
-before an undone predecessor is refused and names the predecessor. When a spec is delivered, the hook seals the
-next one in the same session. A spec that ends blocked or in dissent ends the series, and the closing message names
-the specs not started and the command that resumes them. `/docket:stop` ends the series at the next checkpoint.
+Implementation order: a spec after every predecessor (`follows:` and `after:`), otherwise by creation date. A call
+that would run a spec before an undone predecessor is refused and names the predecessor. When a spec has ended,
+the hook seals the next one in the same session. A spec that ends blocked or in dissent takes only its successors
+with it: the specs that do not wait for it still run. It ends the series only when it left commits or changes in
+the project, since the next spec's push would carry them. The closing message names the specs not started, what
+they wait for and the command that resumes them. `/docket:stop` ends the series at the next checkpoint.
 
 ## How a sealed run works
 
@@ -227,7 +231,7 @@ Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 
-0.5.5, an early stage of development, already in use in several repositories.
+0.5.6, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

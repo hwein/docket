@@ -220,6 +220,8 @@ SAY = {
         "head_blocked": "Lauf angehalten: „{title}“ ist blockiert, {d} von {n} Specs umgesetzt",
         "head_dissent": "Lauf angehalten: bei „{title}“ gibt es Dissens, {d} von {n} Specs umgesetzt",
         "head_stopped": "Lauf auf deinen Wunsch beendet: {d} von {n} Specs umgesetzt",
+        "head_past_blocked": "Lauf beendet: {d} von {n} Specs umgesetzt, „{title}“ ist blockiert",
+        "head_past_dissent": "Lauf beendet: {d} von {n} Specs umgesetzt, bei „{title}“ gibt es Dissens",
         "pushed": "auf `{branch}` gepusht",
         "not_pushed": "{k} Commits auf `{branch}` nicht gepusht",
         "not_pushed_one": "1 Commit auf `{branch}` nicht gepusht",
@@ -230,17 +232,7 @@ SAY = {
         "spec_blocked": "{title}: blockiert bei {x} von {n} Punkten",
         "spec_dissent": "{title}: Dissens bei {x} von {n} Punkten",
         "spec_not_started": "{title}: nicht begonnen",
-        "checked": "Geprüft",
-        "refinement": "vorab {f} Hinweise, {a} übernommen",
-        "review": "Code-Review mit {c} Befunden, {fx} behoben",
-        "review_clean": "Code-Review ohne Befund",
-        "check_green": "Projekt-Check nach der letzten Änderung grün",
-        "open": "Offen",
-        "watch": "Beobachten",
-        "watch_seen": "Gesehen",
-        "watch_suspected": "Vermutung",
-        "watch_impact": "Auswirkung",
-        "watch_signal": "Achte auf",
+        "spec_waits": "{title}: nicht begonnen, wartet auf {on}",
         "nothing": "Nichts offen, nichts zu tun.",
         "must": "Du musst",
         "decision": "Entscheidung",
@@ -248,10 +240,15 @@ SAY = {
         "note_unhandled": "noch nicht bearbeitet",
         "deviates": "„{point}“ weicht von der Spec ab",
         "dirty": "der Arbeitsbaum hat uncommittete Änderungen",
-        "work_dirty": "die Protokolle in `{path}` sind nicht committet",
         "resume_series": "danach setzt `/docket:implement {specs}` die Reihe fort",
         "more": "{k} weitere im Protokoll",
         "log": "Protokolle: `{path}`",
+        "log_uncommitted": "nicht committet",
+        "log_holds": "darin {items}",
+        "log_open": "{k} offene Punkte",
+        "log_open_one": "1 offener Punkt",
+        "log_watch": "{k} Beobachtungen",
+        "log_watch_one": "1 Beobachtung",
         "delivered": "geliefert",
         "blocked": "blockiert",
         "dissent": "Dissens",
@@ -294,6 +291,8 @@ SAY = {
         "head_blocked": "Run stopped: “{title}” is blocked, {d} of {n} specs implemented",
         "head_dissent": "Run stopped: “{title}” has a dissent, {d} of {n} specs implemented",
         "head_stopped": "Run ended at your request: {d} of {n} specs implemented",
+        "head_past_blocked": "Run finished: {d} of {n} specs implemented, “{title}” is blocked",
+        "head_past_dissent": "Run finished: {d} of {n} specs implemented, “{title}” has a dissent",
         "pushed": "pushed to `{branch}`",
         "not_pushed": "{k} commits on `{branch}` not pushed",
         "not_pushed_one": "1 commit on `{branch}` not pushed",
@@ -304,17 +303,7 @@ SAY = {
         "spec_blocked": "{title}: blocked at {x} of {n} points",
         "spec_dissent": "{title}: dissent at {x} of {n} points",
         "spec_not_started": "{title}: not started",
-        "checked": "Checked",
-        "refinement": "{f} findings in advance, {a} adopted",
-        "review": "code review with {c} findings, {fx} fixed",
-        "review_clean": "code review without findings",
-        "check_green": "project check green after the last change",
-        "open": "Open",
-        "watch": "To watch",
-        "watch_seen": "Seen",
-        "watch_suspected": "Suspected",
-        "watch_impact": "Impact",
-        "watch_signal": "Look for",
+        "spec_waits": "{title}: not started, waits for {on}",
         "nothing": "Nothing open, nothing to do.",
         "must": "You must",
         "decision": "Decision",
@@ -322,10 +311,15 @@ SAY = {
         "note_unhandled": "not handled yet",
         "deviates": "“{point}” deviates from the spec",
         "dirty": "the working tree has uncommitted changes",
-        "work_dirty": "the records in `{path}` are not committed",
         "resume_series": "then `/docket:implement {specs}` resumes the series",
         "more": "{k} more in the records",
         "log": "Records: `{path}`",
+        "log_uncommitted": "not committed",
+        "log_holds": "holding {items}",
+        "log_open": "{k} open points",
+        "log_open_one": "1 open point",
+        "log_watch": "{k} things to watch",
+        "log_watch_one": "1 thing to watch",
         "delivered": "delivered",
         "blocked": "blocked",
         "dissent": "dissent",
@@ -351,8 +345,21 @@ def spec_title(paths, spec_id):
     return frontmatter(path).get("title", "") if path else ""
 
 
+# `after: s-xxxxxxxx` in a spec's goal: that spec lands first. Several ids may share one `after:`.
+AFTER = re.compile(r"\bafter:((?:[\s`*,]*\bs-[0-9a-f]{8}\b)+)", re.IGNORECASE)
+
+
+def after_ids(path, own=""):
+    """The specs a spec names as `after: <id>` in its Goal section (commands/spec.md: another spec must land
+    first). Only there: a Rewrite section quotes an `after:` it removed (luradb-web-client 2026-11-10)."""
+    goal = section_text(read_text(path), "Goal")
+    found = [s.lower() for run in AFTER.findall(goal) for s in SPEC_ID.findall(run)]
+    return [s for s in dict.fromkeys(found) if s != own]
+
+
 def spec_records(paths):
-    """Frontmatter of every spec (id, title, topic, state, follows, concept, created) and its file, by path."""
+    """Frontmatter of every spec (id, title, topic, state, follows, concept, created) and its file, by path, with
+    the specs it names as `after:` and its predecessors: both kinds, `follows:` and `after:`."""
     found = []
     if not os.path.isdir(paths.specs):
         return found
@@ -371,16 +378,20 @@ def spec_records(paths):
                                   "concept": (CONCEPT_ID.search(fields.get("concept", "")) or [None])[0]
                                   if CONCEPT_ID.search(fields.get("concept", "")) else "",
                                   "created": fields.get("created", "")})
+                    record = found[-1]
+                    record["after"] = after_ids(record["path"], record["id"])
+                    record["predecessors"] = list(dict.fromkeys(record["follows"] + record["after"]))
     return found
 
 
 def in_order(records):
-    """Implementation order: a spec after every spec it follows; ties by created date, then by path."""
+    """Implementation order: a spec after every predecessor (`follows:` and `after:`); ties by created date, then
+    by path."""
     by_id = {r["id"]: r for r in records}
     remaining = sorted(records, key=lambda r: (r["created"], r["id"]))
     ordered, placed = [], set()
     while remaining:
-        free = [r for r in remaining if all(f not in by_id or f in placed for f in r["follows"])]
+        free = [r for r in remaining if all(f not in by_id or f in placed for f in r["predecessors"])]
         pick = (free or remaining)[0]  # the oldest free spec; no free one is a cycle: go on in date order
         ordered.append(pick)
         placed.add(pick["id"])
@@ -396,13 +407,14 @@ def ready_specs(paths, concept=""):
 
 
 def open_predecessors(paths, spec_ids):
-    """For a run of the given specs in that order: every `follows:` spec that is neither done nor earlier in the
-    run, as (spec, predecessor)."""
+    """For a run of the given specs in that order: every predecessor (`follows:` or `after:`) that is neither done
+    nor earlier in the run, as (spec, predecessor). luradb-web-client 2026-11-10: a spec whose goal said `after:`
+    two undone specs stood first in the pane's order, was sealed in a series and blocked at 0 points."""
     states = {r["id"]: r for r in spec_records(paths)}
     missing, earlier = [], set()
     for spec_id in spec_ids:
         record = states.get(spec_id.lower())
-        for predecessor in record["follows"] if record else []:
+        for predecessor in record["predecessors"] if record else []:
             before = states.get(predecessor)
             if predecessor not in earlier and before is not None and before["state"] not in ("done", "superseded"):
                 missing.append((spec_id, predecessor))
@@ -2277,12 +2289,34 @@ def repo_facts(paths):
         ahead = int(out) if code == 0 and out.isdigit() else None
     else:
         upstream = ""
+    code, status = git_out(paths.root, "status", "--porcelain", *project_pathspec(paths))
+    return {"branch": branch, "upstream": upstream, "ahead": ahead, "dirty": code == 0 and bool(status)}
+
+
+def project_pathspec(paths):
+    """The project without docket's own folders (the work dir and the state dir, where they lie inside it)."""
     spec = ["--", "."]
     for own in (paths.work, paths.state_dir):
         if under(own, paths.root):
             spec.append(":(exclude)" + relative_to_root(paths, own))
+    return spec
+
+
+def project_head(paths):
+    code, out = git_out(paths.root, "rev-parse", "HEAD")
+    return out if code == 0 else ""
+
+
+def untouched_since(paths, head):
+    """Whether the project is as it was at commit `head`: nothing committed since and nothing uncommitted, outside
+    docket's own folders. What cannot be told (no git, no head) counts as touched."""
+    if not head:
+        return False
+    spec = project_pathspec(paths)
+    if git_out(paths.root, "diff", "--quiet", head, "HEAD", *spec)[0] != 0:
+        return False
     code, status = git_out(paths.root, "status", "--porcelain", *spec)
-    return {"branch": branch, "upstream": upstream, "ahead": ahead, "dirty": code == 0 and bool(status)}
+    return code == 0 and not status
 
 
 def work_dir_dirty(paths):
@@ -2346,8 +2380,8 @@ def _end(text):
     return text if text.endswith(("…", "?", "!")) else text + "."
 
 
-def _items(paths, label, items, limit=6):
-    items = [i for i in dict.fromkeys(_sentence(i) for i in items) if i]
+def _items(paths, label, items, limit=6, length=200):
+    items = [i for i in dict.fromkeys(_sentence(i, length) for i in items) if i]
     if not items:
         return []
     shown = items[:limit]
@@ -2372,10 +2406,17 @@ def _unprefixed(items):
     return out
 
 
+# What the user acts on is never cut to a stub: a `user:` or `decision:` line cut at 200 characters lost its
+# recommendation and its command (luradb-web-client 2026-11-10).
+USER_LINE = 400
+
+
 def render_closing(paths, state):
-    """The one message of a run, rendered from the dockets, each spec's outcome and git: what was implemented by
-    name, pushed, CI, what was checked, what is open, what only the user can do, which decision is due. The
-    orchestrator sends it verbatim; ids and hashes stay in the dockets."""
+    """The one message of a run, rendered from the dockets, each spec's outcome and git: one line for the run
+    (pushed, CI), one line per spec with its result, then only what the user acts on: what only they can do and
+    which decision is due. What is open and what to watch stays in the dockets and is counted in the last line
+    (luradb-web-client 2026-11-10: a run of three specs closed in 19 lines, most of them cut). The orchestrator
+    sends it verbatim; ids and hashes stay in the dockets."""
     series = series_of(state)
     outcomes = state.get("outcomes") or {}
     facts = [spec_facts(paths, spec_id) for spec_id in series]
@@ -2386,7 +2427,10 @@ def render_closing(paths, state):
     if stopped:
         head = say(paths, "head_stopped", d=len(delivered), n=len(series))
     elif ended is not None:
-        head = say(paths, "head_" + outcomes[ended["id"]], title=ended["title"], d=len(delivered), n=len(series))
+        # The series went on past the spec that ended so: the run was not stopped by it.
+        went_on = any(outcomes.get(f["id"]) for f in facts[facts.index(ended) + 1:])
+        head = say(paths, ("head_past_" if went_on else "head_") + outcomes[ended["id"]], title=ended["title"],
+                   d=len(delivered), n=len(series))
     elif not many and delivered:
         head = say(paths, "head_one", title=quoted(paths, delivered[0]["title"]))
     else:
@@ -2404,6 +2448,8 @@ def render_closing(paths, state):
     ci = {f["ci"] for f in delivered if f["ci"]}
     if ci:
         parts.append(say(paths, "ci_red" if "red" in ci else "ci_green"))
+    if git.get("dirty"):
+        parts.append(say(paths, "dirty"))
     lines = [head + (", " + ", ".join(parts) if parts else "") + "."]
 
     for f in facts:
@@ -2413,22 +2459,10 @@ def render_closing(paths, state):
             if f["result"]:
                 line += ". " + _sentence(f["result"])
         else:
-            line = say(paths, "spec_not_started", title=f["title"])
+            waits = [quoted(paths, spec_title(paths, p) or p) for _, p in open_predecessors(paths, [f["id"]])]
+            line = (say(paths, "spec_waits", title=f["title"], on=", ".join(waits)) if waits
+                    else say(paths, "spec_not_started", title=f["title"]))
         lines.append(_end(f"- {line}"))
-
-    if delivered:
-        checked = []
-        refined = sum(f["refinement"] for f in delivered)
-        if refined:
-            checked.append(say(paths, "refinement", f=refined, a=sum(f["adopted"] for f in delivered)))
-        if all(f["reviewed"] for f in delivered):
-            found = sum(f["review"] for f in delivered)
-            checked.append(say(paths, "review", c=found, fx=sum(f["fixed"] for f in delivered)) if found
-                           else say(paths, "review_clean"))
-        if check_commands(paths):
-            checked.append(say(paths, "check_green"))  # DELIVERED needs every command after the last agent, green
-        if checked:
-            lines.append(say(paths, "checked") + ": " + "; ".join(checked) + ".")
 
     title = (lambda f: f["title"]) if many else (lambda f: "")
     open_items, must, decisions, watch = [], [], [], []
@@ -2445,32 +2479,35 @@ def render_closing(paths, state):
         if outcomes.get(f["id"]) == "dissent":
             decisions += [(title(f), item) for item in ([f["reason"]] if f["reason"] else []) + f["dissent"]]
     open_items, must, decisions = _unprefixed(open_items), _unprefixed(must), _unprefixed(decisions)
+    open_items = [i for i in dict.fromkeys(_sentence(i) for i in open_items) if i]
+    watch = list(dict.fromkeys(watch))
     resume = [f["id"] for f in facts if outcomes.get(f["id"]) in (None, "", "blocked")]
     if resume and any(not outcomes.get(f["id"]) for f in facts):
         must.append(say(paths, "resume_series", specs=", ".join(resume)))
-    if git.get("dirty"):
-        open_items.append(say(paths, "dirty"))
-    if work_dir_dirty(paths):
-        open_items.append(say(paths, "work_dirty", path=relative_to_root(paths, paths.work)))
-    if not (open_items or must or decisions or watch):
+    uncommitted = work_dir_dirty(paths)
+    if not (open_items or must or decisions or watch or git.get("dirty") or uncommitted):
         lines.append(say(paths, "nothing"))
-    lines += _items(paths, say(paths, "open"), open_items)
-    for name, value in dict.fromkeys(watch):
-        # One block per possible fault, complete in itself: the user copies it into `/docket:spec`.
-        parts = watch_parts(value)
-        lines.append(_end(say(paths, "watch") + (f" ({name})" if name else "") + ": " + _sentence(parts["subject"])))
-        lines += [_end(f"- {say(paths, 'watch_' + key)}: {_sentence(parts[key], 400)}")
-                  for key in WATCH_PARTS if parts[key]]
-    lines += _items(paths, say(paths, "must"), must)
+    lines += _items(paths, say(paths, "must"), must, length=USER_LINE)
     for item in decisions:
-        lines.append(_end(f"{say(paths, 'decision')}: {_sentence(item)}"))
+        lines.append(_end(f"{say(paths, 'decision')}: {_sentence(item, USER_LINE)}"))
     for f in facts:
         # The run's notes in order, each with the Inbox line the orchestrator wrote for it, the newest lines last.
         answers = f["inbox"][-len(f["notes"]):] if f["notes"] else []
         for index, moment in enumerate(f["notes"]):
             handled = answers[index] if index < len(answers) else say(paths, "note_unhandled")
             lines.append(_end(say(paths, "note", time=moment) + ": " + _sentence(handled, 160)))
-    lines.append(say(paths, "log", path=relative_to_root(paths, paths.dockets) + "/"))
+    # The dockets carry the rest in full (`open:` and `watch:` in each Terminal state): the message counts it.
+    held = []
+    if open_items:
+        held.append(say(paths, "log_open_one") if len(open_items) == 1 else say(paths, "log_open", k=len(open_items)))
+    if watch:
+        held.append(say(paths, "log_watch_one") if len(watch) == 1 else say(paths, "log_watch", k=len(watch)))
+    log = say(paths, "log", path=relative_to_root(paths, paths.dockets) + "/")
+    if uncommitted:
+        log += f" ({say(paths, 'log_uncommitted')})"
+    if held:
+        log += ", " + say(paths, "log_holds", items=", ".join(held))
+    lines.append(log)
     lines.append("stamp: " + time.strftime("%Y-%m-%d %H:%M"))
     return "\n".join(lines) + "\n"
 

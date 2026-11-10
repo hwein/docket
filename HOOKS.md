@@ -26,17 +26,22 @@ Reference update sections exists; every reference doc the spec names is marked `
 sealing) or `not needed`; every refinement line and every review line carries a decision, and the review holds
 (below); with `ci` configured, a `CI: <state> <hash>` line names a hash reachable from HEAD
 after a push in this session. Otherwise the run goes on until it holds. An accepted end closes the spec, writes its
-metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts the closing.
+metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts the closing. The series goes on
+after DELIVERED, and after BLOCKED or DISSENT when the project is as it was at the spec's sealing (`sealed_head`,
+`untouched_since`: no commit and no uncommitted change outside docket's own folders); a spec that left work behind
+ends the series, since the next spec's push would carry it. A queued spec whose predecessor is not done is passed
+over (LOG `passed-over`) and named in the closing message with what it waits for.
 
 ## The closing message
 
-When the last spec of a run has ended, or one ended BLOCKED or DISSENT, or the user stopped the run, the hook renders
-the run's one message from the dockets, the LOG and git: every spec by its title with its points and result, whether
-the work is pushed and CI green, what was checked (refinement, review, the project check), what is open, what to
-watch (the `watch:` lines of the Terminal state), what only
-the user can do, which decision is due and with which command, what came of the user's notes, where the dockets
-are. The orchestrator sends it verbatim; the display gate shows nothing else, and after three misses it shows the
-rendered text itself. The session is closed afterwards.
+When the last spec of a run has ended, or the series ended at a BLOCKED or DISSENT spec, or the user stopped the
+run, the hook renders the run's one message from the dockets, the LOG and git: one line for the run (whether the
+work is pushed and CI green), one line per spec by its title with its points and result (a spec not started with
+what it waits for), then only what the user acts on: what only the user can do, which decision is due and with
+which command (neither cut below 400 characters), what came of the user's notes. The last line names where the
+dockets are and counts what they hold beyond that: the `open:` lines and deviations, and the `watch:` lines of the
+Terminal state. The orchestrator sends it verbatim; the display gate shows nothing else, and after three misses it
+shows the rendered text itself. The session is closed afterwards.
 
 ## Project rules
 
@@ -164,7 +169,8 @@ the hooks use (`spec_records`, `docket_counts`, `terminal_section`, `session_liv
 one project the same way. A spec's or a docket's text is shown as the file holds it.
 
 Every open spec carries its position in the recommended order of implementation in front of its state: a spec after
-every spec it follows, then by age (`in_order`), counted over the whole project, since a series runs across concepts
+every predecessor (`follows:` in its header, `after: <id>` in its Goal section), then by age (`in_order`), counted
+over the whole project, since a series runs across concepts
 in that order. A concept's open specs are listed by that position, its finished ones below.
 
 What a button does:

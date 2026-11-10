@@ -590,11 +590,13 @@ class SealedStop(Project):
         self.assertIn(f"{SPEC}  delivered", self.log())
         self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())
         text = self.closing()
-        self.assertEqual(text.splitlines()[:4], [
+        # One line for the run, one per spec, then only what the user acts on, where the dockets are, the stamp.
+        self.assertEqual(text.splitlines()[:3], [
             "Run finished: “Login” is implemented.",
             "- Login: 1 of 1 points delivered. Login works, three tests are green.",
-            "Checked: code review without findings.",
             "Nothing open, nothing to do."])
+        self.assertEqual(len(text.splitlines()), 5)
+        self.assertTrue(text.splitlines()[3].startswith("Records: `"))
         self.assertNotIn(SPEC, text)
         self.assertTrue(text.splitlines()[-1].startswith("stamp: "))
         code, err, _ = self.run_stop(text, active=True)
@@ -1144,8 +1146,10 @@ class ClosingCounts(Project):
         self.assertEqual(self.run_stop()[0], 2)
         text = self.closing()
         self.assertIn("- Login: 2 of 3 points delivered. Login works, three tests are green.", text)
-        self.assertIn("Checked: 2 findings in advance, 1 adopted; code review without findings.", text)
-        self.assertIn("Open:\n- The refresh needs the server's 0.6 API.\n- “token refresh” deviates from the spec.", text)
+        # What is open stays in the docket; the message counts it (the `open:` line and the `[~]` point).
+        self.assertTrue(text.splitlines()[-2].endswith("/work/dockets/`, holding 2 open points"), text)
+        self.assertNotIn("The refresh needs", text)
+        self.assertNotIn("Checked", text)
         self.assertNotIn("Nothing open", text)
 
 
@@ -1949,7 +1953,7 @@ class SealedGate(Project):
         text = self.closing()
         self.assertTrue(text.startswith("Lauf beendet: „Login per Token“ ist umgesetzt."), text)
         self.assertIn("Entscheidung: Soll der Logout auch kommen? Empfehlung: ja, mit `/docket:spec`.", text)
-        self.assertIn("Geprüft: Code-Review ohne Befund.", text)
+        self.assertNotIn("Geprüft", text)
 
 
 class Language(Project):
@@ -2081,7 +2085,7 @@ class Series(Project):
     def test_a_successor_before_its_undone_predecessor_is_not_sealed(self):
         code, err, out = self.prompt("/docket:implement s-aaaa1111")
         self.assertEqual(code, 0, err)
-        self.assertIn(f"s-aaaa1111 follows {SPEC}, which is not done", out)
+        self.assertIn(f"s-aaaa1111 needs {SPEC} first, which is not done", out)
         self.assertEqual(self.state()["mode"], "none")
         self.prompt(f"/docket:implement s-aaaa1111, {SPEC}")
         self.assertEqual(self.state()["mode"], "none")
@@ -2130,11 +2134,10 @@ class Series(Project):
         self.assertEqual(code, 2)
         self.assertIn("closing", err)
         text = self.closing()
-        self.assertEqual(text.splitlines()[:5], [
+        self.assertEqual(text.splitlines()[:4], [
             "Run finished: 2 of 2 specs implemented.",
             "- Login: 1 of 1 points delivered. Login works.",
             "- Logout: 1 of 1 points delivered. Logout works.",
-            "Checked: code review without findings.",
             "Nothing open, nothing to do."])
         self.assertNotRegex(text, r"\bs-[0-9a-f]{8}\b")
         self.assertEqual(self.run_stop(text, active=True)[0], 0)
@@ -2150,10 +2153,86 @@ class Series(Project):
         self.assertEqual(out.strip(), "")
         text = self.closing()
         self.assertIn("Run stopped: “Login” is blocked, 0 of 2 specs implemented.", text)
-        self.assertIn("- Logout: not started.", text)
+        self.assertIn("- Logout: not started, waits for “Login”.", text)
         self.assertIn("You must:\n- Login: start Docker.\n- Then `/docket:implement s-0123abcd, s-aaaa1111` resumes the series.", text)
         self.assertEqual((self.state()["mode"], self.state()["queue"]), ("closing", []))
         self.assertIn("queue-dropped", self.log())
+
+    def repo(self):
+        """The project as a git repository with one commit; docket's state dir is ignored."""
+        git = lambda *args: subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t"]
+                                           + list(args), capture_output=True, check=True)
+        git("init", "-q")
+        (self.root / ".gitignore").write_text(".claude/\n", "utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "one")
+        return git
+
+    def test_after_in_the_goal_is_a_predecessor_like_follows(self):
+        # luradb-web-client 2026-11-10: `after:` stood in the goal, the order and the start check read `follows:` only.
+        self.spec_file("s-dddd4444", "Import", created="2026-10-15").write_text(
+            "---\nid: s-dddd4444\ntitle: Import\nstate: ready\nfollows:\ncreated: 2026-10-15\n---\n# Import\n\n"
+            "## Goal (WHAT)\n\nUsers import a file. `after: s-bbbb2222` (the profile) and `after: s-eeee5555`.\n\n"
+            "## Rewrite\n\n- 2026-11-01: Goal (`after: s-aaaa1111` replaced by independence).\n", "utf-8")
+        self.assertEqual(self.prompt("/docket:implement s-dddd4444")[0], 0)
+        self.assertEqual(self.state()["mode"], "none")  # Profile is not done; an id of no spec holds nothing up
+        code, err, out = self.prompt("/docket:implement s-dddd4444, s-bbbb2222")
+        self.assertIn("s-dddd4444 needs s-bbbb2222 first, which is not done", out)
+        self.assertNotIn("s-aaaa1111", out)  # the Rewrite section quotes what it removed
+        self.assertNotIn("s-eeee5555", out)
+        self.assertEqual(self.prompt("/docket:implement --all")[0], 0)  # the oldest spec, yet after Profile
+        self.assertEqual((self.state()["spec"], self.state()["queue"]), (SPEC, ["s-aaaa1111", "s-bbbb2222", "s-dddd4444"]))
+
+    def test_blocked_with_the_project_untouched_lets_the_series_go_on(self):
+        # luradb-web-client 2026-11-10: the second of three specs blocked at 0 points and the third never ran.
+        self.repo()
+        self.prompt(f"/docket:implement {SPEC}, s-aaaa1111, s-bbbb2222")
+        self.end_spec("BLOCKED: start Docker", result="Login is not built yet.", review=False)
+        code, err, out = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("Spec 3 of 3 is sealed: Profile (s-bbbb2222)", err)  # Logout follows Login: passed over
+        state = self.state()
+        self.assertEqual((state["mode"], state["spec"], state["queue"]), ("sealed", "s-bbbb2222", []))
+        self.assertIn("s-aaaa1111  passed-over", self.log())
+        self.assertIn("waits for s-0123abcd", self.log())
+        self.deliver("s-bbbb2222", "Profile")
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        self.assertEqual(self.closing().splitlines()[:7], [
+            "Run finished: 1 of 3 specs implemented, “Login” is blocked, `master` has no upstream, nothing pushed."
+            .replace("master", subprocess.run(["git", "-C", str(self.root), "rev-parse", "--abbrev-ref", "HEAD"],
+                                              capture_output=True, text=True).stdout.strip()),
+            "- Login: blocked at 0 of 0 points. Login is not built yet.",
+            "- Logout: not started, waits for “Login”.",
+            "- Profile: 1 of 1 points delivered. Profile works.",
+            "You must:",
+            "- Login: start Docker.",
+            "- Then `/docket:implement s-0123abcd, s-aaaa1111` resumes the series."])
+
+    def test_blocked_with_work_left_in_the_project_ends_the_series(self):
+        # The next spec's push would carry what the blocked one left behind.
+        git = self.repo()
+        self.prompt(f"/docket:implement {SPEC}, s-bbbb2222")
+        (self.root / "half.txt").write_text("half\n", "utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "half a login")
+        self.end_spec("BLOCKED: the review found a fault in the login", result="Login is half built.", review=False)
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual((self.state()["mode"], self.state()["queue"]), ("closing", []))
+        self.assertIn("- Profile: not started.", self.closing())
+        self.assertIn("queue-dropped", self.log())
+
+    def test_what_the_user_acts_on_is_not_cut(self):
+        # luradb-web-client 2026-11-10: the decision line lost its recommendation and its command at 200 characters.
+        self.prompt(f"/docket:implement {SPEC}")
+        decision = ("Soll zuerst der Contract neu gepinnt werden, dann die Query-Keys als exportierte Konstanten "
+                    "folgen und danach erst die Tabellen-Anlage aus einer Datei, weil die Tabellen-Anlage auf beiden "
+                    "aufbaut und ohne sie an keinem Punkt beginnen kann? Empfehlung: ja, mit /docket:implement")
+        self.assertGreater(len(decision), 200)
+        self.end_spec("BLOCKED: start Docker", result="Login is not built yet.", review=False,
+                      lines=["decision: " + decision])
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertIn("Decision: " + decision + ".", self.closing())
 
     def test_stop_request_ends_the_series(self):
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
@@ -2632,13 +2711,10 @@ class Triage(Project):
             "an hour | signal: a red refresh test in CI, or a 401 right after a refresh in the access log"])
         self.assertEqual(self.run_stop()[0], 2)
         self.assertEqual(self.state()["mode"], "closing")
+        # The whole case stays in the docket's Terminal state; the closing message counts it.
         lines = self.closing().splitlines()
-        start = lines.index("To watch: The refresh test fails now and then.")
-        self.assertEqual(lines[start + 1:start + 5], [
-            "- Seen: `cargo test refresh | tail` was red in one of three runs on this branch, green on the two others.",
-            "- Suspected: The expiry in src/auth.rs is read before the refresh has set it, when both land in the same second.",
-            "- Impact: A user is logged out once, right after an hour.",
-            "- Look for: A red refresh test in CI, or a 401 right after a refresh in the access log."])
+        self.assertTrue(lines[-2].endswith("/work/dockets/`, holding 1 thing to watch"), lines)
+        self.assertNotIn("Seen:", self.closing())
         self.assertNotIn("Nothing open", self.closing())
 
 
@@ -2926,7 +3002,7 @@ class ReviewFindings(Project):
         code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), note, check), background_tasks=[])
         self.assertEqual(code, 2)
         self.assertEqual(self.state()["mode"], "closing")
-        self.assertIn("project check green after the last change", self.closing())
+        self.assertIn("Login: 1 of 1 points delivered", self.closing())
 
     def test_a_host_and_port_is_no_citation(self):
         self.assertEqual(self.tool("Edit", file_path=str(self.docket))[0], 0)
@@ -2982,7 +3058,7 @@ class ExperimentTwelve(Project):
         self.assertEqual(text.count("Decision: Fehleingaben in eigener Spec festlegen?"), 1)
         self.assertNotIn("Login: Fehleingaben", text)
         self.assertNotIn("….", text)
-        self.assertIn("Open: Lange Zeile lange Zeile", text)  # the same item of both specs, once
+        self.assertIn("holding 1 open point", text)  # the same item of both specs, once
     def test_the_fixer_ban_does_not_trip_on_a_path_with_docket_in_it(self):
         self.set_state(mode="sealed", spec=SPEC)
         prompt = "In D:/dev/projects/docket/experiments/exp12-series/tests/test_greet.py add the case `--bye`."
@@ -3068,6 +3144,14 @@ class PaneData(Project):
         specs = {s["id"]: s for s in data["specs"]}
         self.assertEqual(specs["s-aaaa1111"]["waits_for"], [SPEC])
         self.assertLess(specs[SPEC]["order"], specs["s-aaaa1111"]["order"])  # Logout follows Login
+        # `after:` in the goal holds a spec back in the pane too: its place in the order, and what it waits for.
+        self.spec_file("s-dddd4444", "Import", body="\n## Goal (WHAT)\n\nUsers import a file. `after: s-aaaa1111`.\n")
+        (self.work / "specs" / "core" / "s-dddd4444-import.md").write_text(
+            (self.work / "specs" / "core" / "s-dddd4444-import.md").read_text("utf-8")
+            .replace("created: 2026-11-02", "created: 2026-10-01"), "utf-8")
+        later = {s["id"]: s for s in self.ui("overview")[1]["specs"]}
+        self.assertEqual(later["s-dddd4444"]["waits_for"], ["s-aaaa1111"])
+        self.assertLess(later["s-aaaa1111"]["order"], later["s-dddd4444"]["order"])  # the oldest spec, yet after Logout
         self.assertEqual(sorted(s["order"] for s in data["specs"]), [0, 1, 2, 3])
         self.assertEqual(specs["s-aaaa1111"]["concept"], "c-11112222")
         self.assertEqual(specs["s-bbbb2222"]["concept"], "")
