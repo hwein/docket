@@ -363,7 +363,10 @@ test('a session of its own is started through the session tool, else Claude is a
 
   answer = { deny: 'not allowed' }
   await ui.press({ key: 'implement-session' })
-  expect(seen.prompts.at(-1)).toContain('\n/docket:implement s-0123abcd')
+  // The request names the command inside a sentence: on a line of its own the hooks would seal the asking session,
+  // and the session it starts would find the spec taken (luradb-web-client 2026-11-10).
+  expect(seen.prompts.at(-1)).toContain('`/docket:implement s-0123abcd`')
+  expect(String(seen.prompts.at(-1)).split('\n').some(line => line.trim().startsWith('/'))).toBe(false)
   await ui.unmount()
 })
 

@@ -166,8 +166,12 @@ What a button does:
   as if typed, so `user_prompt.py` resolves, checks and seals exactly as for a typed command. Ticked specs go as
   `/docket:implement s-a, s-b` in implementation order (`in_order`, the order `overview` numbers them in); a tick
   whose predecessor is neither done nor ticked offers no run, since the hook would refuse it. In a session of its
-  own: Claude Code Desktop's session tool is called with a brief that carries the command on a line of its own;
-  where the call is not allowed, Claude is asked to start that session.
+  own: Claude Code Desktop's session tool is called with a brief that ends with the command on a line of its own;
+  where the call is not allowed, Claude is asked to start that session, in a sentence that names the command and
+  carries it on no line of its own. `user_prompt.py` reads a command on the first line of a prompt or on its last
+  (`docket_lib.command_line`), never on a line in between: pasted text and a request that names a command are
+  text. In a project without DOCKET.md no command but `/docket:init` changes anything, a state that names another
+  mode is read as none (`load_state`), and a spec named in `/docket:implement` is a spec of this project.
 - Superseded: `docket_ui.py supersede --spec … --by …` writes `state: superseded` and the LOG line
   `superseded … by=s-…`. It refuses a spec that runs or waits in a running series, an unknown or superseded
   successor, and a spec already superseded. The model still never sets this state.

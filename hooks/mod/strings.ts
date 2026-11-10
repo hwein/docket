@@ -93,7 +93,7 @@ const en = {
   briefBackground:
     'This session was started from the docket pane of the main session to implement work in the same checkout. The docket plugin seals the session on the command below; follow its instructions and nothing else.',
   askSession: (command: string) =>
-    `Start a session of its own for this (start_session, initiation "user_asked", context "fresh", use_worktree false), with a brief that carries this command on a line of its own:\n${command}`,
+    `Start a session of its own for this (start_session, initiation "user_asked", context "fresh", use_worktree false). Its brief ends with this command on a line of its own: \`${command}\``,
   errors: {
     python: 'Python was not found (python, python3, py): the pane reads the register through the docket hooks.',
     running: 'This spec runs right now.',
@@ -197,7 +197,7 @@ const de: typeof en = {
   briefLead: en.briefLead,
   briefBackground: en.briefBackground,
   askSession: command =>
-    `Starte dafür eine eigene Sitzung (start_session, initiation "user_asked", context "fresh", use_worktree false), deren Auftrag diesen Befehl in einer eigenen Zeile trägt:\n${command}`,
+    `Starte dafür eine eigene Sitzung (start_session, initiation "user_asked", context "fresh", use_worktree false). Ihr Auftrag endet mit diesem Befehl in einer eigenen Zeile: \`${command}\``,
   errors: {
     python: 'Python wurde nicht gefunden (python, python3, py): die Pane liest das Register über die docket-Hooks.',
     running: 'Diese Spec läuft gerade.',

@@ -158,6 +158,8 @@ class ModeSwitch(Project):
 
     def test_implement_with_several_ids_seals_the_first_and_queues_the_rest(self):
         # luradb-web-client 2026-11-06: five ids in one call, the first was sealed, the other four vanished unnamed.
+        for spec_id in ("s-aaaa1111", "s-bbbb2222"):
+            (self.work / "specs" / "core" / f"{spec_id}.md").write_text(f"---\nid: {spec_id}\nstate: ready\n---\n", "utf-8")
         code, err, out = self.prompt(f"/docket:implement {SPEC},s-aaaa1111 s-bbbb2222")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.state()["spec"], SPEC)
@@ -167,6 +169,75 @@ class ModeSwitch(Project):
         self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)  # only the spec at work
         self.assertFalse((self.work / "locks" / "s-aaaa1111").exists())
         self.assertEqual(self.state()["series"], [SPEC, "s-aaaa1111", "s-bbbb2222"])
+
+    def test_a_command_inside_pasted_text_is_text(self):
+        # docket 2026-11-10: the complaint about a sealed session carried that session's transcript, command included.
+        code, err, out = self.prompt(f"docket blocks me, look:\n\n> Aus der docket-Pane:\n/docket:implement {SPEC}\n"
+                                     "[docket] Mode sealed\n\nWhat is going on?")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertNotIn("Mode sealed", out)
+        self.assertFalse((self.work / "locks").exists())
+
+    def test_the_panes_request_for_a_session_seals_nothing_here(self):
+        # luradb-web-client 2026-11-10: the request carried the command on a line of its own, the hook sealed the
+        # asking session on it, and the session started for the run found the spec taken.
+        strings = (HOOKS / "mod" / "strings.ts").read_text("utf-8")
+        asks = [line for line in strings.splitlines() if "start_session, initiation" in line]
+        self.assertEqual(len(asks), 2, "askSession in English and German")
+        for line in asks:
+            text = line.strip().rstrip(",")[1:-1].replace("\\n", "\n").replace("\\`", "`").replace(
+                "${command}", f"/docket:implement {SPEC}")
+            self.assertIn(f"`/docket:implement {SPEC}`", text)
+            code, err, _ = self.prompt(text)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(self.state().get("mode", "none"), "none", text)
+
+    def test_a_command_below_a_preamble_seals(self):
+        for text in (f"Aus der docket-Pane, per Knopf von mir:\n/docket:implement {SPEC}",
+                     "Background (from the session that started this one): started from the docket pane.\n\n"
+                     f"Run this command exactly as written, as your first action:\n\n/docket:implement {SPEC}\n"):
+            self.set_state(mode="none")
+            shutil.rmtree(self.work / "locks", ignore_errors=True)
+            code, err, _ = self.prompt(text)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(self.state()["mode"], "sealed", text)
+
+    def test_a_project_not_set_up_is_never_sealed(self):
+        # docket 2026-11-10: a complaint with a pasted `/docket:implement` line sealed a session in a repo without
+        # DOCKET.md; eight messages of the user went to an inbox and none reached the model.
+        (self.work / "DOCKET.md").unlink()
+        code, err, out = self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
+        self.assertEqual(code, 0, err)
+        self.assertIn("/docket:init", out)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertFalse((self.work / "locks").exists())
+        self.assertEqual(self.log(), "")
+        for command in ("/docket:concept an idea", "/docket:spec the order", "/docket:stop"):
+            self.assertEqual(self.prompt(command)[0], 0)
+            self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertEqual(self.prompt("why does this block?")[0], 0)
+        self.assertFalse((self.work / "inbox").exists())
+
+    def test_a_run_mode_in_the_state_binds_no_hook_without_docket_md(self):
+        # The session of 2026-11-10 as it was left: sealed and halted in a project that is not set up.
+        (self.work / "DOCKET.md").unlink()
+        self.set_state(mode="sealed", spec=SPEC, halted=True, queue=["s-aaaa1111"])
+        code, err, out = self.prompt("why does this block?")
+        self.assertEqual((code, out.strip()), (0, ""), err)
+        self.assertFalse((self.work / "inbox").exists())
+        self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="The cause is found.", ask="Fix it?")[0], 0)
+        self.assertEqual(self.tool("AskUserQuestion", questions=[])[0], 0)
+        self.assertEqual(self.run_stop("The cause is the pasted command.")[0], 0)
+        self.assertEqual(self.log(), "")
+
+    def test_implement_with_a_spec_this_project_does_not_have_is_refused(self):
+        code, err, _ = self.prompt(f"/docket:implement {SPEC}, s-35903eb4, s-55d9034e")
+        self.assertEqual(code, 2)
+        self.assertIn("No spec s-35903eb4, s-55d9034e in this project", err)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertFalse((self.work / "locks").exists())
+        self.assertNotIn("sealed", self.log())
 
     def test_namespaced_commands_are_the_same_commands(self):
         code, _, _ = self.prompt(f"/docket:implement {SPEC}")
@@ -2955,7 +3026,7 @@ class SessionStateRace(Project):
     WORKER = ("import sys, types\n"
               "sys.path.insert(0, sys.argv[1])\n"
               "import docket_lib as d\n"
-              "paths = types.SimpleNamespace(state_dir=sys.argv[2])\n"
+              "paths = types.SimpleNamespace(state_dir=sys.argv[2], config=sys.argv[5])\n"
               "lost = 0\n"
               "for _ in range(int(sys.argv[4])):\n"
               "    state = d.load_state(paths, sys.argv[3])\n"
@@ -2966,7 +3037,8 @@ class SessionStateRace(Project):
     def lib(self):
         sys.path.insert(0, str(HOOKS))
         import docket_lib
-        return docket_lib, type("P", (), {"state_dir": f"{self.p}/.claude/docket"})()
+        return docket_lib, type("P", (), {"state_dir": f"{self.p}/.claude/docket",
+                                          "config": str(self.work / "DOCKET.md")})()
 
     def leftovers(self):
         return sorted(f.name for f in (self.root / ".claude" / "docket").iterdir()
@@ -2975,7 +3047,8 @@ class SessionStateRace(Project):
     def test_fifteen_writers_at_once_keep_the_mode(self):
         self.set_state(mode="spec", read=["a", "b"])
         state_dir = f"{self.p}/.claude/docket"
-        workers = [subprocess.Popen([sys.executable, "-c", self.WORKER, str(HOOKS), state_dir, SID, "25"],
+        workers = [subprocess.Popen([sys.executable, "-c", self.WORKER, str(HOOKS), state_dir, SID, "25",
+                                     str(self.work / "DOCKET.md")],
                                     stdout=subprocess.PIPE) for _ in range(15)]
         lost = sum(int(worker.communicate()[0].decode() or 1) for worker in workers)
         self.assertEqual(lost, 0, "a hook read the default state while the file existed")
@@ -3162,6 +3235,12 @@ class ModeRestore(Project):
             self.assertEqual(code, 2, commands)
             self.assertIn("spec mode only", err)
             self.assertEqual(self.state()["mode"], "none")
+
+    def test_a_command_inside_pasted_text_restores_no_mode(self):
+        self.typed("Schau dir das an:\n\n/docket:spec alle Specs übersetzen\n\nWarum wurde das abgelehnt?")
+        self.set_state(mode="none")
+        self.assertEqual(self.call("Write", file_path=self.new, content="x")[0], 2)
+        self.assertEqual(self.state()["mode"], "none")
 
     def test_the_skill_text_and_a_tool_result_are_no_command(self):
         with self.path.open("a", encoding="utf-8") as handle:

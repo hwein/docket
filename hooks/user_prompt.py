@@ -17,6 +17,7 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from docket_lib import command_line as prompt_command
 from docket_lib import (CONCEPT_ID, REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, claim_lock, clock_line, config_values, display_path,
                         load_state,
                         lock_holder, log_event, logged_series, notice, open_predecessors, precondition_result,
@@ -103,8 +104,8 @@ def main():
         state["refused"] = False  # a new turn of the user: the next Stop is a first pass
         save_state(paths, session_id, state)
     feedback = ""
-    # A command may sit on its own line below a preamble (sessions started by another session).
-    command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")
+    # The first line, or the last below a preamble (the pane, a session started by another); never a line in between.
+    command_line = prompt_command(text)
     name, rest = parse_command(command_line)
     if not name:
         restore_mode(paths, session_id, state, hook_input.get("transcript_path"))  # a mode the state lost
@@ -112,6 +113,12 @@ def main():
         # The model may expand this one command through the Skill tool; pre_tool_use checks against it.
         state["last_command"] = f"/docket:{name}{rest}".lower().split("\n")[0][:80]
         save_state(paths, session_id, state)
+    if name and name != "init" and not os.path.isfile(paths.config):
+        # Not set up: no command but init changes anything here. Nothing is sealed, locked, logged or put into an
+        # inbox, and no work dir is created.
+        print(f"[docket] No DOCKET.md at {paths.work}. Run /docket:init to set this project up; "
+              "until then the docket hooks only observe.")
+        return 0
 
     if name == "implement":
         found, problem = resolve_implement(paths, rest)
@@ -203,9 +210,6 @@ def main():
 
     mode = state.get("mode", "none")
     lines = []
-    if name and name != "init" and mode == "none" and not os.path.isfile(paths.config):
-        lines.append(f"[docket] No DOCKET.md at {paths.work}. Run /docket:init to set this project up; "
-                     "until then the docket hooks only observe.")
     if mode != "none":
         lines.append(f"[docket] Mode {mode}" + (f", spec {state['spec']}" if state.get("spec") else "")
                      + ". " + REMINDERS.get(mode, ""))
@@ -251,6 +255,11 @@ def resolve_implement(paths, rest):
     ids = list(dict.fromkeys(s.lower() for s in SPEC_ID.findall(rest)))
     concept = CONCEPT_ID.search(rest)
     if ids:
+        # A named spec is a spec of this project (docket 2026-11-10: ids pasted from another project sealed a session).
+        unknown = [s for s in ids if not paths.spec_file(s)]
+        if unknown:
+            return [], ("[docket] No spec " + ", ".join(unknown) + " in this project. Run /docket:register to see "
+                        "the register.")
         chosen = ids
     elif concept:
         chosen = [s for s, _ in ready_specs(paths, concept.group(0))]

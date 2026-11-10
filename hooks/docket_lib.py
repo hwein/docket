@@ -712,6 +712,11 @@ def load_state(paths, session_id):
         state = State(data)
         state.base = json.loads(json.dumps(data))
         state.setdefault("mode", "none")
+        if state["mode"] not in ("none", "init") and not os.path.isfile(paths.config):
+            # A project that is not set up has no mode but init: a state that says otherwise is read as none, by
+            # every hook, and the file is left as it is (docket 2026-11-10: a session in a repo without DOCKET.md was
+            # sealed on another project's specs and swallowed eight of the user's messages).
+            state["mode"] = state.base["mode"] = "none"
         return state
     # No file, one that is not a state, or one that could not be opened: the default is this hook's guess, and only
     # what the hook changes on top of it is written. Another hook may write the real state before this one saves
@@ -895,9 +900,21 @@ def clock_line(paths, session_id, state=None, save=True):
 # The state file is docket's own record of the mode; the transcript is the harness's record of what the user typed.
 # Where the state says none and the user's last mode command says otherwise, the state is wrong (no hook ever sets
 # a mode back to none), and the user is not asked to type the command again.
-TYPED_COMMAND = re.compile(r"(?:<command-name>\s*|^\s*)/(?:docket:(?P<full>concept|spec|init|implement)|"
-                           r"(?P<bare>concept|spec|implement))\b", re.IGNORECASE | re.MULTILINE)  # /init is Claude Code's
+MODE_COMMAND = (r"/(?:docket:(?P<full>concept|spec|init|implement)|(?P<bare>concept|spec|implement))\b"
+                )  # /init is Claude Code's
+RAN_COMMAND = re.compile(r"<command-name>\s*" + MODE_COMMAND, re.IGNORECASE)  # how the transcript keeps a command
+TYPED_COMMAND = re.compile(MODE_COMMAND, re.IGNORECASE)
 RESTORABLE_MODES = ("concept", "spec", "init")
+
+
+def command_line(text):
+    """The line of a prompt that can be a command: its first line (typed), or its last (the pane and the brief of a
+    session started by another put the command below a preamble). A line that starts with a slash anywhere else is
+    text - a paste, a quoted transcript, a request that names a command (docket 2026-11-10: a pasted
+    `/docket:implement` line sealed the session that was to find out why another one was sealed; luradb-web-client
+    2026-11-10: the pane's request to start a session for a command sealed the session it asked)."""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    return next((line for line in lines[:1] + lines[-1:] if line.startswith("/")), "")
 
 
 def typed_mode(transcript_path):
@@ -921,7 +938,8 @@ def typed_mode(transcript_path):
         content = entry["message"].get("content")
         if isinstance(content, list):
             content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
-        match = TYPED_COMMAND.search(strip_harness_blocks(content))
+        content = strip_harness_blocks(content or "")
+        match = RAN_COMMAND.search(content) or TYPED_COMMAND.match(command_line(content))
         if match:
             found = (match.group("full") or match.group("bare")).lower()
     return found if found in RESTORABLE_MODES else ""
