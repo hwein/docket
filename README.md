@@ -154,6 +154,26 @@ says what came of them.
 
 How the hooks do this: [HOOKS.md](HOOKS.md).
 
+## The pane
+
+In a project with a `DOCKET.md` a pane opens beside the chat; `/docket-pane` brings it back.
+
+- Register: every concept with its specs, specs without a concept in a group of their own. Each spec shows its
+  state (draft, ready, in progress, done, superseded) and what holds it: the spec it waits for, open decisions,
+  a blocked or dissenting last run. A counter per state stands on top and, as one line, under the prompt.
+- A spec opens to its text, its docket and its LOG lines.
+- Buttons: implement a spec, every ready spec of a concept, or the ready specs you tick, in this session or in a
+  session of its own (Claude Code Desktop); mark a spec as superseded, with the spec that replaces it; stop a
+  run; refresh. Several specs run as one series, in implementation order, one after another.
+- A running spec shows with its points and its place in the series; when it ends you are told once.
+- Tabs for the LOG and for `DOCKET.md`.
+- In a project docket is not set up in, a line above the prompt offers `/docket:init`; `Hide` removes it for that
+  project for good.
+
+The pane changes nothing by itself: a button runs the command you would type, and `superseded` is written with its
+LOG line (`superseded … by=s-…`) by the plugin's own code, as every other state is. It is drawn through Claude
+Code's function hooks, an early-access API: where a client does not draw panes, the commands work as before.
+
 ## Where things live
 
 - Plugin: this repository, installed as Claude Code's own copy. In your project `/docket:init` writes only the
@@ -168,11 +188,12 @@ How the hooks do this: [HOOKS.md](HOOKS.md).
 commands/   concept, spec, implement, init, register, status, stop
 agents/     conceptor, refiner, implementer, reviewer, fixer
 hooks/      hooks.json, Python hooks, tests
+hooks/mod/  the pane (function hooks, TypeScript), its tests
 templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, judge-hook.json
 HOOKS.md    how the hooks enforce the rules
 ```
 
-Tests: `python hooks/test_hooks.py`.
+Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 

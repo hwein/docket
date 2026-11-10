@@ -2504,5 +2504,106 @@ class ExperimentTwelve(Project):
 
 
 
+class PaneData(Project):
+    """hooks/docket_ui.py: what the pane shows and sets, read and written with the hooks' own functions."""
+
+    def ui(self, action, *args, session=SID):
+        result = subprocess.run([sys.executable, str(HOOKS / "docket_ui.py"), action, "--root", self.p,
+                                 "--session", session, *args], capture_output=True,
+                                env={k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"})
+        return result.returncode, json.loads(result.stdout.decode("utf-8"))
+
+    def spec_file(self, spec_id, title, state="ready", follows="", concept="", body=""):
+        path = self.work / "specs" / "core" / f"{spec_id}-{title.lower()}.md"
+        path.write_text(f"---\nid: {spec_id}\ntitle: {title}\nstate: {state}          # draft | ready\n"
+                        f"concept: {concept}\nfollows: {follows}\ncreated: 2026-11-02\n---\n# {title}\n{body}", "utf-8")
+        return path
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\nconcept: c-11112222\nfollows:\n"
+                             "created: 2026-11-01\n---\n# Login\n", "utf-8")
+        (self.work / "concepts" / "core" / "c-11112222-accounts.md").write_text(
+            "---\nid: c-11112222\ntopic: core\ntitle: Accounts\nstate: agreed\n---\n# Accounts\n\n## Open decisions (user)\n\n"
+            "| Question | Recommendation | Answer (date) |\n|---|---|---|\n| SSO? | no | |\n| MFA? | yes | yes (2026-11-01) |\n",
+            "utf-8")
+        self.spec_file("s-aaaa1111", "Logout", follows=SPEC, concept="c-11112222")
+        self.spec_file("s-bbbb2222", "Profile", state="draft",
+                       body="\n## User decisions\n\n| Question | Recommendation | Answer (date) |\n|---|---|---|\n"
+                            "| Avatar? | yes | |\n\n## Rewrite\n")
+        self.spec_file("s-cccc3333", "Signup", state="done")
+
+    def test_overview_counts_the_states_and_names_what_holds_a_spec(self):
+        (self.work / "dockets" / "core" / "s-cccc3333.md").write_text(
+            "## Points\n| 1 | a | `a` | [x] |\n| 2 | b | `b` | [~] |\n\n## Terminal state\n\n- state: DELIVERED\n"
+            "- result: Signup works.\n", "utf-8")
+        code, data = self.ui("overview")
+        self.assertEqual(code, 0, data)
+        self.assertTrue(data["initialized"])
+        self.assertEqual(data["counts"], {"draft": 1, "ready": 2, "in-progress": 0, "done": 1, "superseded": 0,
+                                          "open": 3, "total": 4})
+        specs = {s["id"]: s for s in data["specs"]}
+        self.assertEqual(specs["s-aaaa1111"]["waits_for"], [SPEC])
+        self.assertLess(specs[SPEC]["order"], specs["s-aaaa1111"]["order"])  # Logout follows Login
+        self.assertEqual(sorted(s["order"] for s in data["specs"]), [0, 1, 2, 3])
+        self.assertEqual(specs["s-aaaa1111"]["concept"], "c-11112222")
+        self.assertEqual(specs["s-bbbb2222"]["concept"], "")
+        self.assertEqual(specs["s-bbbb2222"]["decisions"], 1)
+        self.assertEqual(specs["s-cccc3333"]["result"], {"kind": "delivered", "text": "Signup works."})
+        self.assertEqual(specs["s-cccc3333"]["points"], {"done": 1, "deviating": 1, "open": 0})
+        self.assertTrue(specs[SPEC]["path"].endswith(f"{SPEC}-login.md"))
+        self.assertEqual([(c["id"], c["title"], c["state"], c["decisions"]) for c in data["concepts"]],
+                         [("c-11112222", "Accounts", "agreed", 1)])
+        self.assertEqual(data["runs"], [])
+
+    def test_overview_of_a_project_without_docket_md_says_so(self):
+        (self.work / "DOCKET.md").unlink()
+        code, data = self.ui("overview")
+        self.assertEqual((code, data["initialized"]), (0, False))
+        self.assertNotIn("specs", data)
+
+    def test_overview_names_the_run_of_this_session_and_its_place_in_the_series(self):
+        self.assertEqual(self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")[0], 0)
+        self.docket.write_text("## Points\n| 1 | a | `a` | [x] |\n| 2 | b | `b` | [ ] |\n", "utf-8")
+        _, data = self.ui("overview")
+        self.assertEqual(len(data["runs"]), 1)
+        run = data["runs"][0]
+        self.assertEqual((run["mine"], run["spec"], run["title"], run["i"], run["n"]), (True, SPEC, "Login", 1, 2))
+        self.assertEqual(run["points"], {"done": 1, "deviating": 0, "open": 1})
+        self.assertEqual({s["id"]: s["running"] for s in data["specs"]}[SPEC], SID)
+        self.assertEqual(data["counts"]["in-progress"], 1)
+        self.assertTrue(any(" sealed " in line for line in data["log"]))
+
+    def test_supersede_writes_the_state_keeps_the_comment_and_logs_the_successor(self):
+        code, data = self.ui("supersede", "--spec", "s-bbbb2222", "--by", "s-aaaa1111")
+        self.assertEqual((code, data["ok"]), (0, True), data)
+        text = (self.work / "specs" / "core" / "s-bbbb2222-profile.md").read_text("utf-8")
+        self.assertIn("state: superseded          # draft | ready", text)
+        self.assertRegex(self.log(), r"s-bbbb2222\s+superseded\s+session=test-ses\s+by=s-aaaa1111")
+        _, after = self.ui("overview")
+        self.assertEqual({s["id"]: s["superseded_by"] for s in after["specs"]}["s-bbbb2222"], "s-aaaa1111")
+        self.assertEqual(after["counts"]["superseded"], 1)
+
+    def test_supersede_refuses_a_running_spec_an_unknown_successor_and_itself(self):
+        self.assertEqual(self.ui("supersede", "--spec", SPEC, "--by", SPEC)[1]["error"], "unknown-successor")
+        self.assertEqual(self.ui("supersede", "--spec", SPEC, "--by", "s-dddd4444")[1]["error"], "unknown-successor")
+        self.assertEqual(self.ui("supersede", "--spec", "s-dddd4444", "--by", SPEC)[1]["error"], "unknown-spec")
+        self.assertEqual(self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")[0], 0)
+        code, data = self.ui("supersede", "--spec", SPEC, "--by", "s-cccc3333", session="other-session")
+        self.assertEqual((code, data["error"]), (1, "running"))
+        self.assertEqual(self.ui("supersede", "--spec", "s-aaaa1111", "--by", "s-cccc3333",
+                                 session="other-session")[1]["error"], "queued")
+        self.assertIn("state: in-progress", self.spec.read_text("utf-8"))
+
+    def test_stop_records_the_request_for_a_running_session_only(self):
+        self.assertEqual(self.ui("stop")[1]["error"], "not-running")
+        self.assertEqual(self.prompt(f"/docket:implement {SPEC}")[0], 0)
+        code, data = self.ui("stop")
+        self.assertEqual((code, data["ok"], data["spec"]), (0, True, SPEC))
+        self.assertTrue(self.state()["stop_requested"])
+        self.assertIn("stop-requested", self.log())
+        self.assertTrue(self.ui("overview")[1]["runs"][0]["stop_requested"])
+
+
 if __name__ == "__main__":
     unittest.main()

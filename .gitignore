@@ -6,3 +6,4 @@ experiments/*/result*.log
 experiments/*/.claude/settings.local.json
 framework/
 experiments/
+.claude-plugin/types/

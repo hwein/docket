@@ -93,6 +93,32 @@ record in `.claude/docket/` (written first), and it comes back when the run ends
 the run that took it is no longer running. A settings file a commit could carry (tracked, or not ignored) is left
 alone; there a verdict in a run is logged as `judge-ignored` and counts nothing.
 
+## The pane
+
+`hooks/hooks.json` names one hooks module beside the hook commands, `hooks/mod/register.tsx`. It draws the pane, the
+line under the prompt and, where docket is not set up, the line above it. It reads no docket file's meaning by
+itself: `hooks/docket_ui.py overview` answers the register, the runs and the LOG as JSON, built with the functions
+the hooks use (`spec_records`, `docket_counts`, `terminal_section`, `session_live`), so the pane and the hooks read
+one project the same way. A spec's or a docket's text is shown as the file holds it.
+
+What a button does:
+
+- Implement, stop, set up: the command itself (`/docket:implement s-… | c-…`, `/docket:stop`, `/docket:init`), run
+  as if typed, so `user_prompt.py` resolves, checks and seals exactly as for a typed command. Ticked specs go as
+  `/docket:implement s-a, s-b` in implementation order (`in_order`, the order `overview` numbers them in); a tick
+  whose predecessor is neither done nor ticked offers no run, since the hook would refuse it. In a session of its
+  own: Claude Code Desktop's session tool is called with a brief that carries the command on a line of its own;
+  where the call is not allowed, Claude is asked to start that session.
+- Superseded: `docket_ui.py supersede --spec … --by …` writes `state: superseded` and the LOG line
+  `superseded … by=s-…`. It refuses a spec that runs or waits in a running series, an unknown or superseded
+  successor, and a spec already superseded. The model still never sets this state.
+- Stop for a run of another session: `docket_ui.py stop --session …` records what `/docket:stop` records there
+  (`stop_requested`, LOG `stop-requested`): that series ends with the spec at work.
+
+The pane reads again after a prompt, at the end of a turn, at most every ten seconds while tools run, every fifteen
+while another session runs a spec, and on `Refresh`. Its tests run against the engine's own test kit
+(`claude plugin test .`), with the Python side mocked; `python hooks/test_hooks.py` covers `docket_ui.py`.
+
 ## Footprint
 
 docket adds no code to the repository. The judge entry `/docket:init` writes into `.claude/settings.json` follows

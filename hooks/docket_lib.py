@@ -347,7 +347,7 @@ def spec_title(paths, spec_id):
 
 
 def spec_records(paths):
-    """Frontmatter of every spec (id, title, state, follows, concept, created), by path."""
+    """Frontmatter of every spec (id, title, topic, state, follows, concept, created) and its file, by path."""
     found = []
     if not os.path.isdir(paths.specs):
         return found
@@ -360,6 +360,7 @@ def spec_records(paths):
                 fields = frontmatter(posixpath.join(folder, name))
                 if SPEC_ID.fullmatch(fields.get("id", "")):
                     found.append({"id": fields["id"].lower(), "title": fields.get("title", ""),
+                                  "topic": fields.get("topic", "") or topic, "path": posixpath.join(folder, name),
                                   "state": fields.get("state", "").lower(),
                                   "follows": [s.lower() for s in SPEC_ID.findall(fields.get("follows", ""))],
                                   "concept": (CONCEPT_ID.search(fields.get("concept", "")) or [None])[0]
