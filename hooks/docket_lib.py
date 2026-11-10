@@ -579,29 +579,182 @@ def state_path(paths, session_id):
     return posixpath.join(paths.state_dir, f"state-{session_id}.json")
 
 
-def load_state(paths, session_id):
+# One state file per session, and many hooks at once: a message that starts 14 agents runs 14 PostToolUse hooks in
+# the same second, every tool call of every agent runs two more. Each hook used to read the whole state, change a
+# field and write the whole state back, and a read that failed on Windows (the file open in another process, or
+# just being replaced) counted as "no state": mode none went back to disk and a spec session lost its mode
+# (luradb-web-client 2026-11-10: 15 conceptors worked 10-25 minutes, every Write was refused).
+# So: a read is retried and never answered with a default while the file exists; a save takes a lock, reads the
+# file again and writes back only the fields this hook changed.
+READ_WAIT = 2.0
+INVALID_WAIT = 0.3  # a replace is atomic: a file that does not parse was not written by these functions
+REPLACE_WAIT = 2.0
+LOCK_WAIT = 3.0
+LOCK_STALE = 10.0
+_LOCKS_HELD = set()
+
+
+def read_json(path, wait=READ_WAIT):
+    """(data, problem) of a JSON file other processes replace: problem is "" (read), "missing" (no such file),
+    "invalid" (not JSON after `wait` seconds) or "unreadable" (could not be opened in that time)."""
+    start = time.time()
+    while True:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                return json.load(handle), ""
+        except FileNotFoundError:
+            return None, "missing"
+        except ValueError:
+            problem = "invalid"
+        except OSError:
+            problem = "unreadable"
+        if time.time() - start >= (min(wait, INVALID_WAIT) if problem == "invalid" else wait):
+            return None, problem
+        time.sleep(0.01)
+
+
+def write_json(path, data, wait=REPLACE_WAIT):
+    """Atomic. On Windows the replace fails while another process has the file open: it is tried again for `wait`
+    seconds, and the temporary file never stays behind. True when the file was written."""
+    temp = f"{path}.{os.getpid()}.tmp"
     try:
-        with open(state_path(paths, session_id), encoding="utf-8-sig") as handle:
-            state = json.load(handle)
-        if isinstance(state, dict):
-            state.setdefault("mode", "none")
-            return state
-    except (OSError, ValueError):
-        pass
+        os.makedirs(posixpath.dirname(path), exist_ok=True)
+        with open(temp, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, indent=1)
+        deadline = time.time() + wait
+        while True:
+            try:
+                os.replace(temp, path)
+                return True
+            except OSError:
+                if time.time() >= deadline:
+                    return False
+                time.sleep(0.01)
+    except OSError:
+        return False
+    finally:
+        try:
+            if os.path.exists(temp):
+                os.remove(temp)
+        except OSError:
+            pass
+
+
+class file_lock:
+    """`with file_lock(path):` one writer at a time on `path`, across processes: a lock file created exclusively.
+    A lock older than LOCK_STALE seconds belongs to a hook that was killed and is taken over. After LOCK_WAIT
+    seconds the block runs without the lock: a hook never hangs on it. Re-entrant within one process."""
+
+    def __init__(self, path):
+        self.path, self.lock, self.held = path, path + ".lock", False
+
+    def __enter__(self):
+        if self.path in _LOCKS_HELD:
+            return self
+        deadline = time.time() + LOCK_WAIT
+        while True:
+            try:
+                os.close(os.open(self.lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                self.held = True
+                _LOCKS_HELD.add(self.path)
+                return self
+            except FileNotFoundError:
+                try:
+                    os.makedirs(posixpath.dirname(self.lock), exist_ok=True)
+                except OSError:
+                    return self
+            except OSError:  # held by another hook (FileExistsError; PermissionError while Windows deletes it)
+                if not os.path.exists(self.lock):
+                    return self  # not held: the folder takes no file, and waiting changes nothing
+                try:
+                    if time.time() - os.path.getmtime(self.lock) > LOCK_STALE:
+                        os.remove(self.lock)
+                        continue
+                except OSError:
+                    pass
+            if time.time() >= deadline:
+                return self
+            time.sleep(0.004)
+
+    def __exit__(self, *exc):
+        if self.held:
+            self.held = False
+            _LOCKS_HELD.discard(self.path)
+            deadline = time.time() + 1.0
+            while True:
+                try:
+                    os.remove(self.lock)
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    if time.time() >= deadline:
+                        break
+                    time.sleep(0.004)
+        return False
+
+
+class State(dict):
+    """The session state as one hook read it. `base` is what the file held then: save_state writes back only what
+    differs from it. `unreadable`: the file exists and could not be read; such a state is the default, and nothing of
+    it is a fact about the session."""
+    base = None
+    unreadable = False
+
+
+def default_state():
     return {"version": STATE_VERSION, "mode": "none", "spec": "", "degraded": False, "read": []}
 
 
+def load_state(paths, session_id):
+    data, problem = read_json(state_path(paths, session_id))
+    if isinstance(data, dict):
+        state = State(data)
+        state.base = json.loads(json.dumps(data))
+        state.setdefault("mode", "none")
+        return state
+    # No file, one that is not a state, or one that could not be opened: the default is this hook's guess, and only
+    # what the hook changes on top of it is written. Another hook may write the real state before this one saves
+    # (SessionStart and the first prompt's hook run at the same moment).
+    state = State(default_state())
+    state.base = default_state()
+    state.unreadable = problem == "unreadable"
+    return state
+
+
 def save_state(paths, session_id, state):
-    """Atomic: SessionStart and UserPromptSubmit can run at the same moment on a session's first prompt;
-    two writers on one file left a truncated JSON once, and a state that does not parse reads as mode none."""
+    """Writes the fields this hook changed since it loaded the state into the file as it is now, under the session's
+    lock: two hooks that change different fields both keep their change, and a hook that read an older state (or
+    none) cannot write it over a newer one. A plain dict replaces the file."""
+    target = state_path(paths, session_id)
+    base = getattr(state, "base", None)
+    with file_lock(target):
+        if base is None:
+            merged = dict(state)
+        else:
+            current, problem = read_json(target)
+            if problem == "unreadable":
+                return  # the file is there and closed to us: nothing we know is worth more than what it holds
+            if isinstance(current, dict):
+                merged = current
+                for key in set(state) | set(base):
+                    if key not in state:
+                        merged.pop(key, None)
+                    elif key not in base or state[key] != base[key]:
+                        merged[key] = state[key]
+            else:
+                merged = dict(state)  # no file, or one that is no state: what this hook knows is all there is
+        if write_json(target, merged) and isinstance(state, State):
+            state.base = json.loads(json.dumps(dict(state)))
+            state.unreadable = False
+    prune_states(paths.state_dir)
+
+
+def touch_state(paths, session_id):
+    """The state file's time without its content: an agent's tool call shows that the session lives (session_live)
+    and changes nothing in it."""
     try:
-        os.makedirs(paths.state_dir, exist_ok=True)
-        target = state_path(paths, session_id)
-        temp = f"{target}.{os.getpid()}.tmp"
-        with open(temp, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(state, handle, indent=1)
-        os.replace(temp, target)
-        prune_states(paths.state_dir)
+        os.utime(state_path(paths, session_id))
     except OSError:
         pass
 
@@ -627,29 +780,17 @@ def buffer_path(paths, session_id, message_id):
 
 
 def load_display(paths, session_id):
-    try:
-        with open(display_path(paths, session_id), encoding="utf-8-sig") as handle:
-            record = json.load(handle)
-        if isinstance(record, dict):
-            record.setdefault("hidden", [])
-            record.setdefault("pending", {})
-            record.setdefault("retry", False)
-            return record
-    except (OSError, ValueError):
-        pass
-    return {"hidden": [], "pending": {}, "retry": False}
+    record, _ = read_json(display_path(paths, session_id))
+    if not isinstance(record, dict):
+        record = {}
+    record.setdefault("hidden", [])
+    record.setdefault("pending", {})
+    record.setdefault("retry", False)
+    return record
 
 
 def save_display(paths, session_id, record):
-    try:
-        os.makedirs(paths.state_dir, exist_ok=True)
-        target = display_path(paths, session_id)
-        temp = f"{target}.{os.getpid()}.tmp"
-        with open(temp, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(record, handle, indent=1)
-        os.replace(temp, target)
-    except OSError:
-        pass
+    write_json(display_path(paths, session_id), record)
 
 
 def settled_display(paths, session_id, wait=3.0):
@@ -738,12 +879,67 @@ def commit_work_dir(paths, message):
 # The hooks hand the time to the model with every prompt and every tool result, so the stamp needs no tool
 # call (25 of 174 calls fetched the time on 2026-11-05). stop.py accepts a stamp equal to the last given value.
 
-def clock_line(paths, session_id, state=None):
-    """Saves the current time in the session state and returns the context line that carries it."""
-    state = state if state is not None else load_state(paths, session_id)
-    state["clock"] = time.strftime("%Y-%m-%d %H:%M")
+def clock_line(paths, session_id, state=None, save=True):
+    """Saves the current time in the session state and returns the context line that carries it. `save=False` for
+    an agent's tool call: only the orchestrator's stamp is checked against the clock, and an agent writes nothing
+    into the session state."""
+    now = time.strftime("%Y-%m-%d %H:%M")
+    if save:
+        state = state if state is not None else load_state(paths, session_id)
+        state["clock"] = now
+        save_state(paths, session_id, state)
+    return f"[docket] clock: {now}"
+
+
+# --- the mode the user typed -------------------------------------------------
+# The state file is docket's own record of the mode; the transcript is the harness's record of what the user typed.
+# Where the state says none and the user's last mode command says otherwise, the state is wrong (no hook ever sets
+# a mode back to none), and the user is not asked to type the command again.
+TYPED_COMMAND = re.compile(r"(?:<command-name>\s*|^\s*)/(?:docket:(?P<full>concept|spec|init|implement)|"
+                           r"(?P<bare>concept|spec|implement))\b", re.IGNORECASE | re.MULTILINE)  # /init is Claude Code's
+RESTORABLE_MODES = ("concept", "spec", "init")
+
+
+def typed_mode(transcript_path):
+    """The mode of the last mode command the user typed in this session: concept, spec or init; "" for none and
+    for implement, whose run (series, queue, outcomes) cannot be rebuilt from a command."""
+    try:
+        with open(transcript_path, "rb") as handle:
+            raw = handle.read().decode("utf-8", errors="ignore")
+    except (OSError, TypeError, ValueError):
+        return ""
+    found = ""
+    for line in raw.splitlines():
+        if "/docket:" not in line and "/concept" not in line and "/spec" not in line and "/implement" not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or not is_user_prompt(entry):
+            continue
+        content = entry["message"].get("content")
+        if isinstance(content, list):
+            content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+        match = TYPED_COMMAND.search(strip_harness_blocks(content))
+        if match:
+            found = (match.group("full") or match.group("bare")).lower()
+    return found if found in RESTORABLE_MODES else ""
+
+
+def restore_mode(paths, session_id, state, transcript_path):
+    """Puts back a mode the state lost. True when the state now carries the mode the user typed."""
+    if state.get("mode", "none") != "none" or not os.path.isfile(paths.config):
+        return False
+    mode = typed_mode(transcript_path)
+    if not mode:
+        return False
+    state.update({"mode": mode, "spec": ""})
+    if mode == "init":
+        state["init_approved"] = False
     save_state(paths, session_id, state)
-    return f"[docket] clock: {state['clock']}"
+    log_event(paths, session_id, "", "mode-restored", mode)
+    return True
 
 
 # --- transcript --------------------------------------------------------------
@@ -965,7 +1161,9 @@ def text_of(content):
     return content if isinstance(content, str) and content.strip() else None
 
 
-def last_assistant_text(transcript_path):
+def last_assistant_text(transcript_path, unchecked=False):
+    """The newest text of the assistant. `unchecked`: only one no Stop has seen yet (no `stop_hook_summary` after
+    it); a text an earlier Stop passed is not the message of a later turn that ended without text."""
     try:
         with open(transcript_path, encoding="utf-8", errors="ignore") as handle:
             lines = handle.readlines()
@@ -976,6 +1174,10 @@ def last_assistant_text(transcript_path):
         try:
             entry = json.loads(line)
         except ValueError:
+            continue
+        if (unchecked and isinstance(entry, dict) and entry.get("type") == "system"
+                and entry.get("subtype") == "stop_hook_summary" and not entry.get("isSidechain")):
+            text = None
             continue
         if not isinstance(entry, dict) or entry.get("type") != "assistant":
             continue
@@ -988,11 +1190,13 @@ def last_assistant_text(transcript_path):
 
 def message_text(hook_input, transcript_key="transcript_path", strict=False):
     """The message that ends the turn. `strict`: only `last_assistant_message`; an empty turn stays empty and never
-    falls back to an older text of the transcript (a sealed run ends its waits without text)."""
+    falls back to an older text of the transcript (a sealed run ends its waits without text). Otherwise the
+    transcript's newest text counts while no Stop has seen it: a turn that ends without text (a wait for agents, the
+    answer to a judge verdict) is not checked against the message of the turn before, whose stamp has aged."""
     text = text_of(hook_input.get("last_assistant_message"))
     if text is not None or strict:
         return text
-    return last_assistant_text(hook_input.get(transcript_key))
+    return last_assistant_text(hook_input.get(transcript_key), unchecked=transcript_key == "transcript_path")
 
 
 # --- judge -------------------------------------------------------------------
@@ -1068,14 +1272,19 @@ def collect_judge(paths, session_id, state, transcript_path):
             record_violation(paths, doc_id, f"judge {tag}")
 
 
+NUDGE = "[Your previous response had no visible output"  # the harness after a turn that ended without text
+
+
 def answers_judge(transcript_path):
-    """True when the newest text of the user's side is the judge's feedback and no request to write a held-back
+    """Truthy when the newest text of the user's side is the judge's feedback and no request to write a held-back
     message again: the message being displayed is the acknowledgement, and the user has already read the
-    message it answers."""
+    message it answers. "direct": it answers the verdict itself. "nudged": the verdict was answered with an empty
+    turn, as asked, and the harness then demanded a visible answer (Claude Code Desktop 2.1.321, luradb-web-client
+    2026-11-10: six of six verdicts ended in a line `Blocker unverändert` or a bare stamp on the user's screen)."""
     # Claude Code writes each Stop hook's feedback as an entry of its own, the slower judge last: the whole block of
     # feedback since the last text is read, or stop.py's request for a full rewrite is missed and the rewrite hidden
     # (legacy session 2026-11-05, entries 522 and 523).
-    judged = False
+    judged, nudged = False, False
     for entry in reversed(transcript_entries(transcript_path, tail=True)):
         if entry.get("isSidechain"):
             continue
@@ -1093,12 +1302,15 @@ def answers_judge(transcript_path):
             content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
         if not isinstance(content, str) or not content.strip():
             continue
+        if content.lstrip().startswith(NUDGE) and not judged:
+            nudged = True
+            continue
         if not content.lstrip().startswith(STOP_FEEDBACK):
             break  # a prompt of the user ends the block
         if HELD_BACK in content:
-            return False
+            return ""
         judged = judged or JUDGE_PROMPT in content
-    return judged
+    return ("nudged" if nudged else "direct") if judged else ""
 
 
 def transcript_entries(transcript_path, tail=False):

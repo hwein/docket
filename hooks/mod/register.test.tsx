@@ -220,6 +220,101 @@ test('a docket project opens the pane, sets the status line and lists specs unde
   }
 })
 
+/** What a spec's row says in front of its state glyph. */
+const lead = (row: { text: string } | undefined): string | undefined =>
+  row?.text.slice(0, row.text.search(/[○●◐✔⊘]/))
+
+test('an open spec carries its position in the order of implementation, counted across concepts', async ($, on) => {
+  const { clock } = world(on, () =>
+    overview({
+      concepts: [
+        { id: 'c-11112222', title: 'Accounts', topic: 'core', state: 'agreed', path: '/work/c.md', decisions: 0 },
+        { id: 'c-33334444', title: 'Billing', topic: 'core', state: 'agreed', path: '/work/d.md', decisions: 0 },
+      ],
+      specs: [
+        // The older of the two, and ready where Login is a draft, yet after it: it follows Login.
+        spec('s-aaaa1111', 'Logout', 'ready', {
+          concept: 'c-11112222',
+          created: '2026-11-01',
+          follows: ['s-0123abcd'],
+          waits_for: ['s-0123abcd'],
+          order: 4,
+        }),
+        spec('s-0123abcd', 'Login', 'draft', { concept: 'c-11112222', created: '2026-11-03', order: 3 }),
+        spec('s-eeee5555', 'Tariff', 'in-progress', { concept: 'c-33334444', created: '2026-11-04', order: 5 }),
+        spec('s-dddd4444', 'Invoice', 'ready', { concept: 'c-33334444', created: '2026-11-02', order: 2 }),
+        spec('s-ffff6666', 'Guest', 'superseded', { concept: 'c-11112222', created: '2026-10-25', order: 1 }),
+        spec('s-cccc3333', 'Signup', 'done', { concept: 'c-11112222', created: '2026-10-20', order: 0 }),
+      ],
+    }),
+  )
+
+  await start($, clock)
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const rows = (await ui.findAll({ type: 'Button' })).filter(found => found.key?.startsWith('spec-'))
+
+    // Open specs by position, the finished ones after them; a finished spec counts for no position.
+    expect(rows.map(row => row.key)).toEqual([
+      'spec-s-0123abcd',
+      'spec-s-aaaa1111',
+      'spec-s-cccc3333',
+      'spec-s-ffff6666',
+      'spec-s-dddd4444',
+      'spec-s-eeee5555',
+    ])
+    // One count over both concepts; a finished spec has a blank of a position's width.
+    expect(rows.map(lead)).toEqual(['2. ', '3. ', '\u2007\u2008 ', '\u2007\u2008 ', '1. ', '4. '])
+    await ui.unmount()
+  }
+})
+
+test('the positions are explained from two open specs on, and ten of them stay in one column', async ($, on) => {
+  const done = spec('s-cccc3333', 'Signup', 'done', { order: 0 })
+  let specs = [done, spec('s-0123abcd', 'Login', 'ready', { order: 1 })]
+  let language = 'en'
+  const { clock } = world(on, () => overview({ concepts: [], specs, language }))
+  const reread = async (ui: { press: (target: { key: string }) => Promise<unknown>; unmount: () => Promise<void> }) => {
+    await ui.press({ key: 'refresh' })
+    await ui.unmount()
+
+    return $.ui.mount({ ...PANE, surface: 'desktop' })
+  }
+
+  await start($, clock)
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // One open spec has its number, and nothing to be ordered against.
+  expect(lead(await ui.find({ key: 'spec-s-0123abcd' }))).toBe('1. ')
+  expect(await ui.find({ type: 'Text', text: /recommended order/ })).toBeUndefined()
+
+  specs = [...specs, spec('s-aaaa1111', 'Logout', 'draft', { order: 2 })]
+  ui = await reread(ui)
+  expect((await ui.find({ type: 'Text', text: /recommended order/ }))?.text).toBe(
+    'The number before a spec is its position in the recommended order of implementation: predecessors first, then by age.',
+  )
+
+  language = 'de'
+  ui = await reread(ui)
+  expect((await ui.find({ type: 'Text', text: /Umsetzungsreihenfolge/ }))?.text).toBe(
+    'Die Zahl vor einer Spec ist ihre Position in der empfohlenen Umsetzungsreihenfolge: Vorgänger zuerst, dann nach Alter.',
+  )
+
+  // Two digits: the shorter positions and the finished spec's blank take the width of the longest.
+  specs = [done, ...Array.from({ length: 10 }, (_, i) => spec(`s-0000000${i}`, `Step ${i}`, 'draft', { order: i + 1 }))]
+  ui = await reread(ui)
+  expect(lead(await ui.find({ key: 'spec-s-00000000' }))).toBe('\u20071. ')
+  expect(lead(await ui.find({ key: 'spec-s-00000009' }))).toBe('10. ')
+  expect(lead(await ui.find({ key: 'spec-s-cccc3333' }))).toBe('\u2007\u2007\u2008 ')
+
+  // No open spec: no column.
+  specs = [done]
+  ui = await reread(ui)
+  expect(lead(await ui.find({ key: 'spec-s-cccc3333' }))).toBe('')
+  await ui.unmount()
+})
+
 test('a spec opens to its text, and its button starts the run in this session', async ($, on) => {
   const { seen, clock } = world(on, overview)
 

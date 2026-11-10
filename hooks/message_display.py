@@ -19,9 +19,11 @@ it runs after the message is on the screen, so a rewrite shows the message twice
 - In closing only the closing message the hook rendered is shown; another text is hidden and the Stop hook asks
   for the rendered one; at the third try the gate shows the rendered text itself.
 - The judge's verdict is answered with an empty turn (templates/judge-hook.json), so there is nothing to hide.
-  An older acknowledgement line `[docket] noted` is still hidden live; the desktop app renders the transcript's
-  original text when a session is opened later (experiment 10), so hiding is not durable and the empty answer is
-  the rule. Not when stop.py asked in the same feedback for a held-back message in full: that answer is shown.
+  Where the harness then demands a visible answer (Claude Code Desktop: "no visible output"), that answer is the
+  line `[docket] noted` and is hidden, as is a bare stamp or `Blocker unverändert` after a verdict
+  (luradb-web-client 2026-11-10: six such lines reached the user). The desktop app renders the transcript's
+  original text when a session is opened later (experiment 10), so hiding is not durable and the empty answer
+  stays the rule. Not when stop.py asked in the same feedback for a held-back message in full: that answer is shown.
 - Fails open: any error shows the original text.
 Nothing is printed except the hook's JSON answer.
 """
@@ -33,7 +35,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from docket_lib import (HIDDEN, SESSION_ID, Paths, answers_judge, buffer_path, closing_path, load_display, load_state,
                         normalized_lines, read_input, read_text, save_display, status_line)
-from stop import CLOSING_TRIES, GATED_MODES, WATERMARK, box_problems, content_problems, lines_of
+from stop import CLOSING_TRIES, GATED_MODES, WATERMARK, box_problems, content_problems, is_judge_ack, is_stub, lines_of
 
 
 def show(text):
@@ -53,8 +55,19 @@ def main():
     mode = state.get("mode", "none")
     # The acknowledgement of a judge verdict: the user has read the message it answers. Not in closing, where the
     # closing branch alone decides (review 2026-11-06: a verdict next to the closing order hid the closing message).
-    if mode != "closing" and os.path.isfile(paths.config) and answers_judge(hook_input.get("transcript_path")):
-        return show(HIDDEN)
+    if mode != "closing" and os.path.isfile(paths.config):
+        answered = answers_judge(hook_input.get("transcript_path"))
+        if answered == "direct":
+            return show(HIDDEN)
+        # An answer the harness forced after a turn that rightly ended without text (a judge verdict, a wait for
+        # agents): the acknowledgement line is never shown, and after a verdict neither is a bare stamp or
+        # `Blocker unverändert`. Only a whole message is judged so: one batch, final.
+        whole = hook_input.get("delta") or ""
+        # Not in a run: there every text becomes the status line below.
+        if (mode not in ("sealed", "rewrite") and hook_input.get("final")
+                and not os.path.isfile(buffer_path(paths, session_id, message_id))
+                and (is_judge_ack(whole) or (answered == "nudged" and is_stub(whole)))):
+            return show(HIDDEN)
     if mode not in GATED_MODES or not os.path.isfile(paths.config):
         return 0
     record = load_display(paths, session_id)

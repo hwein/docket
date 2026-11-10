@@ -20,7 +20,8 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (CONCEPT_ID, RUN_MODES, SPEC_ID, Paths, claim_lock, clock_line, config_values, display_path,
                         load_state,
                         lock_holder, log_event, logged_series, notice, open_predecessors, precondition_result,
-                        preconditions, queued_elsewhere, read_input, ready_specs, refuse, save_display, save_state, say,
+                        preconditions, queued_elsewhere, read_input, ready_specs, refuse, restore_mode, save_display,
+                        save_state, say,
                         series_line, session_live, set_context, set_spec_state, spec_title, strip_harness_blocks,
                         suspend_judge, terminal_base, violations_line)
 
@@ -55,7 +56,8 @@ WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`: the ti
              "(the hooks give it with every prompt and every tool result; no tool call needed) or fetched from the clock "
              "now, never remembered; the hook refuses the message otherwise. Sent back: do exactly what the hook asks "
              "(the stamp line alone, correction lines, or after a judge verdict an empty answer); repeat a message "
-             "only when it says it was held back.")
+             "only when it says it was held back. When the harness says an answer had no visible output and you have "
+             "nothing new for the user, the whole answer is the line `[docket] noted`: it is not shown.")
 RUN_RULE = ("In a sealed run you write no text and no stamp: the run's one message is the closing message the hook "
             "renders at its end. A turn that waits for agents ends without text.")
 
@@ -103,6 +105,8 @@ def main():
     # A command may sit on its own line below a preamble (sessions started by another session).
     command_line = next((line.strip() for line in text.splitlines() if line.strip().startswith("/")), "")
     name, rest = parse_command(command_line)
+    if not name:
+        restore_mode(paths, session_id, state, hook_input.get("transcript_path"))  # a mode the state lost
     if name:
         # The model may expand this one command through the Skill tool; pre_tool_use checks against it.
         state["last_command"] = f"/docket:{name}{rest}".lower().split("\n")[0][:80]

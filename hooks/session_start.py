@@ -33,6 +33,7 @@ JUDGE_VERSIONS = (
     "a3e15f7bb88c5d429ba60ef5c715b39706813296dc543287f6c51ee25dc58bb2",  # 964a32e
     "cc495faee6749643631443339542108ada60ff6d505b41d8eb7db180ed5e3817",  # 2087323
     "f14e0d464e7013031488bbbc9221448b13f33c1590225e65108c948ca6be44b0",  # 0.2.9: a blocker names every step of the user
+    "1837459e90f76e13c1fb9c5102498c8c104a1fc714a991ae6b07c4334dce35a0",  # 0.5.1: a /docket: command is no manual task
 )
 
 

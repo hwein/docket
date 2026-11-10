@@ -34,6 +34,8 @@ const en = {
   clearPicks: 'Clear selection',
   pickHint: '☐ selects a ready spec; several run as one series.',
   picksBlocked: (title: string, before: string) => `“${title}” waits for “${before}”: select that one too.`,
+  orderHint:
+    'The number before a spec is its position in the recommended order of implementation: predecessors first, then by age.',
   back: '← Register',
   waitsFor: 'Waits for',
   decisions: (n: number) => (n === 1 ? '1 open decision' : `${n} open decisions`),
@@ -139,6 +141,8 @@ const de: typeof en = {
   clearPicks: 'Auswahl aufheben',
   pickHint: '☐ wählt eine bereite Spec aus; mehrere laufen als eine Serie.',
   picksBlocked: (title, before) => `„${title}“ wartet auf „${before}“: diese mit auswählen.`,
+  orderHint:
+    'Die Zahl vor einer Spec ist ihre Position in der empfohlenen Umsetzungsreihenfolge: Vorgänger zuerst, dann nach Alter.',
   back: '← Register',
   waitsFor: 'Wartet auf',
   decisions: n => (n === 1 ? '1 offene Entscheidung' : `${n} offene Entscheidungen`),

@@ -85,6 +85,8 @@ def main():
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
     state = load_state(paths, session_id)
+    if getattr(state, "unreadable", False):
+        return 0  # the state file is closed to this hook: no mode is known, nothing is checked or counted
     mode = state.get("mode", "none")
     if mode == "none" and not os.path.isfile(paths.config):
         return 0  # project not set up: the hooks only observe
@@ -353,6 +355,14 @@ def is_judge_ack(text):
     lines = lines_of(text)
     return bool(lines) and lines[0].lower().rstrip(".") == JUDGE_ACK and all(
         line.lower().rstrip(".") == JUDGE_ACK or WATERMARK.match(line) for line in lines)
+
+
+def is_stub(text):
+    """A message with nothing in it for the user: only acknowledgement lines, `Blocker unverändert` and a stamp. It is
+    what an answer the harness forced after an empty turn consists of; the display gate never shows it."""
+    lines = lines_of(text)
+    return bool(lines) and all(line.lower().rstrip(".") == JUDGE_ACK or WATERMARK.match(line)
+                               or BLOCKER_UNCHANGED.match(line) for line in lines)
 
 
 def lines_of(text):

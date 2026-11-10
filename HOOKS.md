@@ -49,6 +49,8 @@ as BLOCKED in the spec's docket and in the closing message.
 
 - Every message in every session of a project with a `DOCKET.md` ends with a time stamp; the hooks hand the time to
   the model with every prompt and tool result, so no tool call is spent on it.
+- In concept and spec mode a returning agent gets no message while others still run: the user gets one message when
+  the last one is back.
 - Every message to the user is in the language `DOCKET.md` sets (`user_language`, question 12 of `/docket:init`:
   the author's language, not the repo's); the check counts function words, code spans and URLs excluded.
 - No hashes, ids or hedge words; at most one question, with a recommendation; no option menus, no promises, no
@@ -120,7 +122,23 @@ titles and state of its specs.
 The optional judge (a prompt hook, per project, opt-in at `/docket:init`) checks the form of a message after the
 user has read it: one question at most, no option menus, no manual tasks for the user beyond the steps of a blocker,
 no promises, no self-talk. Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts
-go to Claude and the log, never to the screen: Claude answers them with silence.
+go to Claude and the log, never to the screen: Claude answers them with silence. Where the harness answers that
+silence with a demand for visible output, Claude writes the line `[docket] noted`, and the display gate hides it, as
+it hides a bare stamp or `Blocker unverändert` after a verdict. A sentence that names a `/docket:` command for the
+user to type is no manual task.
+
+## The session state
+
+One file per session in `.claude/docket/` holds the mode, the spec at work and the clock. Many hooks run at once (a
+message that starts 14 agents runs 14 hooks in the same second), so a hook never writes the state as it read it:
+under a lock file it reads the file again and writes back only the fields it changed. A read that fails while the
+file exists is tried again and never counts as "no state". An agent's tool calls write nothing into it; in a run
+they only renew the file's time, which is what tells other sessions that the run lives.
+
+No hook sets a mode back to none. Where the state says none and the last mode command the user typed in this
+session was `/docket:concept`, `/docket:spec` or `/docket:init`, the mode is put back from the transcript (LOG
+`mode-restored`): at the user's next prompt, when an agent is started, and before a spec or concept is written. A
+run (`/docket:implement`) is not rebuilt this way.
 
 A sealed run has no judge: at sealing its entry leaves `.claude/settings.json` (or `settings.local.json`) for a
 record in `.claude/docket/` (written first), and it comes back when the run ends; a session start puts it back when
@@ -134,6 +152,10 @@ line under the prompt and, where docket is not set up, the line above it. It rea
 itself: `hooks/docket_ui.py overview` answers the register, the runs and the LOG as JSON, built with the functions
 the hooks use (`spec_records`, `docket_counts`, `terminal_section`, `session_live`), so the pane and the hooks read
 one project the same way. A spec's or a docket's text is shown as the file holds it.
+
+Every open spec carries its position in the recommended order of implementation in front of its state: a spec after
+every spec it follows, then by age (`in_order`), counted over the whole project, since a series runs across concepts
+in that order. A concept's open specs are listed by that position, its finished ones below.
 
 What a button does:
 

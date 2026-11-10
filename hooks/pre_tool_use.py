@@ -31,9 +31,9 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (PLUGIN_ROOT, RUN_MODES, Paths, absolute, blocker_since_prompt, closing_path, config_values,
-                        frontmatter, language_code, load_state, log_event, position, read_input, read_text,
-                        refinement_problem, refuse, review_problem, review_run_problem, rework_problem, save_state,
-                        set_context, under)
+                        file_lock, frontmatter, language_code, load_state, log_event, position, read_input, read_text,
+                        refinement_problem, refuse, restore_mode, review_problem, review_run_problem, rework_problem,
+                        save_state, set_context, state_path, under)
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 INIT_FILES = {"docket.md", "contributing.md", "claude.md", "agents.md", ".gitignore", "settings.json", "settings.local.json"}
@@ -75,13 +75,25 @@ def main():
     if tool == "Read" and path and state.get("degraded") and configured:
         required = {p.lower(): p for p in paths.required_reading()}
         if path.lower() in required:
-            read = set(state.get("read", []))
-            read.add(required[path.lower()])
-            state["read"] = sorted(read)
-            if all(p in read for p in required.values()):
-                state["degraded"] = False
-            save_state(paths, session_id, state)
+            # Two required files read in one message are two hooks at once: each adds its file to the list as it is
+            # now, under the lock, or the second write drops the first file and the reading stays open.
+            with file_lock(state_path(paths, session_id)):
+                state = load_state(paths, session_id)
+                read = set(state.get("read", []))
+                read.add(required[path.lower()])
+                state["read"] = sorted(read)
+                if all(p in read for p in required.values()):
+                    state["degraded"] = False
+                save_state(paths, session_id, state)
         return 0
+
+    # A mode the state lost is put back from the command the user typed, at the two moments it decides something: an
+    # agent is started, a spec or concept is written. The user is never sent to type the command a second time
+    # (luradb-web-client 2026-11-10: /docket:spec was typed, the state said none, 16 writes were refused).
+    if mode == "none" and configured and (tool in ("Agent", "Task", "Workflow") or (
+            tool in WRITE_TOOLS and path and (under(path, paths.specs) or under(path, paths.concepts)))):
+        if restore_mode(paths, session_id, state, hook_input.get("transcript_path")):
+            mode = state["mode"]
 
     if state.get("degraded") and configured and tool in WRITE_TOOLS | {"Bash", "Agent", "PowerShell"}:
         missing = [p for p in paths.required_reading() if p not in state.get("read", [])]

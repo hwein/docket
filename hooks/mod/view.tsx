@@ -72,8 +72,14 @@ const COLOR: Record<string, Color> = {
 }
 const LOG_ROWS = 100
 const LEAD_HEADING = /^\s*#\s[^\n]*\n+/
+// A blank as wide as a digit and one as wide as a full stop: the positions line up in a face that is not
+// monospaced too, and a finished spec's blank is as wide as a position.
+const DIGIT_BLANK = '\u2007'
+const STOP_BLANK = '\u2008'
 
 const stateText = (t: Words, state: string): string => `${GLYPH[state] ?? '·'} ${t.states[state] ?? state}`
+
+const isOpen = (spec: Spec): boolean => !FINISHED.includes(spec.state)
 
 const byState = (specs: readonly Spec[]): Spec[] =>
   [...specs].sort((a, b) => {
@@ -81,6 +87,41 @@ const byState = (specs: readonly Spec[]): Spec[] =>
 
     return order !== 0 ? order : a.created.localeCompare(b.created) || a.id.localeCompare(b.id)
   })
+
+/**
+ * Every open spec's position in the recommended order of implementation, from 1. It counts over the whole project,
+ * not per concept: a series runs across concepts in that order.
+ */
+export const ranks = (data: Overview): Map<string, number> =>
+  new Map(
+    (data.specs ?? [])
+      .filter(isOpen)
+      .sort((a, b) => a.order - b.order || a.created.localeCompare(b.created) || a.id.localeCompare(b.id))
+      .map((spec, index): [string, number] => [spec.id, index + 1]),
+  )
+
+/** A group's rows: the open specs by their position, then the finished ones by state and age. */
+const listed = (specs: readonly Spec[], rank: ReadonlyMap<string, number>): Spec[] => [
+  ...specs.filter(isOpen).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0)),
+  ...byState(specs.filter(spec => !isOpen(spec))),
+]
+
+/**
+ * A spec's position as its row shows it, right-aligned to the largest one; a blank of that width for a finished
+ * spec, and nothing while no spec is open.
+ */
+const positionText = (rank: ReadonlyMap<string, number>, spec: Spec): string => {
+  const width = String(rank.size).length
+  const position = rank.get(spec.id)
+
+  if (rank.size === 0) {
+    return ''
+  }
+
+  return position === undefined
+    ? `${DIGIT_BLANK.repeat(width)}${STOP_BLANK}`
+    : `${String(position).padStart(width, DIGIT_BLANK)}.`
+}
 
 const titleOf = (data: Overview, id: string): string => data.specs?.find(spec => spec.id === id)?.title ?? id
 
@@ -141,10 +182,27 @@ const pickGap = (data: Overview, specs: readonly Spec[]): { spec: Spec; before: 
   return undefined
 }
 
-const specRow = (kit: Kit, t: Words, data: Overview, spec: Spec, s: PaneState, act: Actions) => {
+const specRow = (
+  kit: Kit,
+  t: Words,
+  data: Overview,
+  spec: Spec,
+  rank: ReadonlyMap<string, number>,
+  s: PaneState,
+  act: Actions,
+) => {
   const { Box, Button, Text } = kit
   const note = marks(t, data, spec)
+  const position = positionText(rank, spec)
   const parts = [<Text color={COLOR[spec.state] ?? 'text'}>{stateText(t, spec.state)}</Text>, `  ${spec.title}`]
+
+  if (position) {
+    parts.unshift(
+      <Text dimColor tabular>
+        {`${position} `}
+      </Text>,
+    )
+  }
 
   if (note) {
     parts.push(<Text dimColor>{`  ${note}`}</Text>)
@@ -228,15 +286,16 @@ const group = (
   data: Overview,
   concept: Concept | undefined,
   specs: readonly Spec[],
+  rank: ReadonlyMap<string, number>,
   hasHeading: boolean,
   s: PaneState,
   act: Actions,
 ) => {
   const { Box, Button, Text } = kit
-  const shown = byState(s.isOnlyOpen ? specs.filter(spec => !FINISHED.includes(spec.state)) : specs)
+  const shown = listed(s.isOnlyOpen ? specs.filter(isOpen) : specs, rank)
   const hidden = specs.length - shown.length
   const ready = specs.filter(spec => spec.state === 'ready').length
-  const open = specs.filter(spec => !FINISHED.includes(spec.state)).length
+  const open = specs.filter(isOpen).length
   const meta = concept
     ? [
         t.conceptStates[concept.state] ?? concept.state,
@@ -273,7 +332,7 @@ const group = (
         </Box>
       )}
       {specs.length === 0 && <Text dimColor>{t.noSpecsInConcept}</Text>}
-      {shown.map(spec => specRow(kit, t, data, spec, s, act))}
+      {shown.map(spec => specRow(kit, t, data, spec, rank, s, act))}
       {hidden > 0 && <Text dimColor>{t.hiddenDone(hidden)}</Text>}
     </Box>
   )
@@ -286,9 +345,15 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
   const known = new Set(concepts.map(concept => concept.id))
   const loose = specs.filter(spec => !known.has(spec.concept))
   const hasFinished = specs.some(spec => FINISHED.includes(spec.state))
+  const rank = ranks(data)
 
   return (
     <Box flexDirection="column">
+      {rank.size > 1 && (
+        <Text dimColor size="caption">
+          {t.orderHint}
+        </Text>
+      )}
       {hasFinished && (
         <Box flexDirection="row">
           <Button key="only-open" label={s.isOnlyOpen ? t.showAll : t.onlyOpen} onPress={act.toggleOnlyOpen} />
@@ -303,12 +368,13 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
           data,
           concept,
           specs.filter(spec => spec.concept === concept.id),
+          rank,
           true,
           s,
           act,
         ),
       )}
-      {loose.length > 0 && group(kit, t, data, undefined, loose, concepts.length > 0, s, act)}
+      {loose.length > 0 && group(kit, t, data, undefined, loose, rank, concepts.length > 0, s, act)}
     </Box>
   )
 }

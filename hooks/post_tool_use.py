@@ -1,8 +1,9 @@
 """PostToolUse hook, every tool.
 
 Every tool result carries the clock line `[docket] clock: YYYY-MM-DD HH:MM` as additional context once the
-project is set up: the stamp needs no tool call (M7). In a sealed run an agent's spawn adds the rule for the wait:
-no text (V4). Every tool call clears the Stop hook's refusal marker: the next Stop is a first pass again (V9). A shell command that matched forbidden_commands and ran
+project is set up: the stamp needs no tool call (M7). An agent's spawn adds the rule for the wait: no text (V4; in
+concept and spec mode too, where the user gets one message when the last agent is back). An agent's own tool calls
+write nothing into the session state. Every tool call clears the Stop hook's refusal marker: the next Stop is a first pass again (V9). A shell command that matched forbidden_commands and ran
 was allowed by the user in the dialog: LOG `grant` (M1). So was a concept-mode write outside the work dir.
 
 Dockets are append-only: after an edit every previous line (snapshot taken in pre_tool_use) must
@@ -27,8 +28,9 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (Paths, absolute, bullets, clock_line, config_values, frontmatter, load_state, log_event,
-                        log_has, missing_citations, observe_problems, observed, read_input, refuse, set_context, under)
+from docket_lib import (JUDGE_ACK, RUN_MODES, Paths, absolute, bullets, clock_line, config_values, frontmatter,
+                        load_state, log_event, log_has, missing_citations, observe_problems, observed, read_input,
+                        refuse, set_context, touch_state, under)
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b|==)", re.IGNORECASE)
@@ -58,15 +60,27 @@ def main():
         return result
     if os.path.isfile(paths.config):
         state = load_state(paths, session_id)
-        if not hook_input.get("agent_id"):
+        subagent = bool(hook_input.get("agent_id"))
+        if subagent:
+            # An agent writes nothing into the session state: 15 agents at work were 15 writers on one file, and the
+            # mode fell out of it (luradb-web-client 2026-11-10). A run stays live through the file's time.
+            if state.get("mode") in RUN_MODES:
+                touch_state(paths, session_id)
+        elif state.get("refused"):
             state["refused"] = False  # work went on after a refusal: the next Stop is a first pass again
-        context = clock_line(paths, session_id, state)
-        if (state.get("mode") in ("sealed", "rewrite") and hook_input.get("tool_name") in ("Agent", "Task", "Workflow")
-                and not hook_input.get("agent_id")):
+        context = clock_line(paths, session_id, state, save=not subagent)
+        spawned = hook_input.get("tool_name") in ("Agent", "Task", "Workflow") and not subagent
+        if spawned and state.get("mode") in ("sealed", "rewrite"):
             # V4: the rule at the moment it applies (luradb-web-client 2026-11-06: 76 of 128 texts were a bare stamp
             # after a spawn; the prompt hook that states the rule ran twice in three hours).
             context += (" · While agents run, end the turn without any text; their notifications resume you. If the "
                         "harness asks what you are doing, answer in at most five words, no stamp.")
+        elif spawned and state.get("mode") in ("concept", "spec"):
+            # The user gets one message about the agents' work, when the last one is back (luradb-web-client
+            # 2026-11-10: 15 agents, 15 status lines in a row, none with news for the user).
+            context += (" · While agents of yours still run, a returning agent gets no message: end the turn without "
+                        "any text. Report once, when the last one is back. If the harness asks for visible output, "
+                        f"answer `{JUDGE_ACK}` and nothing else.")
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": context}}))
     return 0
 

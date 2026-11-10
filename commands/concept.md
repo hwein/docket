@@ -54,7 +54,10 @@ ask the one question. The user's word settles it; record it in the follow-up spe
 - On `commit`, every change of the session goes in, plus the files the new content cites; changes in the working
   tree that are not the session's are named in one line, never left out silently.
 - A judge verdict (Stop hook feedback that quotes the judge's prompt) is answered with an empty turn: no text,
-  no stamp, no tool call. It is never explained or mentioned to the user.
+  no stamp, no tool call. It is never explained or mentioned to the user. Where the harness then says the answer
+  had no visible output, the whole answer is the line `[docket] noted`; the hook keeps it off the screen.
+- While agents you started still run, a returning agent gets no message: the turn ends without text, and the user
+  gets one message when the last one is back.
 
 ## Writing
 

@@ -2947,5 +2947,337 @@ class PaneData(Project):
         self.assertTrue(self.ui("overview")[1]["runs"][0]["stop_requested"])
 
 
+class SessionStateRace(Project):
+    """One state file, many hooks at once. luradb-web-client 2026-11-10: a message started 14 agents, their hooks
+    wrote the state in the same second, a read that failed on Windows counted as mode none and went back to disk; the
+    spec session had lost its mode, and 15 agents' Writes were refused after 10-25 minutes of work."""
+
+    WORKER = ("import sys, types\n"
+              "sys.path.insert(0, sys.argv[1])\n"
+              "import docket_lib as d\n"
+              "paths = types.SimpleNamespace(state_dir=sys.argv[2])\n"
+              "lost = 0\n"
+              "for _ in range(int(sys.argv[4])):\n"
+              "    state = d.load_state(paths, sys.argv[3])\n"
+              "    lost += state.get('mode') != 'spec'\n"
+              "    d.clock_line(paths, sys.argv[3], state)\n"
+              "print(lost)\n")
+
+    def lib(self):
+        sys.path.insert(0, str(HOOKS))
+        import docket_lib
+        return docket_lib, type("P", (), {"state_dir": f"{self.p}/.claude/docket"})()
+
+    def leftovers(self):
+        return sorted(f.name for f in (self.root / ".claude" / "docket").iterdir()
+                      if f.name.endswith((".tmp", ".lock")))
+
+    def test_fifteen_writers_at_once_keep_the_mode(self):
+        self.set_state(mode="spec", read=["a", "b"])
+        state_dir = f"{self.p}/.claude/docket"
+        workers = [subprocess.Popen([sys.executable, "-c", self.WORKER, str(HOOKS), state_dir, SID, "25"],
+                                    stdout=subprocess.PIPE) for _ in range(15)]
+        lost = sum(int(worker.communicate()[0].decode() or 1) for worker in workers)
+        self.assertEqual(lost, 0, "a hook read the default state while the file existed")
+        self.assertEqual((self.state()["mode"], self.state()["read"]), ("spec", ["a", "b"]))
+        self.assertEqual(self.leftovers(), [])
+
+    def test_hooks_of_one_message_keep_the_mode(self):
+        # The hooks as Claude Code starts them: one process per tool call, all in the same moment.
+        self.set_state(mode="spec")
+        payload = json.dumps({"session_id": SID, "cwd": self.p, "tool_name": "Agent",
+                              "tool_input": {"description": "draft"}}).encode("utf-8")
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        env["CLAUDE_PROJECT_DIR"] = self.p
+        for _ in range(3):
+            hooks = [subprocess.Popen([sys.executable, str(HOOKS / "post_tool_use.py")], stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env) for _ in range(14)]
+            for hook in hooks:
+                out = hook.communicate(payload)[0].decode("utf-8")
+                self.assertIn("[docket] clock: ", out)
+            self.assertEqual(self.state()["mode"], "spec")
+        self.assertEqual(self.leftovers(), [])
+
+    def test_a_hook_with_an_older_state_does_not_undo_a_newer_mode(self):
+        d, paths = self.lib()
+        self.set_state(mode="none")
+        older = d.load_state(paths, SID)  # a hook that started before the user's command
+        newer = d.load_state(paths, SID)
+        newer.update({"mode": "spec", "last_command": "/docket:spec"})
+        d.save_state(paths, SID, newer)  # the command's hook
+        older["clock"] = "2026-11-10 12:53"
+        d.save_state(paths, SID, older)
+        self.assertEqual((self.state()["mode"], self.state()["last_command"], self.state()["clock"]),
+                         ("spec", "/docket:spec", "2026-11-10 12:53"))
+
+    def test_a_hook_that_found_no_state_does_not_undo_the_first_command(self):
+        # SessionStart and the hook of the session's first prompt run at the same moment.
+        d, paths = self.lib()
+        start = d.load_state(paths, SID)  # no file yet
+        prompt = d.load_state(paths, SID)
+        prompt.update({"mode": "spec"})
+        d.save_state(paths, SID, prompt)
+        start.update({"degraded": True, "read": []})
+        d.save_state(paths, SID, start)
+        self.assertEqual(self.state(), {"version": 1, "mode": "spec", "spec": "", "degraded": True, "read": []})
+
+    def test_a_state_that_could_not_be_read_is_never_written_back(self):
+        d, paths = self.lib()
+        self.set_state(mode="spec", read=["a"])
+        read_json = d.read_json
+        try:
+            d.read_json = lambda path, wait=0: (None, "unreadable")
+            blind = d.load_state(paths, SID)
+            self.assertTrue(blind.unreadable)
+            blind["clock"] = "2026-11-10 12:53"
+            d.save_state(paths, SID, blind)  # the file is still closed to this hook: nothing is written
+            self.assertEqual(self.state(), {"version": 1, "mode": "spec", "spec": "", "degraded": False, "read": ["a"]})
+        finally:
+            d.read_json = read_json
+        d.save_state(paths, SID, blind)  # readable again: only what the hook changed goes in
+        self.assertEqual((self.state()["mode"], self.state()["read"], self.state()["clock"]),
+                         ("spec", ["a"], "2026-11-10 12:53"))
+
+    def test_a_file_held_open_by_another_process_is_read_after_a_wait(self):
+        d, paths = self.lib()
+        self.set_state(mode="spec")
+        calls = []
+        opened = open
+
+        def flaky(path, *args, **kwargs):
+            if str(path).endswith(f"state-{SID}.json") and len(calls) < 3:
+                calls.append(path)
+                raise PermissionError(13, "The process cannot access the file")
+            return opened(path, *args, **kwargs)
+
+        d.open = flaky  # the module's own name for open: only docket_lib sees it
+        try:
+            self.assertEqual(d.load_state(paths, SID)["mode"], "spec")
+        finally:
+            del d.open
+        self.assertEqual(len(calls), 3)
+
+    def test_required_files_read_in_one_message_are_all_recorded(self):
+        for name in ("CONTRIBUTING.md", "AGENTS.md"):
+            (self.root / name).write_text("# rules\n", "utf-8")
+        files = [str(self.work / "DOCKET.md").replace("\\", "/"), f"{self.p}/CONTRIBUTING.md", f"{self.p}/AGENTS.md"]
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        env["CLAUDE_PROJECT_DIR"] = self.p
+        for _ in range(4):
+            self.set_state(mode="spec", degraded=True, read=[])
+            hooks = [(subprocess.Popen([sys.executable, str(HOOKS / "pre_tool_use.py")], stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env),
+                      json.dumps({"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                  "tool_input": {"file_path": path}}).encode("utf-8")) for path in files]
+            for hook, payload in hooks:
+                hook.stdin.write(payload)
+                hook.stdin.close()
+            for hook, _ in hooks:
+                hook.wait()
+                hook.stdout.close()
+                hook.stderr.close()
+            self.assertEqual(len(self.state()["read"]), 3)
+            self.assertFalse(self.state()["degraded"])
+
+    def test_an_agents_tool_call_writes_nothing_into_the_state(self):
+        self.set_state(mode="spec", clock="2026-11-10 12:00", refused=True)
+        before = (self.root / ".claude" / "docket" / f"state-{SID}.json").read_text("utf-8")
+        code, err, out = run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                                       "agent_id": "a1", "tool_input": {"file_path": "x.md"}}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertIn("[docket] clock: ", json.loads(out)["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual((self.root / ".claude" / "docket" / f"state-{SID}.json").read_text("utf-8"), before)
+
+    def test_an_agents_tool_call_keeps_a_run_live(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        path = self.root / ".claude" / "docket" / f"state-{SID}.json"
+        os.utime(path, (time.time() - 7200, time.time() - 7200))
+        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read", "agent_id": "a1",
+                                      "tool_input": {"file_path": "x.md"}}, self.p)
+        self.assertLess(time.time() - path.stat().st_mtime, 60)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+
+class ModeRestore(Project):
+    """The mode the user typed stands in the transcript. A state that says none against it is wrong, and docket puts
+    the mode back instead of refusing the work and sending the user to type the command again."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.tmp / "transcript.jsonl"
+        self.new = f"{self.work}/specs/core/s-0a0a0a0a-export.md".replace("\\", "/")
+
+    def typed(self, *commands):
+        with self.path.open("a", encoding="utf-8") as handle:
+            for command in commands:
+                name, _, rest = command.partition(" ")
+                text = (f"<command-message>{name[1:]}</command-message>\n<command-name>{name}</command-name>\n"
+                        f"<command-args>{rest}</command-args>") if name.startswith("/") else command
+                handle.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+
+    def call(self, tool, **tool_input):
+        return run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": tool,
+                                            "tool_input": tool_input, "transcript_path": str(self.path)}, self.p)
+
+    def test_a_spec_write_puts_the_typed_mode_back(self):
+        self.typed("Hallo", "/docket:spec alle offenen Legacy-Specs übersetzen", "noch eine Spec bitte")
+        self.set_state(mode="none")
+        code, err, _ = self.call("Write", file_path=self.new, content="---\nid: s-0a0a0a0a\nstate: draft\n---\n")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["mode"], "spec")
+        self.assertIn("mode-restored", self.log())
+
+    def test_an_agents_write_puts_it_back_too(self):
+        self.typed("/docket:spec alle offenen Legacy-Specs übersetzen")
+        self.set_state(mode="none")
+        code, err, _ = run_hook("pre_tool_use.py", {
+            "session_id": SID, "cwd": self.p, "tool_name": "Write", "agent_id": "a1", "agent_type": "docket:conceptor",
+            "tool_input": {"file_path": self.new, "content": "x"}, "transcript_path": str(self.path)}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["mode"], "spec")
+
+    def test_starting_an_agent_puts_it_back(self):
+        self.typed("/docket:concept wie schneiden wir den Export?")
+        self.set_state(mode="none")
+        code, err, _ = self.call("Agent", description="Entwurf", prompt="draft", subagent_type="docket:conceptor")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["mode"], "concept")
+
+    def test_the_next_prompt_puts_it_back_and_carries_the_reminder(self):
+        self.typed("/spec den Export beschreiben")
+        self.set_state(mode="none")
+        code, err, out = run_hook("user_prompt.py", {"session_id": SID, "cwd": self.p, "prompt": "weiter",
+                                                     "transcript_path": str(self.path)}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertIn("[docket] Mode spec", out)
+        self.assertEqual(self.state()["mode"], "spec")
+
+    def test_no_typed_mode_command_no_mode(self):
+        for commands in (("Hallo", "schreib bitte die Spec"), ("/docket:spec x", "/docket:implement"),
+                         ("/init",), ("/docket:status",)):
+            self.path.write_text("", "utf-8")
+            self.typed(*commands)
+            self.set_state(mode="none")
+            code, err, _ = self.call("Write", file_path=self.new, content="x")
+            self.assertEqual(code, 2, commands)
+            self.assertIn("spec mode only", err)
+            self.assertEqual(self.state()["mode"], "none")
+
+    def test_the_skill_text_and_a_tool_result_are_no_command(self):
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": "user", "isMeta": True, "message": {"role": "user", "content": [
+                {"type": "text", "text": "/docket:spec is the command for specs"}]}}) + "\n")
+            handle.write(json.dumps({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "/docket:spec"}]}}) + "\n")
+        self.set_state(mode="none")
+        self.assertEqual(self.call("Write", file_path=self.new, content="x")[0], 2)
+
+    def test_a_mode_that_stands_is_left_alone(self):
+        self.typed("/docket:spec x")
+        self.set_state(mode="concept")
+        code, err, _ = self.call("Write", file_path=self.new, content="x")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.state()["mode"], "concept")
+        self.assertNotIn("mode-restored", self.log())
+
+
+class ForcedAnswers(JudgeLog):
+    """Claude Code Desktop answers a turn that ended without text with "[Your previous response had no visible
+    output…]" and the model has to write something. luradb-web-client 2026-11-10: after six of six judge verdicts
+    that something was `Blocker unverändert` or a bare stamp, on the user's screen, under each answer to a question."""
+
+    NUDGE = {"type": "user", "isMeta": True, "message": {"role": "user", "content": (
+        "[Your previous response had no visible output. Please continue and produce a user-visible response.]")}}
+    EMPTY = {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": ""}]}}
+
+    def judged(self):
+        reason = 'manual-task "Bitte tippe genau das in das Eingabefeld"'
+        self.add(self.said(f"Bitte tippe /docket:spec weiter.\n{hstamp()}"), self.feedback(reason),
+                 self.summary("2026-11-10T12:30:01Z", reason), self.EMPTY, self.NUDGE)
+
+    def test_what_follows_a_verdict_and_the_harness_is_not_shown(self):
+        self.set_state(mode="none")
+        self.judged()
+        for stub in ("[docket] noted", hstamp(), f"Blocker unverändert\n\n{hstamp()}", f"[docket] noted\n{hstamp()}"):
+            self.assertEqual(self.display(stub), self.HIDDEN, stub)
+            self.assertEqual(self.stop_with(stub, active=True)[0], 0, stub)
+
+    def test_a_message_with_content_after_the_harness_is_shown(self):
+        self.set_state(mode="none")
+        self.judged()
+        self.assertIsNone(self.display(f"Der Modus ist wieder da, die Spec ist geschrieben.\n{hstamp()}"))
+        self.set_state(mode="spec")
+        message = f"Der Modus ist wieder da, die Spec ist geschrieben.\n{hstamp()}"
+        self.assertEqual(self.display(message), message)
+
+    def test_the_acknowledgement_is_never_shown(self):
+        # A wait for agents in spec mode: no verdict, the harness asked, the answer is the line alone.
+        self.set_state(mode="spec")
+        self.add(self.said(f"Die Entwürfe laufen.\n{hstamp()}"), self.EMPTY, self.NUDGE)
+        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
+        self.assertEqual(self.stop_with("[docket] noted")[0], 0)
+        # A bare stamp without a verdict is a message like any other.
+        self.assertEqual(self.display(hstamp()), hstamp())
+
+    def test_the_judge_knows_a_docket_command_and_the_harness(self):
+        prompt = self.template_prompt()
+        self.assertIn("/docket:", prompt.split("Reject the message")[0])
+        self.assertIn("[docket] noted", prompt)
+
+    def template_prompt(self):
+        template = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))
+        return template["hooks"]["Stop"][0]["hooks"][0]["prompt"]
+
+
+class WaitForAgents(Project):
+    """Concept and spec mode: the user gets one message about the agents' work, when the last one is back
+    (luradb-web-client 2026-11-10: 15 agents returned, 15 status lines in a row)."""
+
+    def spawn(self, **extra):
+        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Agent", "tool_input": {"description": "Entwurf"}}
+        payload.update(extra)
+        code, err, out = run_hook("post_tool_use.py", payload, self.p)
+        self.assertEqual(code, 0, err)
+        return json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+    def test_the_rule_comes_with_the_spawn(self):
+        for mode in ("spec", "concept"):
+            self.set_state(mode=mode)
+            context = self.spawn()
+            self.assertIn("end the turn without any text", context)
+            self.assertIn("[docket] noted", context)
+        self.set_state(mode="none")
+        self.assertNotIn("without any text", self.spawn())
+        self.set_state(mode="spec")
+        self.assertNotIn("without any text", self.spawn(agent_id="a1"))  # an agent's own spawn: not the orchestrator
+
+    def test_a_turn_without_text_passes_the_stop(self):
+        # The turn before ended ten minutes ago with a message a Stop passed; a returning agent's turn ends without
+        # text and is not checked against that message's stamp.
+        self.set_state(mode="spec", clock=f"{datetime.now():%Y-%m-%d %H:%M}")
+        transcript = self.tmp / "transcript.jsonl"
+        entries = [{"type": "assistant", "message": {"role": "assistant", "content": [
+                        {"type": "text", "text": f"Die Entwürfe laufen.\n{hstamp(-10)}"}]}},
+                   {"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-10T12:00:00Z"},
+                   {"type": "assistant", "message": {"role": "assistant", "content": [
+                       {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}}]
+        transcript.write_text("".join(json.dumps(entry) + "\n" for entry in entries), "utf-8")
+        for last in ({}, {"last_assistant_message": ""}):
+            code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "stop_hook_active": False,
+                                                "transcript_path": str(transcript), **last}, self.p)
+            self.assertEqual(code, 0, err)
+            self.assertFalse(self.state()["degraded"])
+
+    def test_a_message_no_stop_has_seen_is_still_checked(self):
+        self.set_state(mode="spec")
+        transcript = self.tmp / "transcript.jsonl"
+        transcript.write_text(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Die Spec ist geschrieben."}]}}) + "\n", "utf-8")
+        code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "stop_hook_active": False,
+                                            "transcript_path": str(transcript)}, self.p)
+        self.assertEqual(code, 2)
+        self.assertIn("stamp", err)
+
+
 if __name__ == "__main__":
     unittest.main()
