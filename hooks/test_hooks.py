@@ -3279,5 +3279,52 @@ class WaitForAgents(Project):
         self.assertIn("stamp", err)
 
 
+class RefusalRule(Project):
+    """A refusal is the model's to resolve; the user reads nothing about hooks, the state or the judge
+    (luradb-web-client 2026-11-10: a lost mode was explained to the user in the hooks' own words)."""
+
+    RULE = "The user reads nothing about it"
+
+    def write(self, **extra):
+        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Write",
+                   "tool_input": {"file_path": str(self.work / "specs" / "core" / "s-new.md"), "content": "x"}}
+        payload.update(extra)
+        return run_hook("pre_tool_use.py", payload, self.p)
+
+    def test_a_refused_tool_call_of_the_conversation_carries_the_rule(self):
+        for state in ({"mode": "none"}, {"mode": "spec", "degraded": True}, {"mode": "concept", "degraded": True}):
+            self.set_state(**state)
+            code, err, _ = self.write()
+            self.assertEqual(code, 2, state)
+            self.assertIn(self.RULE, err, state)
+            self.assertIn("what they decide or type", err, state)
+
+    def test_a_run_and_an_agent_get_the_refusal_alone(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        code, err, _ = self.tool("Write", file_path=str(self.work / "LOG.md"), content="x")
+        self.assertEqual(code, 2)
+        self.assertNotIn(self.RULE, err)
+        self.set_state(mode="spec", degraded=True)
+        code, err, _ = self.write(agent_id="a1")
+        self.assertEqual(code, 2)
+        self.assertNotIn(self.RULE, err)
+
+    def test_the_refusal_is_counted_under_its_own_words(self):
+        self.set_state(mode="none")
+        self.write()
+        counts = json.loads((self.work / "metrics" / "session.violations.json").read_text("utf-8"))
+        self.assertEqual(list(counts), ["specs-are-written-in-spec"])
+
+    def test_the_rule_comes_with_every_prompt_and_session_start_outside_a_run(self):
+        start = {"session_id": SID, "cwd": self.p, "source": "startup"}
+        for mode in ("none", "spec", "concept"):
+            self.set_state(mode=mode)
+            self.assertIn(self.RULE, self.prompt("Wie weit sind wir?")[2], mode)
+            self.assertIn(self.RULE, run_hook("session_start.py", start, self.p)[2], mode)
+        self.set_state(mode="sealed", spec=SPEC)
+        self.assertNotIn(self.RULE, self.prompt("Wie weit sind wir?")[2])
+        self.assertNotIn(self.RULE, run_hook("session_start.py", start, self.p)[2])
+
+
 if __name__ == "__main__":
     unittest.main()

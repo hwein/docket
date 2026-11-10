@@ -58,6 +58,9 @@ as BLOCKED in the spec's docket and in the closing message.
 - A blocker is said once: the same `Blocker` line twice in a row is refused. A blocker ends the turn: until the user
   answers, nothing is written and no agent or workflow starts.
 - A quoted hook answer must have come from a hook in this session.
+- A refusal by a hook is Claude's to resolve, and the user reads nothing about it: no hook, no refusal text, no
+  session state, no judge; where only the user can clear it, one sentence says what they decide or type. The rule
+  comes with every prompt and session start outside a run and with every refused tool call of the conversation.
 - The display gate (MessageDisplay hook) holds a message that breaks a rule back before the user sees it; the Stop
   hook asks for it again in full.
 - A sealed run writes no text. A turn that waits for agents ends without text: the Stop hook recognises the wait by

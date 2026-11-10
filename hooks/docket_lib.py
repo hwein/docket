@@ -1334,11 +1334,22 @@ def transcript_entries(transcript_path, tail=False):
 
 
 CONTEXT = {}
+# The user's side of a refusal (luradb-web-client 2026-11-10: a session whose mode was lost told the user about modes,
+# hook texts and the judge, and sent them to type their command again). Said with every prompt and session start of a
+# conversation, and with every refused tool call of one.
+REFUSAL_RULE = ("A refusal by a hook is yours to resolve. The user reads nothing about it: no hook, no refusal text, "
+                "no session state, no judge. If only the user can clear it, say in one sentence what they decide or "
+                "type.")
 
 
 def set_context(paths, doc_id):
     """Where refusals are counted: the metrics file of the document the session works on."""
     CONTEXT.update({"paths": paths, "doc_id": doc_id or ""})
+
+
+def in_conversation(flag=True):
+    """The orchestrator's next message goes to the user (no run, no agent): a refusal ends with REFUSAL_RULE."""
+    CONTEXT["suffix"] = REFUSAL_RULE if flag else ""
 
 
 def rule_key(message):
@@ -1388,7 +1399,7 @@ def point_counts(body):
 
 
 def refuse(message):
-    print(message, file=sys.stderr)
+    print(message + (" " + CONTEXT["suffix"] if CONTEXT.get("suffix") else ""), file=sys.stderr)
     if CONTEXT.get("paths") is not None:
         record_violation(CONTEXT["paths"], CONTEXT.get("doc_id", ""), message)
     return 2

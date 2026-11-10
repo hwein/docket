@@ -31,7 +31,7 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (PLUGIN_ROOT, RUN_MODES, Paths, absolute, blocker_since_prompt, closing_path, config_values,
-                        file_lock, frontmatter, language_code, load_state, log_event, position, read_input, read_text,
+                        file_lock, frontmatter, in_conversation, language_code, load_state, log_event, position, read_input, read_text,
                         refinement_problem, refuse, restore_mode, review_problem, review_run_problem, rework_problem,
                         save_state, set_context, state_path, under)
 
@@ -95,6 +95,7 @@ def main():
         if restore_mode(paths, session_id, state, hook_input.get("transcript_path")):
             mode = state["mode"]
 
+    in_conversation(configured and mode not in RUN_MODES and not hook_input.get("agent_id"))
     if state.get("degraded") and configured and tool in WRITE_TOOLS | {"Bash", "Agent", "PowerShell"}:
         missing = [p for p in paths.required_reading() if p not in state.get("read", [])]
         return refuse("[docket] Required reading first, completely with Read: " + ", ".join(missing))

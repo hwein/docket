@@ -17,7 +17,7 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (RUN_MODES, SPEC_ID, Paths, load_judge_record, load_state, log_event, log_lines,
+from docket_lib import (REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, load_judge_record, load_state, log_event, log_lines,
                         logged_series, point_counts, position, read_input, resume_judge, save_state, series_line,
                         session_live, violations_line, write_atomically)
 
@@ -72,7 +72,7 @@ def main():
                          "or fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
                          "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or after a judge "
                          "verdict an empty answer; "
-                         "repeat a message only when the hook says it was held back and never shown.")
+                         "repeat a message only when the hook says it was held back and never shown. " + REFUSAL_RULE)
     if mode in ("sealed", "rewrite"):
         i, n = position(state)
         lines.append(f"[docket] A sealed implementation of {spec_id} is in progress"

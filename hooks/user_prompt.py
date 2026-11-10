@@ -17,7 +17,7 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (CONCEPT_ID, RUN_MODES, SPEC_ID, Paths, claim_lock, clock_line, config_values, display_path,
+from docket_lib import (CONCEPT_ID, REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, claim_lock, clock_line, config_values, display_path,
                         load_state,
                         lock_holder, log_event, logged_series, notice, open_predecessors, precondition_result,
                         preconditions, queued_elsewhere, read_input, ready_specs, refuse, restore_mode, save_display,
@@ -57,7 +57,8 @@ WATERMARK = ("Every message ends with the line `stamp: YYYY-MM-DD HH:MM`: the ti
              "now, never remembered; the hook refuses the message otherwise. Sent back: do exactly what the hook asks "
              "(the stamp line alone, correction lines, or after a judge verdict an empty answer); repeat a message "
              "only when it says it was held back. When the harness says an answer had no visible output and you have "
-             "nothing new for the user, the whole answer is the line `[docket] noted`: it is not shown.")
+             "nothing new for the user, the whole answer is the line `[docket] noted`: it is not shown. "
+             + REFUSAL_RULE)
 RUN_RULE = ("In a sealed run you write no text and no stamp: the run's one message is the closing message the hook "
             "renders at its end. A turn that waits for agents ends without text.")
 

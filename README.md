@@ -226,7 +226,7 @@ Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 
-0.5.1, an early stage of development, already in use in several repositories.
+0.5.2, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

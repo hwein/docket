@@ -56,6 +56,8 @@ ask the one question. The user's word settles it; record it in the follow-up spe
 - A judge verdict (Stop hook feedback that quotes the judge's prompt) is answered with an empty turn: no text,
   no stamp, no tool call. It is never explained or mentioned to the user. Where the harness then says the answer
   had no visible output, the whole answer is the line `[docket] noted`; the hook keeps it off the screen.
+- A refusal by a hook is yours to resolve. The user reads nothing about it: no hook, no refusal text, no session
+  state, no judge. If only the user can clear it, the message says in one sentence what they decide or type.
 - While agents you started still run, a returning agent gets no message: the turn ends without text, and the user
   gets one message when the last one is back.
 

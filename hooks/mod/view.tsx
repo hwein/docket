@@ -307,7 +307,7 @@ const group = (
     : `${open} ${t.open.toLowerCase()}`
 
   return (
-    <Box flexDirection="column" gap="xs" marginTop="sm">
+    <Box flexDirection="column" gap="xs">
       {hasHeading && (
         <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
           <Text weight="semibold" size="heading">
@@ -346,20 +346,27 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
   const loose = specs.filter(spec => !known.has(spec.concept))
   const hasFinished = specs.some(spec => FINISHED.includes(spec.state))
   const rank = ranks(data)
+  const bar = pickBar(kit, t, data, s, act)
 
+  // The filter first, then the two lines that explain the rows, as one block with air above and below: a button
+  // between two captions read as one cramped lump.
   return (
-    <Box flexDirection="column">
-      {rank.size > 1 && (
-        <Text dimColor size="caption">
-          {t.orderHint}
-        </Text>
-      )}
+    <Box flexDirection="column" gap="sm" marginTop="xs">
       {hasFinished && (
         <Box flexDirection="row">
           <Button key="only-open" label={s.isOnlyOpen ? t.showAll : t.onlyOpen} onPress={act.toggleOnlyOpen} />
         </Box>
       )}
-      {pickBar(kit, t, data, s, act)}
+      {(rank.size > 1 || bar !== false) && (
+        <Box flexDirection="column" gap="xs">
+          {rank.size > 1 && (
+            <Text dimColor size="caption">
+              {t.orderHint}
+            </Text>
+          )}
+          {bar}
+        </Box>
+      )}
       {specs.length === 0 && concepts.length === 0 && <Text dimColor>{t.noSpecs}</Text>}
       {concepts.map(concept =>
         group(
