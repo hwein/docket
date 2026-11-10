@@ -69,7 +69,7 @@ const en = {
   stopAfter: 'Stop after this spec',
   stopRequested: 'stop requested',
   otherSession: (session: string) => `session ${session}`,
-  dirty: 'The records are not committed.',
+  dirty: 'Note: specs, dockets or the LOG have changes that are not committed to git yet.',
   updated: (time: string) => `as of ${time}`,
   status: (open: number, draft: number, ready: number, busy: number, done: number, superseded: number) =>
     `${open} open (${draft} draft · ${ready} ready · ${busy} in progress) · ${done} done · ${superseded} superseded`,
@@ -173,7 +173,7 @@ const de: typeof en = {
   stopAfter: 'Nach dieser Spec stoppen',
   stopRequested: 'Stopp angefordert',
   otherSession: session => `Sitzung ${session}`,
-  dirty: 'Die Protokolle sind nicht committet.',
+  dirty: 'Hinweis: Specs, Dockets oder LOG haben Änderungen, die noch nicht in Git committet sind.',
   updated: time => `Stand ${time}`,
   status: (open, draft, ready, busy, done, superseded) =>
     `${open} offen (${draft} Entwurf · ${ready} bereit · ${busy} in Arbeit) · ${done} erledigt · ${superseded} abgelöst`,

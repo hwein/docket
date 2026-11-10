@@ -136,7 +136,7 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
   on('fs.read', (_, e) => ({
     value: e.path.endsWith('.svg')
       ? '<svg xmlns="http://www.w3.org/2000/svg" width="203.1" height="52" viewBox="0 0 203.1 52"><g transform="scale(1)"><path fill="#E6EDF3" d="M0 0H9V9H0Z"/></g></svg>'
-      : `---\nid: x\n---\n# Body of ${e.path}\n`,
+      : `---\nid: x\n---\n# Heading of the file\n\nBody of ${e.path}\n`,
   }))
   on('process.run', (_, e) => {
     seen.argv.push([...e.argv])
@@ -229,7 +229,7 @@ test('a spec opens to its text, and its button starts the run in this session', 
   await ui.press({ key: 'spec-s-0123abcd' })
   await ui.unmount()
   ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^# Body of .*s-0123abcd.md/)
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^Body of .*s-0123abcd.md/)
   expect((await ui.find({ type: 'Markdown' }))?.text).not.toContain('id: x')
   await ui.press({ key: 'implement' })
   expect(seen.commands).toEqual(['/docket:implement s-0123abcd'])
@@ -401,11 +401,11 @@ test('the LOG and DOCKET.md have their tabs', async ($, on) => {
   await ui.press({ key: 'docket-s-cccc3333' })
   await ui.unmount()
   ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^# Body of .*dockets.*s-cccc3333.md/)
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^Body of .*dockets.*s-cccc3333.md/)
   await ui.press({ key: 'tab-config' })
   await ui.unmount()
   ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^# Body of .*DOCKET.md/)
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^# Heading of the file/)
   await ui.unmount()
 })
 

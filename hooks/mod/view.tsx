@@ -71,6 +71,7 @@ const COLOR: Record<string, Color> = {
   superseded: 'inactive',
 }
 const LOG_ROWS = 100
+const LEAD_HEADING = /^\s*#\s[^\n]*\n+/
 
 const stateText = (t: Words, state: string): string => `${GLYPH[state] ?? '·'} ${t.states[state] ?? state}`
 
@@ -412,11 +413,22 @@ const specView = (
         ? t.noDocket
         : (content ?? t.unreadable)
 
+  // The card above already carries the title: the file's own first heading would say it twice.
+  const shown = s.detail === 'log' ? body : body.replace(LEAD_HEADING, '')
+
   return (
-    <Box flexDirection="column" gap="xs">
+    <Box flexDirection="column" gap="sm">
       <Box flexDirection="row">
-        <Button key="back" label={t.back} onPress={act.back} />
+        <Button key="back" plain dimColor label={t.back} onPress={act.back} />
       </Box>
+      <Box
+        flexDirection="column"
+        gap="xs"
+        borderStyle="round"
+        borderColor="inactive"
+        paddingX="md"
+        paddingY="sm"
+      >
       <Text size="title" weight="semibold" strikethrough={spec.state === 'superseded'}>
         {spec.title}
       </Text>
@@ -452,33 +464,34 @@ const specView = (
             : t.runningIn(spec.running.slice(0, 8)),
           'claude',
         )}
-      {(isRunnable || canSupersede) && !s.isSuperseding && (
-        <Box flexDirection="row" gap="sm" flexWrap="wrap">
-          {isRunnable && (
-            <Button
-              key="implement"
-              variant="primary"
-              label={t.implement}
-              onPress={() => act.implement(spec.id, spec.title)}
-            />
-          )}
-          {isRunnable && (
-            <Button
-              key="implement-session"
-              label={t.inSession}
-              onPress={() => act.implementInSession(spec.id, spec.title)}
-            />
-          )}
-          {canSupersede && <Button key="supersede" label={t.markSuperseded} onPress={act.supersedeOpen} />}
+      {isRunnable && !s.isSuperseding && (
+        <Box flexDirection="row" gap="sm" flexWrap="wrap" marginTop="xs">
+          <Button
+            key="implement"
+            variant="primary"
+            label={t.implement}
+            onPress={() => act.implement(spec.id, spec.title)}
+          />
+          <Button
+            key="implement-session"
+            label={t.inSession}
+            onPress={() => act.implementInSession(spec.id, spec.title)}
+          />
         </Box>
       )}
-      {s.isSuperseding && canSupersede && supersedeForm(kit, t, data, spec, s, act)}
-      <Box flexDirection="row" gap="sm" flexWrap="wrap" marginTop="sm">
-        {tab('spec', t.spec)}
-        {tab('docket', t.docket)}
-        {tab('log', t.log)}
       </Box>
-      <Markdown text={body.trim() === '' ? t.unreadable : body} />
+      {s.isSuperseding && canSupersede && supersedeForm(kit, t, data, spec, s, act)}
+      <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center" justifyContent="space-between">
+        <Box flexDirection="row" gap="xs">
+          {tab('spec', t.spec)}
+          {tab('docket', t.docket)}
+          {tab('log', t.log)}
+        </Box>
+        {canSupersede && !s.isSuperseding && (
+          <Button key="supersede" plain dimColor label={t.markSuperseded} onPress={act.supersedeOpen} />
+        )}
+      </Box>
+      <Markdown text={shown.trim() === '' ? t.unreadable : shown} />
     </Box>
   )
 }
@@ -569,26 +582,25 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
         {tab('log', t.log)}
         {tab('config', t.config)}
         <Button key="refresh" label={`↻ ${t.refresh}`} onPress={act.refresh} />
-        <Text dimColor size="caption">
-          {t.updated(s.loadedAt)}
-        </Text>
       </Box>
-      <Box flexDirection="row" gap="md" flexWrap="wrap">
-        <Text weight="semibold">{`${t.open} ${counts.open ?? 0}`}</Text>
-        {STATES.map(state => (
-          <Text color={COLOR[state] ?? 'text'}>{`${stateText(t, state)} ${counts[state] ?? 0}`}</Text>
-        ))}
-      </Box>
+      {spec === undefined && (
+        <Box flexDirection="row" gap="md" flexWrap="wrap">
+          <Text weight="semibold">{`${t.open} ${counts.open ?? 0}`}</Text>
+          {STATES.map(state => (
+            <Text color={COLOR[state] ?? 'text'}>{`${stateText(t, state)} ${counts[state] ?? 0}`}</Text>
+          ))}
+        </Box>
+      )}
       {(data.runs ?? []).map(run => runBanner(kit, t, run, act))}
       {s.error !== '' && <Text color="error">{s.error}</Text>}
       {s.notice !== '' && <Text color="suggestion">{s.notice}</Text>}
-      {data.dirty === true && (
+      {spec !== undefined && specView(kit, t, data, spec, s, act, content)}
+      {spec === undefined && s.tab === 'register' && registerView(kit, t, data, s, act)}
+      {spec === undefined && s.tab === 'register' && data.dirty === true && (
         <Text dimColor size="caption">
           {t.dirty}
         </Text>
       )}
-      {spec !== undefined && specView(kit, t, data, spec, s, act, content)}
-      {spec === undefined && s.tab === 'register' && registerView(kit, t, data, s, act)}
       {spec === undefined && s.tab === 'log' && (
         <Box flexDirection="column" gap="xs">
           <Text dimColor size="caption">
