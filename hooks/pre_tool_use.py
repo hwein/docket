@@ -108,6 +108,14 @@ def main():
             return refuse("[docket] The /docket: commands are the user's commands: they switch the mode "
                           "only when the user types them. Say which command comes next and end the turn.")
 
+    # A command of the user that could not do what it says started nothing: the turn tells the user why and what they
+    # can do, and nothing else happens in it (user_prompt.py, `declined`; cleared by the user's next prompt).
+    if state.get("declined") and not hook_input.get("agent_id") and (
+            tool in WRITE_TOOLS | {"Agent", "Task", "Workflow"} or (tool == "Skill" and skill.startswith("docket:"))):
+        return refuse(f"[docket] The user's command did not take effect ({state['declined'][:120]}): nothing is "
+                      "written or started in this turn. Tell the user in one or two sentences what stands in the way "
+                      "and what they can do about it.")
+
     if mode in RUN_MODES and tool == "AskUserQuestion":
         return refuse("[docket] The spec is sealed: no questions. Take the default, write a 'deviation' line "
                       "into the docket, continue. What only the user can decide goes into the Terminal state "

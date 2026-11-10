@@ -77,8 +77,15 @@ as BLOCKED in the spec's docket and in the closing message.
 
 Each mode keeps to its work: concept mode writes concepts and `DOCKET.md`, any other write in the repo comes to the
 user as a permission dialog, and an order for specs given there is answered with `/docket:spec`. A sealed run asks
-no question, not in the text and not in the next-step box; free text typed during it goes to an inbox the
-orchestrator reads between points, and the notice says so in the user's language.
+no question, not in the text and not in the next-step box.
+
+No prompt of the user is refused: `user_prompt.py` never exits 2. Free text typed during a run reaches the
+orchestrator, whose next text is the answer and is shown (`answer_due`, the one text of a run the display gate
+lets through); the inbox keeps the message for the docket and the closing message, and a run that had stopped
+goes on with it. A command that cannot do what it says (a spec that runs or waits in another session, a
+precondition not met, specs out of order, a spec the project does not have, a mode command during a run) changes
+nothing and reaches the model with the reason and the way out; the model tells the user in one or two sentences,
+and outside a run nothing is written or started in that turn (`declined`, `pre_tool_use.py`).
 
 In a sealed run the orchestrator keeps the docket itself; a fixer gets no docket or metrics path. The hooks' own
 source is not read. An implementer, refiner, reviewer, diagnoser or conceptor is spawned with its `model`; a spawn without

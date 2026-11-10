@@ -53,8 +53,9 @@ latest commit shows whether they passed.
    your decisions closed with one word each, reference docs named. Then it is `ready` and frozen.
 4. **Leave:** `/docket:implement <id>`. What only you can provide, a key or a running server, is checked first;
    then the session seals. Refinement, pre-registered docket, one implementer per point, checks run by the
-   orchestrator, a review of the whole change from two angles, commits per the project's rules. Your messages wait in the
-   inbox; `/docket:stop` ends the run cleanly. Nothing asks you anything until the run is over.
+   orchestrator, a review of the whole change from two angles, commits per the project's rules. A message you write
+   during the run is answered at once; `/docket:stop` ends the run cleanly. Nothing asks you anything until the run
+   is over, and nothing you type is ever refused: where a command cannot start, you are told why and what to do.
 5. **Read:** one message for the whole run, in your language: each spec by its title and what it delivered,
    whether the work is pushed and CI is green, what was checked, what is open, what to watch, what only you can do, and the
    decision that is due. The dockets hold the evidence. What deviated goes back to step 2.
@@ -91,7 +92,7 @@ flowchart TD
     push --> close["One closing message<br/>delivered · open ·<br/>to watch · decisions due"]
     push -.-> docket[("docket<br/>the evidence,<br/>append-only")]
     close --> back["deviations and things<br/>to watch go back to<br/>/docket:concept"]
-    inbox["sealed: it asks nothing,<br/>your notes go to an inbox,<br/>/docket:stop ends it"] -.-> build
+    inbox["sealed: it asks nothing,<br/>your messages are answered,<br/>/docket:stop ends it"] -.-> build
 ```
 
 ## Commands
@@ -149,8 +150,8 @@ the specs not started and the command that resumes them. `/docket:stop` ends the
    sets.
 
 While it runs you see a status line, and only when something changed: which spec of how many, its title, the
-points delivered. Your own messages go to an inbox the orchestrator reads between points; the closing message
-says what came of them.
+points delivered. Your own messages reach the orchestrator, which answers them on the screen and goes on; they
+are kept in an inbox too, and the closing message says what came of them.
 
 ## What you can rely on
 
@@ -226,7 +227,7 @@ Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 
-0.5.3, an early stage of development, already in use in several repositories.
+0.5.4, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

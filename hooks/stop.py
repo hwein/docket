@@ -2,7 +2,8 @@
 is suspended during a sealed run; outside it, its rejection goes to Claude, which answers with an empty turn, and
 this hook counts the verdicts from the transcript at the next Stop.
 
-sealed, rewrite (a run): no text reaches the user. A Stop while agents run (background_tasks, or an agent whose
+sealed, rewrite (a run): no text reaches the user but the answer to a message the user wrote during the run
+         (user_prompt.py, message_display.py). A Stop while agents run (background_tasks, or an agent whose
          notification has not reached the model) is a wait and passes unchecked. Otherwise the spec must have ended
          in its docket's `## Terminal state` section (`state:` DELIVERED | BLOCKED | DISSENT, `result:`, `open:`,
          `user:`, `decision:`); DELIVERED needs the evidence (check after the last agent, citations, reference docs,

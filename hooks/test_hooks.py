@@ -150,11 +150,13 @@ class ModeSwitch(Project):
         self.assertIn("sealed", self.log())
         self.assertIn("Mode sealed", out)
 
-    def test_implement_without_id_and_without_a_ready_spec_is_refused(self):
+    def test_implement_without_id_and_without_a_ready_spec_seals_nothing_and_says_why(self):
         self.spec.write_text(f"---\nid: {SPEC}\nstate: draft\n---\n# Login\n", "utf-8")
-        code, err, _ = self.prompt("/implement")
-        self.assertEqual(code, 2)
-        self.assertIn("No ready spec", err)
+        code, err, out = self.prompt("/implement")
+        self.assertEqual(code, 0, err)
+        self.assertIn("The user's command did not take effect: No ready spec", out)
+        self.assertIn("Tell the user", out)
+        self.assertEqual(self.state()["mode"], "none")
 
     def test_implement_with_several_ids_seals_the_first_and_queues_the_rest(self):
         # luradb-web-client 2026-11-06: five ids in one call, the first was sealed, the other four vanished unnamed.
@@ -231,10 +233,10 @@ class ModeSwitch(Project):
         self.assertEqual(self.run_stop("The cause is the pasted command.")[0], 0)
         self.assertEqual(self.log(), "")
 
-    def test_implement_with_a_spec_this_project_does_not_have_is_refused(self):
-        code, err, _ = self.prompt(f"/docket:implement {SPEC}, s-35903eb4, s-55d9034e")
-        self.assertEqual(code, 2)
-        self.assertIn("No spec s-35903eb4, s-55d9034e in this project", err)
+    def test_implement_with_a_spec_this_project_does_not_have_seals_nothing(self):
+        code, err, out = self.prompt(f"/docket:implement {SPEC}, s-35903eb4, s-55d9034e")
+        self.assertEqual(code, 0, err)
+        self.assertIn("did not take effect: No spec s-35903eb4, s-55d9034e in this project", out)
         self.assertEqual(self.state().get("mode", "none"), "none")
         self.assertFalse((self.work / "locks").exists())
         self.assertNotIn("sealed", self.log())
@@ -268,13 +270,51 @@ class ModeSwitch(Project):
         self.prompt("/spec")
         self.assertEqual(self.state()["mode"], "spec")
 
-    def test_free_text_in_sealed_goes_to_inbox(self):
+    def test_free_text_in_a_run_reaches_the_orchestrator_and_is_kept_in_the_inbox(self):
+        # docket 2026-11-10: eight messages of the user went to an inbox and none reached the model.
         self.prompt(f"/implement {SPEC}")
-        code, err, _ = self.prompt("please also fix the logo")
-        self.assertEqual(code, 2)
-        self.assertIn("Noted. The run reads your message", err)
+        code, err, out = self.prompt("please also fix the logo")
+        self.assertEqual((code, err.strip()), (0, ""))
+        self.assertIn("The user wrote during the run", out)
+        self.assertIn("Your next text is shown to the user", out)
         self.assertIn("fix the logo", (self.work / "inbox" / f"{SPEC}.md").read_text("utf-8"))
-        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertEqual((self.state()["mode"], self.state()["answer_due"]), ("sealed", True))
+
+    def test_a_message_of_the_user_takes_a_stopped_run_up_again(self):
+        self.set_state(mode="sealed", spec=SPEC, halted=True)
+        code, err, out = self.prompt("what happened?")
+        self.assertEqual((code, err.strip()), (0, ""))
+        self.assertIn("The run had stopped without being finished; with the user's message it goes on.", out)
+        self.assertEqual((self.state()["halted"], self.state()["answer_due"]), (False, True))
+        self.assertEqual(self.run_stop("It stopped at the second point.")[0], 2)  # the run is checked again
+
+    def test_no_prompt_is_ever_refused(self):
+        # The rule of 0.5.4: whatever the state and whatever the prompt, user_prompt.py lets it through.
+        prompts = ("hello", "/implement", f"/implement {SPEC}", "/implement s-ffffffff", "/implement the login one",
+                   "/concept", "/spec", "/docket:stop", "/docket:status", "/docket:init", "go")
+        for mode in ("none", "concept", "spec", "init", "sealed", "rewrite", "closing", "closed"):
+            for halted in (False, True):
+                for prompt in prompts:
+                    self.set_state(mode=mode, spec=SPEC if mode in ("sealed", "rewrite", "closing", "closed") else "",
+                                   halted=halted)
+                    code, err, _ = self.prompt(prompt)
+                    self.assertEqual((code, err.strip()), (0, ""), (mode, halted, prompt))
+
+    def test_a_command_that_did_not_take_effect_starts_nothing_in_its_turn(self):
+        self.spec.write_text(f"---\nid: {SPEC}\nstate: draft\n---\n# Login\n", "utf-8")
+        self.prompt("/docket:implement")
+        self.assertIn("No ready spec", self.state()["declined"])
+        for name, tool_input in (("Write", {"file_path": f"{self.p}/src/a.py", "content": "x"}),
+                                 ("Agent", {"description": "build it", "prompt": "x"}),
+                                 ("Skill", {"skill": "docket:implement"})):
+            code, err, _ = self.tool(name, **tool_input)
+            self.assertEqual(code, 2, name)
+            self.assertIn("did not take effect", err)
+            self.assertIn("what they can do", err)
+        self.assertEqual(self.tool("Read", file_path=f"{self.p}/src/a.py")[0], 0)
+        self.prompt("then set it to ready")  # the user's next prompt: the turn is free again
+        self.assertNotIn("declined", self.state())
+        self.assertEqual(self.tool("Write", file_path=f"{self.p}/src/a.py", content="x")[0], 0)
 
     def test_harness_notifications_pass_through_when_sealed(self):
         self.prompt(f"/implement {SPEC}")
@@ -293,11 +333,13 @@ class ModeSwitch(Project):
         self.assertEqual(code, 0)
         self.assertTrue(self.state()["stop_requested"])
 
-    def test_concept_command_refused_while_sealed(self):
+    def test_a_concept_command_in_a_run_changes_nothing_and_is_answered(self):
         self.prompt(f"/implement {SPEC}")
-        code, err, _ = self.prompt("/concept")
-        self.assertEqual(code, 2)
-        self.assertEqual(self.state()["mode"], "sealed")
+        code, err, out = self.prompt("/concept")
+        self.assertEqual(code, 0, err)
+        self.assertIn("The user's command did not take effect: This session works on", out)
+        self.assertEqual((self.state()["mode"], self.state()["answer_due"]), ("sealed", True))
+        self.assertNotIn("declined", self.state())  # the run goes on in that turn
 
     def test_reminder_names_open_required_reading(self):
         self.set_state(mode="concept", degraded=True)
@@ -573,8 +615,8 @@ class SealedStop(Project):
         self.assertEqual(self.run_stop()[0], 2)
         code, err, out = self.run_stop(active=True)
         self.assertEqual(code, 0, err)
-        self.assertIn("Login: the run stopped without being finished. `/docket:implement s-0123abcd` resumes it.",
-                      json.loads(out)["systemMessage"])
+        self.assertIn("Login: the run stopped without being finished. `/docket:implement s-0123abcd` resumes it, and "
+                      "so does any message from you.", json.loads(out)["systemMessage"])
         self.assertIn("stop-forced", self.log())
         self.assertEqual(self.state()["mode"], "sealed")
 
@@ -688,6 +730,17 @@ class DisplayGate(Project):
     def record(self):
         path = self.root / ".claude" / "docket" / f"display-{SID}.json"
         return json.loads(path.read_text("utf-8")) if path.exists() else {}
+
+    def test_in_a_run_the_answer_to_the_users_message_is_shown_once(self):
+        self.prompt(f"/implement {SPEC}")
+        self.assertNotEqual(self.display("Reading the spec.", message_id="m0"), "Reading the spec.")  # a run's own text
+        self.prompt("how far are you?")
+        self.assertNotEqual(self.display("[docket] noted", message_id="m1"), "[docket] noted")
+        self.assertTrue(self.state()["answer_due"])  # an acknowledgement is no answer: it is still due
+        answer = "Two of five points are built; the third is with the tests."
+        self.assertEqual(self.display(answer, message_id="m2"), answer)
+        self.assertFalse(self.state()["answer_due"])
+        self.assertNotEqual(self.display("Next point.", message_id="m3"), "Next point.")
 
     def test_clean_message_is_shown_whole(self):
         self.set_state(mode="concept")
@@ -907,13 +960,18 @@ class WorkDirGit(Project):
 
 
 class Locks(Project):
-    def test_second_session_is_refused_while_first_is_sealed(self):
+    def test_a_second_session_is_not_sealed_while_the_first_runs_and_learns_why(self):
         self.prompt(f"/implement {SPEC}")
         self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)
-        code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-2", "cwd": self.p,
-                                                   "prompt": f"/implement {SPEC}"}, self.p)
-        self.assertEqual(code, 2)
-        self.assertIn("runs in another session", err)
+        code, err, out = run_hook("user_prompt.py", {"session_id": "other-session-2", "cwd": self.p,
+                                                     "prompt": f"/implement {SPEC}"}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertIn("runs in another session", out)
+        self.assertIn(f"(session {SID[:8]})", out)
+        self.assertIn("what they can do", out)
+        other = json.loads((self.root / ".claude" / "docket" / "state-other-session-2.json").read_text("utf-8"))
+        self.assertEqual(other["mode"], "none")
+        self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)
 
     def test_stale_lock_is_taken_over_and_released_on_close(self):
         (self.work / "locks").mkdir()
@@ -1974,17 +2032,21 @@ class Series(Project):
         self.assertEqual(code, 0, err)
         self.assertEqual((self.state()["spec"], self.state()["queue"]), (SPEC, ["s-aaaa1111", "s-bbbb2222"]))
 
-    def test_a_successor_before_its_undone_predecessor_is_refused(self):
-        code, err, _ = self.prompt("/docket:implement s-aaaa1111")
-        self.assertEqual(code, 2)
-        self.assertIn(f"s-aaaa1111 follows {SPEC}, which is not done", err)
-        self.assertEqual(self.prompt(f"/docket:implement s-aaaa1111, {SPEC}")[0], 2)
+    def test_a_successor_before_its_undone_predecessor_is_not_sealed(self):
+        code, err, out = self.prompt("/docket:implement s-aaaa1111")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"s-aaaa1111 follows {SPEC}, which is not done", out)
+        self.assertEqual(self.state()["mode"], "none")
+        self.prompt(f"/docket:implement s-aaaa1111, {SPEC}")
+        self.assertEqual(self.state()["mode"], "none")
         self.assertEqual(self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")[0], 0)
+        self.assertEqual(self.state()["mode"], "sealed")
 
-    def test_words_without_an_id_are_refused_with_the_forms(self):
-        code, err, _ = self.prompt("/docket:implement the login one")
-        self.assertEqual(code, 2)
-        self.assertIn("--all", err)
+    def test_words_without_an_id_seal_nothing_and_name_the_forms(self):
+        code, err, out = self.prompt("/docket:implement the login one")
+        self.assertEqual(code, 0, err)
+        self.assertIn("--all", out)
+        self.assertEqual(self.state()["mode"], "none")
 
     def test_delivered_seals_the_next_spec_and_hands_over_on_stderr(self):
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111, s-bbbb2222")
@@ -2057,10 +2119,11 @@ class Series(Project):
 
     def test_a_queued_spec_waits_for_its_series(self):
         self.prompt(f"/docket:implement {SPEC}, s-bbbb2222")
-        code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-0002", "cwd": self.p,
-                                                   "prompt": "/docket:implement s-bbbb2222"}, self.p)
-        self.assertEqual(code, 2)
-        self.assertIn("waits in another session's series", err)
+        code, err, out = run_hook("user_prompt.py", {"session_id": "other-session-0002", "cwd": self.p,
+                                                     "prompt": "/docket:implement s-bbbb2222"}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertIn("waits in another session's series", out)
+        self.assertFalse((self.work / "locks" / "s-bbbb2222").exists())
 
     def test_the_closing_message_says_whether_the_work_is_pushed(self):
         git = lambda *args, cwd=self.root: subprocess.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c",
@@ -2587,17 +2650,17 @@ class AcceptanceCommands(Project):
 
 
 class InboxNotice(Project):
-    """V11: the notice for a note typed during the run is the user's language and no violation; the closing
-    message says what came of the note (luradb-web-client 2026-11-06: an English notice, counted as a breach)."""
+    """V11: a note typed during the run is no violation, and the closing message says what came of it
+    (luradb-web-client 2026-11-06: an English notice, counted as a breach). Since 0.5.4 the note also reaches the
+    orchestrator, which answers it on the screen."""
 
-    def test_the_notice_is_german_uncounted_and_the_note_is_answered_at_the_end(self):
+    def test_the_note_is_uncounted_and_answered_at_the_end(self):
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
         self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
         self.prompt(f"/implement {SPEC}")
-        code, err, _ = self.prompt("bitte auch das Logo prüfen")
-        self.assertEqual(code, 2)
-        self.assertIn("Notiert.", err)
-        self.assertNotIn("Noted", err)
+        code, err, out = self.prompt("bitte auch das Logo prüfen")
+        self.assertEqual((code, err.strip()), (0, ""))
+        self.assertIn("written in Deutsch", out)
         self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())
         self.docket.write_text("| 1 | login | `x` | [x] |\n## Inbox\n\n- Logo geprüft, es bleibt unverändert.\n", "utf-8")
         self.end_spec(result="Der Login funktioniert, drei Tests sind grün.")
@@ -2615,10 +2678,10 @@ class Preconditions(Project):
 
     def test_a_failing_precondition_keeps_the_session_unsealed(self):
         self.write("`echo ready` → ready", "`exit 3` → ok")
-        code, err, _ = self.prompt(f"/implement {SPEC}")
-        self.assertEqual(code, 2)
-        self.assertIn("Precondition of “Login” not met: `exit 3`", err)
-        self.assertIn("(exit 3)", err)
+        code, err, out = self.prompt(f"/implement {SPEC}")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Precondition of “Login” not met: `exit 3`", out)
+        self.assertIn("(exit 3)", out)
         self.assertNotEqual(self.state().get("mode"), "sealed")
         self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())
         self.write("`echo ready` → ready")
@@ -2660,9 +2723,10 @@ class SeriesOnAbort(Project):
 
     def test_a_lock_of_a_session_gone_quiet_is_taken_over(self):
         self.prompt(f"/implement {SPEC}")
-        code, _, _ = run_hook("user_prompt.py", {"session_id": "other-session-7", "cwd": self.p,
-                                                 "prompt": f"/implement {SPEC}"}, self.p)
-        self.assertEqual(code, 2)
+        _, _, out = run_hook("user_prompt.py", {"session_id": "other-session-7", "cwd": self.p,
+                                                "prompt": f"/implement {SPEC}"}, self.p)
+        self.assertIn("runs in another session", out)
+        self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)
         old = time.time() - 7200
         os.utime(self.root / ".claude" / "docket" / f"state-{SID}.json", (old, old))
         code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-7", "cwd": self.p,
@@ -2843,10 +2907,10 @@ class ReviewFindings(Project):
         self.set_state(mode="none")
         self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")
         self.assertEqual(self.prompt(f"/implement {SPEC}")[0], 0)
-        code, err, _ = run_hook("user_prompt.py", {"session_id": "other-session-8", "cwd": self.p,
-                                                   "prompt": f"/implement {SPEC}"}, self.p)
-        self.assertEqual(code, 2)
-        self.assertIn("runs in another session", err)
+        code, err, out = run_hook("user_prompt.py", {"session_id": "other-session-8", "cwd": self.p,
+                                                     "prompt": f"/implement {SPEC}"}, self.p)
+        self.assertEqual(code, 0, err)
+        self.assertIn("runs in another session", out)
         self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)
 
 

@@ -15,7 +15,8 @@ it runs after the message is on the screen, so a rewrite shows the message twice
   whole message is shown at once. Claude Code Desktop and the SDK send one batch per message.
 - In a run (sealed, rewrite) every text of the orchestrator is replaced by the hook's status line (where the
   series stands, in the project's language), and only when that line differs from the one shown last; else the
-  text is hidden (luradb-web-client 2026-11-06: 105 status lines, 81 of them without news).
+  text is hidden (luradb-web-client 2026-11-06: 105 status lines, 81 of them without news). The one exception is
+  the answer to the user: after a message of the user in a run (state `answer_due`) the next text is shown as it is.
 - In closing only the closing message the hook rendered is shown; another text is hidden and the Stop hook asks
   for the rendered one; at the third try the gate shows the rendered text itself.
 - The judge's verdict is answered with an empty turn (templates/judge-hook.json), so there is nothing to hide.
@@ -34,7 +35,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from docket_lib import (HIDDEN, SESSION_ID, Paths, answers_judge, buffer_path, closing_path, load_display, load_state,
-                        normalized_lines, read_input, read_text, save_display, status_line)
+                        normalized_lines, read_input, read_text, save_display, save_state, status_line)
 from stop import CLOSING_TRIES, GATED_MODES, WATERMARK, box_problems, content_problems, is_judge_ack, is_stub, lines_of
 
 
@@ -97,8 +98,15 @@ def main():
     record["pending"].pop(message_id, None)
     lines = lines_of(text)
     if mode in ("sealed", "rewrite"):
-        # A run speaks to the user once, at its end. Its texts (answers to the harness, notes between tool calls) are
-        # replaced by the status line when it carries news, else hidden.
+        if state.get("answer_due") and lines and not is_stub(text):
+            # The user wrote during the run (user_prompt.py): the orchestrator's next text is the answer and is shown,
+            # that one text only.
+            state["answer_due"] = False
+            save_state(paths, session_id, state)
+            save_display(paths, session_id, record)
+            return show(text)
+        # A run speaks to the user at its end, and when the user speaks to it. Its other texts (answers to the
+        # harness, notes between tool calls) are replaced by the status line when it carries news, else hidden.
         line = status_line(paths, state)
         if record.get("last_status") == line:
             save_display(paths, session_id, record)

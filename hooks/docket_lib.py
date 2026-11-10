@@ -206,16 +206,13 @@ SAY = {
         "no_terminal": "kein Agent läuft, und der Abschnitt „Terminal state“ des Dockets hat keine Zeile `state:`",
         "docket_message": ("eine Nachricht `DOCKET …` gibt es nicht mehr: das Ende einer Spec steht in ihrem Docket, die "
                            "eine Nachricht des Laufs rendert der Hook am Ende"),
-        "halted": "{title}: Der Lauf hat angehalten, ohne fertig zu sein. `/docket:implement {specs}` setzt ihn fort.",
-        "inbox_halted": ("Notiert. Der Lauf ist angehalten; `/docket:implement {specs}` setzt ihn fort und liest dann "
-                         "deine Nachricht."),
+        "halted": ("{title}: Der Lauf hat angehalten, ohne fertig zu sein. `/docket:implement {specs}` setzt ihn fort, "
+                   "jede Nachricht von dir auch."),
         "sealed_elsewhere": "„{title}“ läuft in einer anderen Sitzung. Dort beenden oder mit `/docket:stop` anhalten.",
         "queued_in": "„{title}“ wartet in der Reihe einer anderen Sitzung. Die Reihe dort erreicht sie, oder `/docket:stop` dort.",
         "sealed_on": "Diese Sitzung arbeitet an „{title}“. Erst beenden oder `/docket:stop`.",
         "forbidden_precondition": ("Die Vorbedingung `{command}` von „{title}“ steht unter forbidden_commands in "
                                    "DOCKET.md; prüfe sie selbst und nimm sie aus der Spec."),
-        "inbox": ("Notiert. Der Lauf liest deine Nachricht nach dem nächsten Schritt; was daraus wurde, steht in der "
-                  "Abschlussmeldung. `/docket:stop` beendet den Lauf."),
         "precondition": ("Vorbedingung von „{title}“ nicht erfüllt: `{command}` sollte {expected} liefern ({got}). "
                          "Erst das erledigen, dann den Lauf starten."),
         "head_one": "Lauf beendet: {title} ist umgesetzt",
@@ -283,15 +280,13 @@ SAY = {
         "no_terminal": "no agent is running and the docket's `Terminal state` section has no `state:` line",
         "docket_message": ("there is no `DOCKET …` message any more: a spec ends in its docket, and the hook renders the "
                            "run's one message at the end"),
-        "halted": "{title}: the run stopped without being finished. `/docket:implement {specs}` resumes it.",
-        "inbox_halted": "Noted. The run has stopped; `/docket:implement {specs}` resumes it and then reads your message.",
+        "halted": ("{title}: the run stopped without being finished. `/docket:implement {specs}` resumes it, and so "
+                   "does any message from you."),
         "sealed_elsewhere": "“{title}” runs in another session. Finish it there or stop it with `/docket:stop`.",
         "queued_in": "“{title}” waits in another session's series. That series reaches it, or `/docket:stop` there.",
         "sealed_on": "This session works on “{title}”. Finish it or `/docket:stop` first.",
         "forbidden_precondition": ("The precondition `{command}` of “{title}” matches forbidden_commands in DOCKET.md; "
                                    "check it yourself and take it out of the spec."),
-        "inbox": ("Noted. The run reads your message after its next step; what came of it is in the closing message. "
-                  "`/docket:stop` ends the run."),
         "precondition": ("Precondition of “{title}” not met: `{command}` should give {expected} ({got}). Settle "
                          "that first, then start the run."),
         "head_one": "Run finished: {title} is implemented",
