@@ -4,6 +4,7 @@ by Claude Code's hook events and never by the model.
     python docket_ui.py overview  --root <project root> [--session <id>]
     python docket_ui.py supersede --root <project root> --spec s-xxxxxxxx --by s-yyyyyyyy [--session <id>]
     python docket_ui.py stop      --root <project root> --session <id>
+    python docket_ui.py handoff   --root <project root> --session <id> --command "/docket:implement s-xxxxxxxx"
 
 The pane reads nothing by itself: the register, the runs and the LOG come from the same functions the hooks use, so
 both read one project the same way. A state the pane sets is written here, with its LOG line, as a hook would.
@@ -19,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from docket_lib import (CONCEPT_ID, RUN_MODES, SPEC_ID, Paths, docket_counts, frontmatter, in_order, language_code,  # noqa: E402
                         load_state, lock_holder, log_event, log_lines, norm, other_sessions, position, queued_elsewhere, read_text,
-                        save_state, section_text, session_live, set_spec_state, spec_records, spec_title,
+                        save_handoff, save_state, section_text, session_live, set_spec_state, spec_records, spec_title,
                         terminal_section, work_dir_dirty)
 
 SPEC_STATES = ("draft", "ready", "in-progress", "done", "superseded")
@@ -163,13 +164,24 @@ def stop(paths, session_id):
     return {"ok": True, "session": session_id, "spec": state.get("spec", "")}
 
 
+def handoff(paths, session_id, command):
+    """Records the command the pane hands to a session of its own: the app wraps that session's brief, and the
+    prompt hook takes the command from this record where it is no longer the brief's first or last line."""
+    if not os.path.isfile(paths.config):
+        return {"ok": False, "error": "not-initialized"}
+    if not save_handoff(paths, session_id, command):
+        return {"ok": False, "error": "usage"}
+    return {"ok": True, "command": command}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="docket_ui")
-    parser.add_argument("action", choices=("overview", "supersede", "stop"))
+    parser.add_argument("action", choices=("overview", "supersede", "stop", "handoff"))
     parser.add_argument("--root", required=True)
     parser.add_argument("--session", default="")
     parser.add_argument("--spec", default="")
     parser.add_argument("--by", default="")
+    parser.add_argument("--command", default="")
     try:
         args = parser.parse_args(argv)
     except SystemExit:
@@ -187,6 +199,8 @@ def main(argv=None):
                 result = {"ok": False, "error": "usage"}
             else:
                 result = supersede(paths, args.session, args.spec, args.by)
+        elif args.action == "handoff":
+            result = handoff(paths, args.session, args.command)
         else:
             result = stop(paths, args.session) if args.session else {"ok": False, "error": "usage"}
     except Exception as error:  # the pane shows the reason; a traceback on stdout would not parse

@@ -40,6 +40,8 @@ let isReading = false
 let isAskedAgain = false
 let timer: { cancel: () => void } | undefined
 let lastRead = 0
+// The session root the last read was made for; undefined before the first.
+let readRoot: string | undefined
 
 const t = () => words(S.data?.language)
 
@@ -122,6 +124,8 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   isReading = true
 
   try {
+    readRoot = await $.session.root()
+
     const reply = await call<Overview>($, 'overview')
     const before = S.data
     const now = await $.clock.now()
@@ -137,7 +141,10 @@ const refresh = async ($: EngineInterface): Promise<void> => {
       bodies.clear()
       announce($, before, reply)
 
-      if (reply.initialized && before !== undefined && !before.initialized) {
+      // The first read of a docket project opens the pane, and so does the read after the session moved: the app
+      // starts a session's process in a placeholder folder before the first prompt and moves it to the project
+      // with that prompt (luradb-web-client 2026-11-10: the pane came up only after the first turn had ended).
+      if (reply.initialized && (before === undefined || !before.initialized || before.root !== reply.root)) {
         void $.ui.open({ id: PANE, title: t().title }).catch(() => undefined)
       }
 
@@ -162,6 +169,19 @@ const refresh = async ($: EngineInterface): Promise<void> => {
       isAskedAgain = false
       void refresh($)
     }
+  }
+}
+
+/** Reads again at once where the session stands in another folder than the last read's, or nothing was read yet. */
+const follow = async ($: EngineInterface): Promise<void> => {
+  const root = await $.session.root().catch(() => readRoot)
+
+  if (root !== undefined && root !== readRoot) {
+    // The band's "hide for good" is kept per project.
+    isBandHidden = (await hiddenRoots($)).includes(root)
+    await refresh($)
+  } else if (S.data === undefined && !isReading) {
+    await refresh($)
   }
 }
 
@@ -207,13 +227,36 @@ const implement = async ($: EngineInterface, target: string, label: string): Pro
   schedule($, SOON)
 }
 
-/** The same run in a session of its own: started through the app's session tool, or by asking Claude for it. */
+/**
+ * Puts a request into the empty prompt box for the person to send: the app starts a session only on a turn the
+ * person began, and refuses it on a prompt this plugin submits (luradb-web-client 2026-11-10: the pane's request
+ * was refused, the same call succeeded on the next typed turn). False where no box takes it or a draft is in it.
+ */
+const fillRequest = async ($: EngineInterface, text: string): Promise<boolean> => {
+  try {
+    if ((await $.prompt.read()).text.trim() !== '') {
+      return false
+    }
+
+    return (await $.prompt.fill({ text })).isFilled
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The same run in a session of its own: started through the app's session tool, else requested in the prompt box
+ * for the person's Enter, else by asking Claude for it.
+ */
 const implementInSession = async ($: EngineInterface, target: string, label: string): Promise<void> => {
   const say = t()
   const command = `/docket:implement ${target}`
   let hasStarted = false
 
   S.picked = []
+  // The app wraps the brief of the session it starts, so the command is neither its first nor its last line: the
+  // hooks of that session take it from this record (docket_lib.take_handoff).
+  await call<{ ok: true }>($, 'handoff', { command }).catch(() => undefined)
 
   try {
     const ran = await $.tool.call({
@@ -233,6 +276,8 @@ const implementInSession = async ($: EngineInterface, target: string, label: str
 
   if (hasStarted) {
     S.notice = say.sessionStarted(label)
+  } else if (await fillRequest($, say.askSession(command))) {
+    S.notice = say.sessionFilled(label)
   } else {
     try {
       await $.prompt.submit({ text: say.askSession(command), asUser: true })
@@ -387,10 +432,6 @@ const boot = async ($: EngineInterface): Promise<void> => {
   S.logo = await readLogo($)
   isBandHidden = (await hiddenRoots($)).includes(await $.session.root())
   await refresh($)
-
-  if (S.data?.initialized) {
-    void $.ui.open({ id: PANE, title: t().title }).catch(() => undefined)
-  }
 }
 
 export const register: Register = on => {
@@ -411,11 +452,27 @@ export const register: Register = on => {
     return { text: opened.isPlaced ? 'docket pane opened.' : `docket pane not shown: ${opened.reason}` }
   })
 
+  // The session start hooks run when the app moves the session from its placeholder folder to the project, with
+  // the first prompt: the project is read then, not after the first turn.
+  on('classic.SessionStart', ($, e, next) => {
+    void follow($).catch(() => undefined)
+
+    return next(e)
+  })
+
+  on('session.attach', ($, e, next) => {
+    void follow($).catch(() => undefined)
+
+    return next(e)
+  })
+
   // The hooks seal a session and move a spec's state on a prompt; a turn's end is when a run has moved on.
   on('turn.start', ($, e, next) => {
     if (S.data?.initialized) {
       schedule($, SOON)
     }
+
+    void follow($).catch(() => undefined)
 
     return next(e)
   })

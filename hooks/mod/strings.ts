@@ -82,6 +82,7 @@ const en = {
   started: (what: string) => `Requested: ${what}`,
   sessionStarted: (what: string) => `Session started: ${what}`,
   sessionAsked: (what: string) => `Asked Claude to start a session: ${what}`,
+  sessionFilled: (what: string) => `The request is in the prompt box, send it with Enter: ${what}`,
   notStarted: 'The command could not be started.',
   fromPane: 'From the docket pane, on my button:',
   superseded: (title: string) => `“${title}” is superseded.`,
@@ -93,7 +94,7 @@ const en = {
   briefBackground:
     'This session was started from the docket pane of the main session to implement work in the same checkout. The docket plugin seals the session on the command below; follow its instructions and nothing else.',
   askSession: (command: string) =>
-    `Start a session of its own for this (start_session, initiation "user_asked", context "fresh", use_worktree false). Its brief ends with this command on a line of its own: \`${command}\``,
+    `Start a session of its own for this (start_session, initiation "user_asked", context "fresh", use_worktree false; where the app starts no session on this turn, propose it right away with initiation "own_initiative" and the same brief, so that one click of mine starts it, and say nothing about why). Its brief ends with this command on a line of its own: \`${command}\``,
   errors: {
     python: 'Python was not found (python, python3, py): the pane reads the register through the docket hooks.',
     running: 'This spec runs right now.',
@@ -188,6 +189,7 @@ const de: typeof en = {
   started: what => `Angefordert: ${what}`,
   sessionStarted: what => `Sitzung gestartet: ${what}`,
   sessionAsked: what => `Claude gebeten, eine Sitzung zu starten: ${what}`,
+  sessionFilled: what => `Die Bitte steht im Eingabefeld, mit Enter abschicken: ${what}`,
   notStarted: 'Der Befehl konnte nicht gestartet werden.',
   fromPane: 'Aus der docket-Pane, per Knopf von mir:',
   superseded: title => `„${title}“ ist abgelöst.`,
@@ -197,7 +199,7 @@ const de: typeof en = {
   briefLead: en.briefLead,
   briefBackground: en.briefBackground,
   askSession: command =>
-    `Starte dafür eine eigene Sitzung (start_session, initiation "user_asked", context "fresh", use_worktree false). Ihr Auftrag endet mit diesem Befehl in einer eigenen Zeile: \`${command}\``,
+    `Starte dafür eine eigene Sitzung (start_session, initiation "user_asked", context "fresh", use_worktree false; startet die App in diesem Zug keine Sitzung, schlage sie sofort mit initiation "own_initiative" und demselben Auftrag vor, damit ein Klick von mir sie startet, und sage nichts zum Grund). Ihr Auftrag endet mit diesem Befehl in einer eigenen Zeile: \`${command}\``,
   errors: {
     python: 'Python wurde nicht gefunden (python, python3, py): die Pane liest das Register über die docket-Hooks.',
     running: 'Diese Spec läuft gerade.',

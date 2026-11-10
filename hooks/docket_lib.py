@@ -912,6 +912,56 @@ def command_line(text):
     return next((line for line in lines[:1] + lines[-1:] if line.startswith("/")), "")
 
 
+# --- a command the pane hands to a session of its own -----------------------------
+# The app wraps the brief of a session it starts: a heading above it, the background, and below it lines of its own
+# (luradb-web-client 2026-11-10: "Shared notes folder for this group of sessions (...)" followed the command, the
+# command was neither the first nor the last line, the session stayed unsealed, called the command as a skill, was
+# refused and ended on "type the command yourself"). The pane therefore records the command before it asks for the
+# session; the session whose prompt carries exactly that line takes it, once. A line in a paste matches no record.
+HANDOFF_SECONDS = 900
+
+
+def handoff_path(paths):
+    return posixpath.join(paths.state_dir, "handoff.json")
+
+
+def handoff_records(paths):
+    data, _ = read_json(handoff_path(paths))
+    now = time.time()
+    return [r for r in (data if isinstance(data, list) else [])
+            if isinstance(r, dict) and isinstance(r.get("command"), str)
+            and now - HANDOFF_SECONDS <= float(r.get("at") or 0) <= now + 60]
+
+
+def handoff_line(command):
+    """The command as one line, spaces folded: what the pane records and what a prompt's line is compared with."""
+    return " ".join((command or "").strip().strip("`").split())
+
+
+def save_handoff(paths, session_id, command):
+    """Records a mode command the pane hands to another session. True when it was written."""
+    line = handoff_line(command)
+    if not TYPED_COMMAND.match(line):
+        return False
+    records = [r for r in handoff_records(paths) if r["command"] != line]
+    records.append({"command": line, "from": session_id or "", "at": int(time.time())})
+    return write_json(handoff_path(paths), records)
+
+
+def take_handoff(paths, session_id, text):
+    """The handed-over command a prompt carries on a line of its own, or "". Taken once, and never by the session
+    that recorded it: its own request names the command inside a sentence."""
+    records = handoff_records(paths)
+    if not records:
+        return ""
+    lines = {handoff_line(line) for line in (text or "").splitlines()}
+    for record in records:
+        if record["command"] in lines and record.get("from") != (session_id or ""):
+            write_json(handoff_path(paths), [r for r in records if r is not record])
+            return record["command"]
+    return ""
+
+
 def typed_mode(transcript_path):
     """The mode of the last mode command the user typed in this session: concept, spec or init; "" for none and
     for implement, whose run (series, queue, outcomes) cannot be rebuilt from a command."""

@@ -205,6 +205,52 @@ class ModeSwitch(Project):
             self.assertEqual(code, 0, err)
             self.assertEqual(self.state()["mode"], "sealed", text)
 
+    # The brief of a session the app starts, as the session reads it (luradb-web-client 2026-11-10, session
+    # 5482c916, entry 5): the app's heading and background above the task, a line of its own below the command.
+    APP_BRIEF = ("Background (from the session that started this one):\nThis session was started from the docket "
+                 "pane of the main session.\n\nTask:\nRun this command exactly as written, as your first action:\n\n"
+                 "{command}\n\nShared notes folder for this group of sessions (create it when you first write to "
+                 "it): C:/Users/x/side-session-notes/abc\n")
+
+    def hand_over(self, command, session="pane-session-0002"):
+        result = subprocess.run([sys.executable, str(HOOKS / "docket_ui.py"), "handoff", "--root", self.p,
+                                 "--session", session, "--command", command], capture_output=True,
+                                env={k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"})
+        return json.loads(result.stdout.decode("utf-8"))
+
+    def test_a_command_the_pane_handed_over_seals_inside_the_apps_brief(self):
+        # The command was neither the first nor the last line, the session stayed unsealed, called the command as a
+        # skill, was refused and ended on "type the command yourself".
+        command = f"/docket:implement {SPEC}"
+        self.assertTrue(self.hand_over(command)["ok"])
+        code, err, out = self.prompt(self.APP_BRIEF.format(command=command))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertEqual(self.state()["spec"], SPEC)
+        self.assertIn("Mode sealed", out)
+        code, err, _ = self.tool("Skill", skill="docket:implement", args=SPEC)  # the model may expand it
+        self.assertEqual(code, 0, err)
+        # Taken once: the record is gone, and the same text seals no second session.
+        self.assertEqual(json.loads((self.root / ".claude" / "docket" / "handoff.json").read_text("utf-8")), [])
+
+    def test_the_same_brief_without_a_record_of_the_pane_is_text(self):
+        code, err, out = self.prompt(self.APP_BRIEF.format(command=f"/docket:implement {SPEC}"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertNotIn("Mode sealed", out)
+
+    def test_a_handed_over_command_is_not_taken_by_the_session_that_recorded_it_nor_as_another_command(self):
+        command = f"/docket:implement {SPEC}"
+        self.assertTrue(self.hand_over(command, session=SID)["ok"])
+        code, err, _ = self.prompt(f"look at this:\n{command}\nwhy does it not start?")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertTrue(self.hand_over(command)["ok"])  # now from the pane's session
+        code, err, _ = self.prompt("look at this:\n/docket:implement s-aaaa1111\nwhy does it not start?")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertFalse(self.hand_over("rm -rf /")["ok"])  # only a mode command is recorded
+
     def test_a_project_not_set_up_is_never_sealed(self):
         # docket 2026-11-10: a complaint with a pasted `/docket:implement` line sealed a session in a repo without
         # DOCKET.md; eight messages of the user went to an inbox and none reached the model.

@@ -103,6 +103,10 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
     opened: [] as string[],
     store: new Map<string, unknown>(),
     listed: ['docket:implement', 'docket:stop', 'docket:init'],
+    root: '/project',
+    draft: '',
+    canFill: false,
+    filled: [] as string[],
   }
   const clock = mock.clock(on, { now: Date.UTC(2026, 10, 10, 12, 0) })
 
@@ -113,7 +117,18 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('session.root', () => ({ value: '/project' }))
+  on('classic.SessionStart', () => ({}))
+  on('session.root', () => ({ value: seen.root }))
+  on('prompt.read', () => ({ value: { text: seen.draft, cursor: 0 } }))
+  on('prompt.fill', (_, e) => {
+    if (!seen.canFill) {
+      return { isFilled: false }
+    }
+
+    seen.filled.push(e.text)
+
+    return { isFilled: true }
+  })
   on('session.id', () => ({ value: 'session-1' }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', (_, e) => {
@@ -368,6 +383,63 @@ test('a session of its own is started through the session tool, else Claude is a
   expect(seen.prompts.at(-1)).toContain('`/docket:implement s-0123abcd`')
   expect(String(seen.prompts.at(-1)).split('\n').some(line => line.trim().startsWith('/'))).toBe(false)
   await ui.unmount()
+})
+
+test('where the session tool starts none, the request waits in the empty prompt box for the person to send', async ($, on) => {
+  // luradb-web-client 2026-11-10: the app refused the session on the turn the pane's own prompt began, and started
+  // it with the same call on the next turn the person typed.
+  const { seen, clock } = world(on, overview, () => ({ deny: 'not allowed' }))
+
+  seen.canFill = true
+  await start($, clock)
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  await ui.press({ key: 'spec-s-0123abcd' })
+  await ui.unmount()
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'implement-session' })
+
+  expect(seen.filled.at(-1)).toContain('`/docket:implement s-0123abcd`')
+  expect(seen.prompts).toEqual([])
+  // The session that is started finds its command by this record, wherever the app puts it in the brief.
+  expect(seen.argv.find(argv => argv[2] === 'handoff')?.slice(-2)).toEqual([
+    '--command',
+    '/docket:implement s-0123abcd',
+  ])
+
+  // A draft of the person is never written over: Claude is asked instead.
+  seen.draft = 'half a sentence'
+  await ui.press({ key: 'implement-session' })
+  expect(seen.filled.length).toBe(1)
+  expect(seen.prompts.at(-1)).toContain('own_initiative')
+  await ui.unmount()
+})
+
+test('a session the app moves to its project with the first prompt opens the pane on the session start hooks', async ($, on) => {
+  // luradb-web-client 2026-11-10: the process of a new session stood in the app's placeholder folder until the first
+  // prompt (`relocated` in the transcript); the pane read that folder once and came up after the first turn only.
+  let reply: unknown = { ok: true, initialized: false, root: '/spare', work: '/spare/docket' }
+  const { seen, clock } = world(on, () => reply)
+
+  seen.root = '/spare'
+  await $.session.start({ cwd: '/spare', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  expect(seen.opened).toEqual([])
+
+  seen.root = '/project'
+  reply = overview()
+  await $.classic.SessionStart({ source: 'startup' })
+  await clock.settle()
+  expect(seen.opened).toEqual(['docket'])
+  expect(seen.argv.at(-1)?.slice(2, 5)).toEqual(['overview', '--root', '/project'])
+
+  // The same folder again reads nothing and opens nothing a second time.
+  const reads = seen.argv.length
+
+  await $.classic.SessionStart({ source: 'compact' })
+  await clock.settle()
+  expect(seen.argv.length).toBe(reads)
+  expect(seen.opened).toEqual(['docket'])
 })
 
 test('several ready specs are ticked and run as one series, in implementation order', async ($, on) => {

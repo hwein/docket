@@ -65,7 +65,7 @@ export type Failure = { ok: false; error: string; detail?: string }
 
 export type Reply<T> = T | Failure
 
-type Extra = { session?: string; spec?: string; by?: string }
+type Extra = { session?: string; spec?: string; by?: string; command?: string }
 
 const PYTHONS = ['python', 'python3', 'py']
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/
@@ -75,7 +75,7 @@ let python: string | undefined
 /** Runs one action of docket_ui.py and answers its JSON; `{ ok: false, error: 'python' }` when no Python starts. */
 export async function call<T>(
   $: EngineInterface,
-  action: 'overview' | 'supersede' | 'stop',
+  action: 'overview' | 'supersede' | 'stop' | 'handoff',
   extra: Extra = {},
 ): Promise<Reply<T>> {
   const args = [
@@ -93,6 +93,10 @@ export async function call<T>(
 
   if (extra.by) {
     args.push('--by', extra.by)
+  }
+
+  if (extra.command) {
+    args.push('--command', extra.command)
   }
 
   for (const candidate of python ? [python] : PYTHONS) {

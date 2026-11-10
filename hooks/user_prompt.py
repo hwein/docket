@@ -30,7 +30,7 @@ from docket_lib import (CONCEPT_ID, REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, cla
                         preconditions, queued_elsewhere, read_input, ready_specs, restore_mode, save_display,
                         save_state, say,
                         series_line, session_live, set_context, set_spec_state, spec_title, strip_harness_blocks,
-                        suspend_judge, terminal_base, violations_line)
+                        suspend_judge, take_handoff, terminal_base, violations_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 GO = re.compile(r"^(go|ok|okay|yes|ja|los|approved|freigabe|freigegeben|do it|write it)\b[.!]?\s*$", re.IGNORECASE)
@@ -124,8 +124,9 @@ def main():
         state.pop("declined", None)  # and what the last command could not do no longer holds anything
         save_state(paths, session_id, state)
     feedback = ""
-    # The first line, or the last below a preamble (the pane, a session started by another); never a line in between.
-    command_line = prompt_command(text)
+    # The first line, or the last below a preamble (the pane, a session started by another); a line in between only
+    # where the pane recorded exactly this command for a session of its own (the app wraps that session's brief).
+    command_line = prompt_command(text) or take_handoff(paths, session_id, text)
     name, rest = parse_command(command_line)
     if not name:
         restore_mode(paths, session_id, state, hook_input.get("transcript_path"))  # a mode the state lost

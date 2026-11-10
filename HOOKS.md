@@ -173,17 +173,29 @@ What a button does:
   as if typed, so `user_prompt.py` resolves, checks and seals exactly as for a typed command. Ticked specs go as
   `/docket:implement s-a, s-b` in implementation order (`in_order`, the order `overview` numbers them in); a tick
   whose predecessor is neither done nor ticked offers no run, since the hook would refuse it. In a session of its
-  own: Claude Code Desktop's session tool is called with a brief that ends with the command on a line of its own;
-  where the call is not allowed, Claude is asked to start that session, in a sentence that names the command and
-  carries it on no line of its own. `user_prompt.py` reads a command on the first line of a prompt or on its last
-  (`docket_lib.command_line`), never on a line in between: pasted text and a request that names a command are
-  text. In a project without DOCKET.md no command but `/docket:init` changes anything, a state that names another
+  own: Claude Code Desktop's session tool is called with a brief that ends with the command on a line of its own.
+  Where the call starts none, the request is put into the empty prompt box for the person to send, in a sentence
+  that names the command and carries it on no line of its own: the app starts a session on a turn the person began
+  and refuses it on a prompt the plugin submits. Where no box takes it, or a draft stands in it, the plugin submits
+  that request, which has Claude propose the session for one click where the app starts none. `user_prompt.py`
+  reads a command on the first line of a prompt or on its last (`docket_lib.command_line`), never on a line in
+  between: pasted text and a request that names a command are text. One exception: the app wraps the brief of a
+  session it starts (a heading and the background above, a line about a notes folder below), so the pane records
+  the command first (`docket_ui.py handoff --command …`, `.claude/docket/handoff.json`), and the session whose
+  prompt carries exactly that command on a line of its own takes it (`take_handoff`): once, within fifteen
+  minutes, never the session that recorded it. In a project without DOCKET.md no command but `/docket:init` changes anything, a state that names another
   mode is read as none (`load_state`), and a spec named in `/docket:implement` is a spec of this project.
 - Superseded: `docket_ui.py supersede --spec … --by …` writes `state: superseded` and the LOG line
   `superseded … by=s-…`. It refuses a spec that runs or waits in a running series, an unknown or superseded
   successor, and a spec already superseded. The model still never sets this state.
 - Stop for a run of another session: `docket_ui.py stop --session …` records what `/docket:stop` records there
   (`stop_requested`, LOG `stop-requested`): that series ends with the spec at work.
+
+Claude Code Desktop starts the process of a new session in a placeholder folder (`claude-code-spare` in the app's
+data) before the first prompt and moves it to the project with that prompt (`relocated` in the transcript). The
+pane therefore reads the project again when the session start hooks run (`classic.SessionStart`), when a surface
+attaches and at a turn's start, wherever the session's root is no longer the one of the last read, and opens on
+the first read that finds a DOCKET.md. Before the first prompt the process does not know the project.
 
 The pane reads again after a prompt, at the end of a turn, at most every ten seconds while tools run, every fifteen
 while another session runs a spec, and on `Refresh`. Its tests run against the engine's own test kit
