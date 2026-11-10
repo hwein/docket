@@ -184,7 +184,7 @@ test('a docket project opens the pane, sets the status line and lists specs unde
 
   await start($, clock)
   expect(seen.opened).toEqual(['docket'])
-  expect(seen.status.at(-1)).toBe('docket: 3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded')
+  expect(seen.status.at(-1)).toBe('3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded')
   expect(seen.argv[0]?.slice(1)).toEqual([
     expect.stringContaining('/hooks/docket_ui.py'),
     'overview',
@@ -366,7 +366,7 @@ test('a run shows with its progress; this session stops by command, another by i
   const { seen, clock } = world(on, () => overview({ runs }))
 
   await start($, clock)
-  expect(seen.status.at(-1)).toContain('▶ Login 1/3 · docket: 3 open')
+  expect(seen.status.at(-1)).toContain('▶ Login 1/3 · 3 open')
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 

@@ -72,7 +72,7 @@ const en = {
   dirty: 'The records are not committed.',
   updated: (time: string) => `as of ${time}`,
   status: (open: number, draft: number, ready: number, busy: number, done: number, superseded: number) =>
-    `docket: ${open} open (${draft} draft · ${ready} ready · ${busy} in progress) · ${done} done · ${superseded} superseded`,
+    `${open} open (${draft} draft · ${ready} ready · ${busy} in progress) · ${done} done · ${superseded} superseded`,
   statusRun: (title: string, progress: string) => `▶ ${title} ${progress}`,
   bandText: 'docket is not set up in this project.',
   bandInit: 'Set up docket',
@@ -176,7 +176,7 @@ const de: typeof en = {
   dirty: 'Die Protokolle sind nicht committet.',
   updated: time => `Stand ${time}`,
   status: (open, draft, ready, busy, done, superseded) =>
-    `docket: ${open} offen (${draft} Entwurf · ${ready} bereit · ${busy} in Arbeit) · ${done} erledigt · ${superseded} abgelöst`,
+    `${open} offen (${draft} Entwurf · ${ready} bereit · ${busy} in Arbeit) · ${done} erledigt · ${superseded} abgelöst`,
   statusRun: (title, progress) => `▶ ${title} ${progress}`,
   bandText: 'docket ist in diesem Projekt nicht eingerichtet.',
   bandInit: 'docket einrichten',
