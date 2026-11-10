@@ -17,12 +17,14 @@ Hooks check provenance, form and state, never content. This is the mechanics beh
 ## The end of a spec
 
 A spec ends in its docket, not in a message: the orchestrator writes the `Terminal state` section (`state:`
-DELIVERED, BLOCKED or DISSENT, `result:`, `open:`, `user:`, `decision:`, `dissent:`), in the user's language, without
+DELIVERED, BLOCKED or DISSENT, `result:`, `open:`, `watch:`, `user:`, `decision:`, `dissent:`), in the user's language, without
 ids or hashes; the last block counts. The Stop hook accepts DELIVERED only if every command of the project's check (as
 many as the project has, listed in `DOCKET.md`) ran after the last agent returned and none failed in its last run;
-every `file:line` cited in the docket's Evidence, Deviations and Reference update sections exists; every reference
-doc the spec names is marked `updated` (and changed since sealing) or `not needed`; every refinement line and every
-review line carries a decision; with `ci` configured, a `CI: <state> <hash>` line names a hash reachable from HEAD
+the command of every delivered point's acceptance line (`<command> → <expected>`) ran after the last implementer or
+fixer returned and did not fail in its last run; every `file:line` cited in the docket's Evidence, Deviations and
+Reference update sections exists; every reference doc the spec names is marked `updated` (and changed since
+sealing) or `not needed`; every refinement line and every review line carries a decision, and the review holds
+(below); with `ci` configured, a `CI: <state> <hash>` line names a hash reachable from HEAD
 after a push in this session. Otherwise the run goes on until it holds. An accepted end closes the spec, writes its
 metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts the closing.
 
@@ -30,7 +32,8 @@ metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts t
 
 When the last spec of a run has ended, or one ended BLOCKED or DISSENT, or the user stopped the run, the hook renders
 the run's one message from the dockets, the LOG and git: every spec by its title with its points and result, whether
-the work is pushed and CI green, what was checked (refinement, review, the project check), what is open, what only
+the work is pushed and CI green, what was checked (refinement, review, the project check), what is open, what to
+watch (the `watch:` lines of the Terminal state), what only
 the user can do, which decision is due and with which command, what came of the user's notes, where the dockets
 are. The orchestrator sends it verbatim; the display gate shows nothing else, and after three misses it shows the
 rendered text itself. The session is closed afterwards.
@@ -73,8 +76,39 @@ no question, not in the text and not in the next-step box; free text typed durin
 orchestrator reads between points, and the notice says so in the user's language.
 
 In a sealed run the orchestrator keeps the docket itself; a fixer gets no docket or metrics path. The hooks' own
-source is not read. A push waits until every line of the docket's Review section is decided: one reviewer agent
-reads the whole diff of the spec before it. Before the session seals, the user-only preconditions of every spec of
+source is not read. An implementer, refiner, reviewer, diagnoser or conceptor is spawned with its `model`; a spawn without
+one is refused, so the model is a decision per tier and role and never the orchestrator's own by default.
+
+The review gates the push and DELIVERED alike:
+
+- The Review section carries a line of each angle of round one, `code` and `spec` (a finding or
+  `<angle> | no findings`), and every line a decision.
+- A finding line that names its angle names its severity. A finding of severity `bug`, `unmet` or `rule` that is
+  `deferred` is refused: it is fixed, rejected with its source, or the spec ends BLOCKED.
+- Of two lines with the same angle and finding the later one counts, so a line is corrected by writing it again.
+- The review is run, not written: once an implementer or fixer wrote in the session, a reviewer agent must have
+  started after the last of them returned, and returned itself. A fix after a review therefore needs a reviewer
+  again; a spawn a hook refused is none.
+- A reviewer's briefing that names the docket is refused: it judges the order and the delivery, not the
+  orchestrator's account of them.
+- A `suspect` (wrong behaviour the reviewer could not show) that is `deferred` is refused, and so is `observe` on
+  any other severity.
+
+Against chasing a symptom, and against waving a fault away:
+
+- While a point is open, the implementers that returned since the last point was closed are its rounds. A second
+  implementer is refused until the docket's Triage section has a line for that point with its `cause:`; a third
+  until that cause names a `file:line`. Of two Triage lines for a point the later one counts.
+- A new docket line whose decision is `observe` is undone at once, like a wrong citation, unless it carries
+  `cause:`, `repro:` and `impact:`, the orchestrator ran the backticked repro command three times in the session
+  and it did not fail all three times, and two diagnoser agents have returned (the examination and its
+  challenge). A `repro:` without a command (nothing of a reasonable size shows the fault) skips the runs, not the
+  challenge. No rule counts time.
+- A spec whose docket sets something to `observe` ends only with a `watch:` line in its Terminal state, and a
+  `watch:` line only with all its parts: what it is about, `seen:`, `suspected:`, `impact:`, `signal:`. The closing
+  message shows each as a block of its own, so that the user can copy it into `/docket:spec` as it stands.
+
+Before the session seals, the user-only preconditions of every spec of
 the run (`Preconditions (user only)`: `command` → expected output) are run; the first that fails is named and
 nothing is sealed; a precondition that matches `forbidden_commands` is not run, and its output never reaches the LOG.
 Only the spec at work is locked, exclusively; a session counts as running while its state was touched within the hour

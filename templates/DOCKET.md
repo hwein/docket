@@ -11,7 +11,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | topics | `<topic1>, <topic2>` | folders under specs/ |
 | check | `<first command of the project's check>` `<further commands, as many as the project has>` | <where the project runs them, e.g. the CI workflow> |
 | reference_roots | `<docs/, README.md, ...>` (what IS; specs say what SHOULD) | |
-| model_ladder | fixer: claude-haiku-5-5 · implementer round 1: claude-sonnet-5-5 · round 2+: claude-opus-5-5 · refiners: claude-sonnet-5-5 | |
+| model_ladder | fixer: claude-haiku-5-5 · implementer simple: claude-haiku-5-5 · standard: claude-sonnet-5-5 · complex: claude-opus-5-5 (a rework round runs one tier higher) · refiners: claude-sonnet-5-5 · reviewers: the complex model, the standard model for a spec of simple points · conceptor: claude-opus-5-5 · diagnoser: claude-opus-5-5 | |
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |
 | user_language | `<language of every message to the user, e.g. "Deutsch" or "English"; not the repo's language; the hooks' own lines follow it>` | question 12 |
 | ci | `<how CI is waited for and read, or "none">` | |

@@ -239,6 +239,11 @@ SAY = {
         "review_clean": "Code-Review ohne Befund",
         "check_green": "Projekt-Check nach der letzten Änderung grün",
         "open": "Offen",
+        "watch": "Beobachten",
+        "watch_seen": "Gesehen",
+        "watch_suspected": "Vermutung",
+        "watch_impact": "Auswirkung",
+        "watch_signal": "Achte auf",
         "nothing": "Nichts offen, nichts zu tun.",
         "must": "Du musst",
         "decision": "Entscheidung",
@@ -310,6 +315,11 @@ SAY = {
         "review_clean": "code review without findings",
         "check_green": "project check green after the last change",
         "open": "Open",
+        "watch": "To watch",
+        "watch_seen": "Seen",
+        "watch_suspected": "Suspected",
+        "watch_impact": "Impact",
+        "watch_signal": "Look for",
         "nothing": "Nothing open, nothing to do.",
         "must": "You must",
         "decision": "Decision",
@@ -1218,7 +1228,7 @@ def bullets(block):
 # --- end of a spec: the docket's Terminal state section (V3) ---------------------
 # The orchestrator ends a spec by writing lines into its docket, not by a message: `state:` DELIVERED / BLOCKED /
 # DISSENT, `result:` one sentence, `open:` and `user:` and `decision:` as many as there are, `dissent:` for DISSENT.
-TERMINAL_LINE = re.compile(r"^[`*]*(state|result|open|user|decision|dissent)[`*]*\s*:[`*]*\s*(.*?)\s*$", re.IGNORECASE)
+TERMINAL_LINE = re.compile(r"^[`*]*(state|result|open|watch|user|decision|dissent)[`*]*\s*:[`*]*\s*(.*?)\s*$", re.IGNORECASE)
 TERMINAL_STATE = re.compile(r"^[`*]*(DELIVERED|BLOCKED|DISSENT)[`*]*(?!\w)[\s.:;,\-–—(]*(.*?)[\s.)]*$", re.IGNORECASE)
 # "none", "keine Schritte nötig", "nothing to do": a line that says there is nothing (experiment 12: "Du musst: keine
 # Schritte nötig" stood twice in the closing message).
@@ -1243,7 +1253,8 @@ def terminal_blocks(paths, spec_id):
             state = TERMINAL_STATE.match(value)
             if state:
                 blocks.append({"kind": state.group(1).lower(), "reason": (state.group(2) or "").strip().strip("`"),
-                               "result": "", "open": [], "user": [], "decision": [], "dissent": []})
+                               "result": "", "open": [], "watch": [], "user": [], "decision": [],
+                               "dissent": []})
             continue
         if not blocks or not value:
             continue
@@ -1261,7 +1272,8 @@ def terminal_section(paths, spec_id, skip=0):
     blocks = terminal_blocks(paths, spec_id)[skip:]
     if blocks:
         return blocks[-1]
-    return {"kind": "", "reason": "", "result": "", "open": [], "user": [], "decision": [], "dissent": []}
+    return {"kind": "", "reason": "", "result": "", "open": [], "watch": [], "user": [], "decision": [],
+            "dissent": []}
 
 
 def terminal_base(paths, spec_id):
@@ -1298,28 +1310,316 @@ def refinement_problem(paths, spec_id):
     return ""
 
 
+REVIEW_ANGLE = re.compile(r"^[`*]*(code|spec|recheck)\b", re.IGNORECASE)
+ROUND_ONE = ("code", "spec")
+SEVERITIES = ("bug", "suspect", "unmet", "rule", "test", "docs", "scope", "cleanup")
+MUST_FIX = ("bug", "unmet", "rule")
+NO_FINDINGS = re.compile(r"no findings|keine befunde", re.IGNORECASE)
+DEFERRED = re.compile(r"\b(deferred|zurückgestellt)\b", re.IGNORECASE)
+OBSERVE = ("observe", "beobacht")
+
+
+def review_cells(line):
+    return [cell.strip().strip("`*").strip().lower() for cell in line.split("|")]
+
+
+def review_line(line):
+    """A Review line `<angle> | <finding> | <source> | <severity> | <decision>` as (angle, severity, deferred); a
+    part the line does not carry is empty."""
+    cells = review_cells(line)
+    angle = REVIEW_ANGLE.match(line.strip())
+    severity = next((cell for cell in cells[1:] if cell in SEVERITIES), "")
+    return (angle.group(1).lower() if angle else "", severity, bool(DEFERRED.search(cells[-1])))
+
+
+def observed(line):
+    """The late exit as a line's decision: a cell, not the first, that starts with `observe`. A Terminal state
+    line (`watch: …`) decides nothing, it reports."""
+    if TERMINAL_LINE.match(line.strip()):
+        return False
+    return any(cell.startswith(OBSERVE) for cell in review_cells(line)[1:])
+
+
+WATCH_PARTS = ("seen", "suspected", "impact", "signal")
+
+
+def watch_parts(value):
+    """A `watch:` line as the user gets it, the whole case in one piece so that a spec can be cut from it:
+    `<what it is about> | seen: … | suspected: … | impact: … | signal: …`. A pipe inside a part stays in that part."""
+    cells = [cell.strip() for cell in value.split("|")]
+    parts = dict.fromkeys(("subject",) + WATCH_PARTS, "")
+    parts["subject"], last = cells[0], "subject"
+    for cell in cells[1:]:
+        match = re.match(r"[`*]*(" + "|".join(WATCH_PARTS) + r")[`*]*\s*:\s*(.*)$", cell, re.IGNORECASE | re.DOTALL)
+        if match:
+            last = match.group(1).lower()
+            parts[last] = match.group(2).strip()
+        else:
+            parts[last] += " | " + cell
+    return parts
+
+
+def review_lines(body):
+    """The Review lines that count: of two lines with the same angle and finding the later one. The docket is
+    append-only, so a line is corrected by writing it again below."""
+    latest = {}
+    for line in bullets(section_text(body, "Review")):
+        cells = review_cells(line)
+        angle = REVIEW_ANGLE.match(line.strip())
+        key = (angle.group(1).lower(), cells[1]) if angle and len(cells) > 1 else line
+        latest.pop(key, None)
+        latest[key] = line
+    return list(latest.values())
+
+
 def review_problem(paths, spec_id):
-    """V14: one reviewer reads the whole diff of the spec before the push; each finding is a docket line with its
-    decision, or the one line `no findings`."""
+    """V14: the whole diff of the spec is reviewed before the push, from two angles (`code`, `spec`); each finding
+    is a docket line with its severity and its decision, an angle without findings the line `<angle> | no findings`.
+    A bug, an unmet point and a broken rule are fixed or refuted, never deferred into a delivery."""
     body = read_text(paths.docket_file(spec_id))
+    form = ("each finding is a line `<angle> | <finding> | <source> | <severity> | <decision>` (fixed / rejected with "
+            "its source / deferred), an angle without findings the line `<angle> | no findings`")
     if not has_section(body, "Review"):
-        return ("[docket] The docket has no `## Review` section yet: a reviewer agent reads the whole diff before the "
-                "push; each finding is a line with its decision (fixed / rejected with reason / deferred), or the line "
-                "`- no findings`.")
-    lines = bullets(section_text(body, "Review"))
+        return ("[docket] The docket has no `## Review` section yet: two reviewer agents (angles `code` and `spec`) "
+                "read the whole diff before the push; " + form + ".")
+    lines = review_lines(body)
     if not lines:
-        return "[docket] The docket's Review section is empty: one line per finding with its decision, or `- no findings`."
-    undecided = [line for line in lines if not REVIEW_DECISION.search(line)]
+        return "[docket] The docket's Review section is empty: " + form + "."
+    undecided = [line for line in lines if not REVIEW_DECISION.search(line) and not observed(line)]
     if undecided:
         return ("[docket] Review lines without a decision (fixed / rejected / deferred): "
                 + " | ".join(line[:70] for line in undecided[:3]) + ".")
+    parsed = [(line, *review_line(line)) for line in lines]
+    missing = [angle for angle in ROUND_ONE if angle not in {angle for _, angle, _, _ in parsed}]
+    if missing:
+        return ("[docket] The Review section has no line of the angle " + " and ".join(f"`{a}`" for a in missing)
+                + ": round one is two reviewers, the whole diff as code and the delivery against the spec; " + form + ".")
+    bare = [line for line, angle, severity, _ in parsed if angle and not severity and not NO_FINDINGS.search(line)]
+    if bare:
+        return ("[docket] Review lines without a severity (" + " / ".join(SEVERITIES) + "), as the reviewer gave it: "
+                + " | ".join(line[:70] for line in bare[:3]) + ". Write the line again below, complete: of two "
+                "lines with the same angle and finding the later one counts.")
+    kept = [line for line, _, severity, deferred in parsed if severity in MUST_FIX and deferred]
+    if kept:
+        return ("[docket] A finding of severity bug, unmet or rule is not deferred into a delivery: "
+                + " | ".join(line[:70] for line in kept[:3]) + ". Fix it or reject it with the source that refutes it, "
+                "and write the line again below with that decision; or end the spec with "
+                "`state: BLOCKED: <the finding in everyday words>`.")
+    early = [line for line, _, severity, deferred in parsed if severity == "suspect" and deferred]
+    if early:
+        return ("[docket] A suspect is not deferred, it is examined: " + " | ".join(line[:70] for line in early[:3])
+                + ". A diagnoser triages it: shown or explained it is a `bug`, refuted it is rejected with its "
+                "source, and only when the means are spent its line ends `… | suspect | cause: … | repro: … | "
+                "impact: … | observe: <signal>`. Write the line again below with that decision.")
+    stray = [line for line, _, severity, _ in parsed if observed(line) and severity != "suspect"]
+    if stray:
+        return ("[docket] Only a `suspect` is observed: " + " | ".join(line[:70] for line in stray[:3])
+                + ". What a reviewer showed is fixed or rejected; what is neither shown nor explained is a `suspect`.")
     return ""
+
+
+# --- the review is run, the acceptance is run (V15, V16) ------------------------
+WRITING_AGENTS = ("implementer", "fixer")  # every change to the project goes to one of them
+ARROW = re.compile(r"\s*→\s*|\s+->\s+")
+STILL_RUNNING = 10 ** 9
+
+
+def sealed_stamp(paths, spec_id):
+    """The LOG stamp of the spec's last sealing: what the transcript holds before it belongs to an earlier spec."""
+    return max((line[:20] for line in log_lines(paths, spec_id) if " sealed " in line), default="")
+
+
+def failed_calls(entries):
+    return {block.get("tool_use_id") for entry in entries if entry.get("type") == "user"
+            for block in ((entry.get("message") or {}).get("content") or [])
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")}
+
+
+def tool_calls(entries, names):
+    """(entry index, block) for the main line's calls of the named tools, in order."""
+    calls = []
+    for index, entry in enumerate(entries):
+        if entry.get("isSidechain") or entry.get("type") != "assistant":
+            continue
+        message = entry.get("message")
+        for block in (message.get("content") if isinstance(message, dict) else None) or []:
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in names:
+                calls.append((index, block, str(entry.get("timestamp", ""))))
+    return calls
+
+
+def agent_runs(transcript_path, since=""):
+    """The main line's agents since the sealing, in order: (kind, launch index, return index, model). A spawn a hook
+    refused or that failed is none; an agent that has not returned yet carries STILL_RUNNING."""
+    entries = transcript_entries(transcript_path)
+    returns, failed = agent_returns(transcript_path), failed_calls(entries)
+    runs = []
+    for index, block, stamp in tool_calls(entries, ("Agent", "Task")):
+        if block.get("id") in failed or (since and stamp[:19] < since[:19]):
+            continue
+        given = block.get("input") or {}
+        kind = str(given.get("subagent_type") or "general").split(":")[-1].lower()
+        runs.append((kind, index, returns.get(block.get("id"), STILL_RUNNING), str(given.get("model") or "")))
+    return runs
+
+
+def last_written(runs):
+    """The return index of the last agent that changed the project, -1 when none ran."""
+    return max((back for kind, _, back, _ in runs if any(name in kind for name in WRITING_AGENTS)), default=-1)
+
+
+def review_run_problem(paths, spec_id, transcript_path):
+    """V15: the review is run, not written. Once an implementer or fixer wrote in this session, a reviewer agent
+    must have started after the last of them returned, and returned itself: round one on the whole diff, a later
+    round on what was written since."""
+    runs = agent_runs(transcript_path, sealed_stamp(paths, spec_id))
+    written = last_written(runs)
+    if written < 0 or any("reviewer" in kind and launch > written and back != STILL_RUNNING
+                          for kind, launch, back, _ in runs):
+        return ""
+    return ("[docket] No reviewer has returned since the last implementer or fixer wrote: round one is two reviewer "
+            "agents (angles `code` and `spec`) on the whole diff, a later round one of angle `recheck` on what was "
+            "written since. The review is run, not written; no agent changes the project after it.")
+
+
+# --- triage: the cause before the next attempt (V18, V19) -----------------------
+TRIAGE_FIELDS = ("cause", "repro", "impact")
+FIELD_END = r"(?=\|\s*[`*]*(?:cause|repro|impact|fix|deviation|observe|beobacht)|$)"
+
+
+def triage_lines(body):
+    """{subject: line} of the docket's Triage section, a subject being the line's first cell (`point 3`); of two
+    lines for one subject the later one counts."""
+    latest = {}
+    for line in bullets(section_text(body, "Triage")):
+        subject = " ".join(review_cells(line)[0].split())
+        latest.pop(subject, None)
+        latest[subject] = line
+    return latest
+
+
+def triage_field(line, name):
+    """The text of a line's `name: …` field, up to the next field."""
+    match = re.search(r"\b" + name + r"\s*:\s*(.*?)\s*" + FIELD_END, line, re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def open_point(body):
+    """The number of the first point still open `[ ]`: the one the run works on."""
+    match = re.search(r"^##\s+Points\b.*?$(.*?)(?=^##\s|\Z)", body or "", re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    for line in (match.group(1) if match else (body or "")).splitlines():
+        line = line.strip()
+        if line.startswith("|") and re.search(r"(?<!`)\[ \](?!`)", line):
+            return line.strip("|").split("|")[0].strip()
+    return ""
+
+
+def rework_problem(paths, spec_id, transcript_path):
+    """V18: a failure gets a second attempt only after it was examined, and no third attempt at a symptom. Counted
+    are the implementers that returned since the last point was closed; a point that passed is flipped before the
+    next one starts, so more than one of them means rework."""
+    body = read_text(paths.docket_file(spec_id))
+    point = open_point(body)
+    if not point:
+        return ""
+    since = max((line[:20] for line in log_lines(paths, spec_id)
+                 if any(f" {event} " in line for event in ("sealed", "point-delivered", "deviation"))), default="")
+    rounds = len([1 for kind, _, back, _ in agent_runs(transcript_path, since)
+                  if "implementer" in kind and back != STILL_RUNNING])
+    if not rounds:
+        return ""
+    line = triage_lines(body).get(f"point {point}".lower(), "")
+    if not line or not triage_field(line, "cause"):
+        return (f"[docket] An implementer has returned for point {point} and the point is still open: a second attempt "
+                "comes after the failure was examined. Spawn a diagnoser with what the gate showed and write its "
+                f"answer into the docket's Triage section: `point {point} | cause: … | repro: … | impact: … | fix`. "
+                "(A point that passed is flipped to `[x]` before the next one starts.)")
+    if rounds >= 2 and not FILE_LINE.search(triage_field(line, "cause")):
+        return (f"[docket] Point {point} failed twice and its triage names no cause at a `file:line`: a third attempt "
+                "at a symptom is not made. Have it examined again (the later Triage line counts), or close the point "
+                "as `[~]` with its deviation line; a failure that is not shown reliably ends in `observe`.")
+    return ""
+
+
+def observe_problems(line, paths, spec_id, transcript_path):
+    """V19: `observe` (a possible fault that needs watching) is the late exit. The line carries cause, repro and
+    impact; the orchestrator ran the repro command three times itself and it did not fail all three times; a second
+    diagnoser challenged the first one's answer."""
+    problems = [f"it has no `{name}:`" for name in TRIAGE_FIELDS if not triage_field(line, name)]
+    entries = transcript_entries(transcript_path)
+    if not entries:
+        return problems
+    since = sealed_stamp(paths, spec_id)
+    command = re.search(r"\brepro\s*:\s*`([^`]+)`", line, re.IGNORECASE)
+    if command:
+        failed = failed_calls(entries)
+        runs = [block.get("id") in failed for _, block, stamp in tool_calls(entries, ("Bash", "PowerShell"))
+                if command.group(1).strip() in str((block.get("input") or {}).get("command", ""))
+                and not (since and stamp[:19] < since[:19])]
+        if len(runs) < 3:
+            problems.append(f"you ran its repro command `{command.group(1).strip()}` {len(runs)} of three times "
+                            "yourself (one call each)")
+        elif all(runs[-3:]):
+            problems.append("its repro command failed in each of the last three runs: shown three of three is a "
+                            "fault, not a thing to watch, so it is `fix` with its cause or `deviation`")
+    examined = [1 for kind, _, back, _ in agent_runs(transcript_path, since)
+                if "diagnoser" in kind and back != STILL_RUNNING]
+    if len(examined) < 2:
+        problems.append("no second diagnoser has returned: one examines the failure, one in mode `challenge` tries "
+                        "to refute that answer")
+    return problems
+
+
+def point_commands(body, paths):
+    """(point, command) for every delivered point `[x]` whose pre-registered acceptance line is
+    `<command> → <expected>`. A line that names a file and what it must contain has no command."""
+    match = re.search(r"^##\s+Points\b.*?$(.*?)(?=^##\s|\Z)", body or "", re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    found = []
+    for line in (match.group(1) if match else (body or "")).splitlines():
+        line = line.strip()
+        if not line.startswith("|") or not re.search(r"(?<!`)\[x\](?!`)", line):
+            continue
+        cells = re.split(r"(?<!\\)\|", line.strip("|"))
+        if len(cells) < 4:
+            continue
+        parts = ARROW.split("|".join(cells[2:-1]).replace("\\|", "|").strip(), 1)
+        command = parts[0].strip().strip("`").strip()
+        if (len(parts) < 2 or not command or command.startswith("<")
+                or re.match(r"[`\s]*(contains|enthält)\b", parts[1], re.IGNORECASE)
+                or os.path.exists(posixpath.join(paths.root, command))):
+            continue
+        found.append((cells[0].strip(), command))
+    return found
+
+
+def acceptance_problems(paths, spec_id, body, transcript_path):
+    """V16: a delivered point's own command ran in this session after the last implementer or fixer returned, and
+    did not fail in its last run. The project's check says the whole still holds, this says the point does."""
+    entries = transcript_entries(transcript_path)
+    if not entries:
+        return []
+    failed = failed_calls(entries)
+    shell = [(index, str((block.get("input") or {}).get("command", "")), block.get("id") in failed)
+             for index, block, _ in tool_calls(entries, ("Bash", "PowerShell"))]
+    written = last_written(agent_runs(transcript_path, sealed_stamp(paths, spec_id)))
+    problems = []
+    for point, command in point_commands(body, paths):
+        runs = [(index, broke) for index, text, broke in shell if command in text]
+        if not runs:
+            problems.append(f"the acceptance command of point {point} (`{command}`) never ran in this session; run it yourself")
+        elif runs[-1][0] < written:
+            problems.append(f"the acceptance command of point {point} (`{command}`) last ran before the last "
+                            "implementer or fixer returned; run it again yourself")
+        elif runs[-1][1]:
+            problems.append(f"the acceptance command of point {point} (`{command}`) failed in its last run: the point "
+                            "is not delivered, record it as a review finding `unmet`")
+    return problems
 
 
 def section_stats(body):
     refinement = bullets(section_text(body, "Refinement"))
-    review = bullets(section_text(body, "Review"))
-    findings = [line for line in review if not re.search(r"no findings|keine befunde", line, re.IGNORECASE)]
+    review = review_lines(body)
+    findings = [line for line in review if not NO_FINDINGS.search(line)]
     return {"refinement": len([line for line in refinement if DECISION_WORDS.search(line)]),
             "adopted": len([line for line in refinement if re.search(r"\badopted\b|übernommen", line, re.IGNORECASE)]),
             "review": len(findings),
@@ -1845,9 +2145,10 @@ def render_closing(paths, state):
             lines.append(say(paths, "checked") + ": " + "; ".join(checked) + ".")
 
     title = (lambda f: f["title"]) if many else (lambda f: "")
-    open_items, must, decisions = [], [], []
+    open_items, must, decisions, watch = [], [], [], []
     for f in facts:
         open_items += [(title(f), item) for item in f["open"]]
+        watch += [(title(f), item) for item in f["watch"]]
         for point in f["deviations"]:
             if not any(point.lower() in item.lower() for item in f["open"]):
                 open_items.append((title(f), say(paths, "deviates", point=_short(point))))
@@ -1865,9 +2166,15 @@ def render_closing(paths, state):
         open_items.append(say(paths, "dirty"))
     if work_dir_dirty(paths):
         open_items.append(say(paths, "work_dirty", path=relative_to_root(paths, paths.work)))
-    if not (open_items or must or decisions):
+    if not (open_items or must or decisions or watch):
         lines.append(say(paths, "nothing"))
     lines += _items(paths, say(paths, "open"), open_items)
+    for name, value in dict.fromkeys(watch):
+        # One block per possible fault, complete in itself: the user copies it into `/docket:spec`.
+        parts = watch_parts(value)
+        lines.append(_end(say(paths, "watch") + (f" ({name})" if name else "") + ": " + _sentence(parts["subject"])))
+        lines += [_end(f"- {say(paths, 'watch_' + key)}: {_sentence(parts[key], 400)}")
+                  for key in WATCH_PARTS if parts[key]]
     lines += _items(paths, say(paths, "must"), must)
     for item in decisions:
         lines.append(_end(f"{say(paths, 'decision')}: {_sentence(item)}"))
@@ -1892,25 +2199,17 @@ def closing_path(paths, session_id):
 
 def write_metrics(paths, spec_id, transcript_path, kind):
     """metrics/<spec>.json, written by the hook when the spec ends: points, refinement and review counts, agents by
-    kind since sealing, implementer models, inbox notes. The orchestrator no longer spends a fixer on it."""
+    kind since sealing, implementer and reviewer models, inbox notes. The orchestrator no longer spends a fixer on
+    it."""
     body = read_text(paths.docket_file(spec_id))
-    sealed = max((line[:20] for line in log_lines(paths, spec_id) if " sealed " in line), default="")
-    agents, models = Counter(), []
-    entries = transcript_entries(transcript_path)
-    refused = {block.get("tool_use_id") for entry in entries if entry.get("type") == "user"
-               for block in ((entry.get("message") or {}).get("content") or [])
-               if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")}
-    for entry in entries:
-        if entry.get("isSidechain") or entry.get("type") != "assistant" or str(entry.get("timestamp", ""))[:19] < sealed[:19]:
-            continue
-        message = entry.get("message")
-        for block in (message.get("content") if isinstance(message, dict) else None) or []:
-            if (isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task")
-                    and block.get("id") not in refused):
-                kind_of = str((block.get("input") or {}).get("subagent_type") or "general").split(":")[-1]
-                agents[kind_of] += 1
-                if kind_of == "implementer":
-                    models.append(str((block.get("input") or {}).get("model") or "inherit"))
+    sealed = sealed_stamp(paths, spec_id)
+    agents, models, reviewers = Counter(), [], []
+    for kind_of, _, _, model in agent_runs(transcript_path, sealed):
+        agents[kind_of] += 1
+        if kind_of == "implementer":
+            models.append(model or "inherit")
+        elif kind_of == "reviewer":
+            reviewers.append(model or "inherit")
     stats = section_stats(body)
     counts = point_counts(body) if body else {"x": 0, "~": 0, " ": 0}
     data = {"spec": spec_id, "title": spec_title(paths, spec_id), "outcome": kind, "sealed": sealed,
@@ -1918,7 +2217,8 @@ def write_metrics(paths, spec_id, transcript_path, kind):
             "points": {"delivered": counts["x"], "deviations": counts["~"], "open": counts[" "]},
             "refinement": {"decided": stats["refinement"], "adopted": stats["adopted"]},
             "review": {"findings": stats["review"], "fixed": stats["fixed"]},
-            "agents": dict(agents), "implementer_models": models, "inbox_notes": len(inbox_notes(paths, spec_id))}
+            "agents": dict(agents), "implementer_models": models, "reviewer_models": reviewers,
+            "inbox_notes": len(inbox_notes(paths, spec_id))}
     path = posixpath.join(paths.metrics, f"{spec_id}.json")
     try:
         with open(path, encoding="utf-8") as handle:

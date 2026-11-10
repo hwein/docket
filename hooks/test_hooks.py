@@ -94,7 +94,7 @@ class Project(unittest.TestCase):
         docket = self.work / "dockets" / "core" / f"{spec_id}.md"
         body = docket.read_text("utf-8") if docket.exists() else "# Docket\n"
         if review and "## Review" not in body:
-            body += "\n## Review\n\n- no findings\n"
+            body += "\n## Review\n\n- code | no findings\n- spec | no findings\n"
         body += "\n## Terminal state\n\n" + f"- state: {kind}\n" + (f"- result: {result}\n" if result else "")
         docket.write_text(body + "".join(f"- {line}\n" for line in lines), "utf-8")
 
@@ -708,7 +708,7 @@ class DisplayGate(Project):
 class Rewrite(Project):
     def test_conceptor_spawn_opens_rewrite_and_return_closes_it(self):
         self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.tool("Agent", subagent_type="docket:conceptor", prompt="rewrite section 3")
+        code, err, _ = self.tool("Agent", subagent_type="docket:conceptor", model="opus", prompt="rewrite section 3")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.state()["mode"], "rewrite")
         self.assertEqual(self.state()["rewrite"], SPEC)
@@ -724,7 +724,7 @@ class Rewrite(Project):
 
     def test_other_agents_do_not_open_rewrite(self):
         self.set_state(mode="sealed", spec=SPEC)
-        self.tool("Agent", subagent_type="docket:refiner", prompt="angle")
+        self.tool("Agent", subagent_type="docket:refiner", model="sonnet", prompt="angle")
         self.assertEqual(self.state()["mode"], "sealed")
 
 
@@ -980,7 +980,7 @@ class Refinement(Project):
         self.set_state(mode="sealed", spec=SPEC)
 
     def implementer(self):
-        return self.tool("Agent", subagent_type="docket:implementer", prompt="point 1")
+        return self.tool("Agent", subagent_type="docket:implementer", model="sonnet", prompt="point 1")
 
     def test_no_docket_refuses_first_implementer(self):
         code, err, _ = self.implementer()
@@ -997,7 +997,7 @@ class Refinement(Project):
 
     def test_fixer_and_refiner_are_not_gated(self):
         self.assertEqual(self.tool("Agent", subagent_type="docket:fixer", prompt="skeleton")[0], 0)
-        self.assertEqual(self.tool("Agent", subagent_type="docket:refiner", prompt="angle")[0], 0)
+        self.assertEqual(self.tool("Agent", subagent_type="docket:refiner", model="sonnet", prompt="angle")[0], 0)
 
 
 class ProjectRules(Project):
@@ -1008,7 +1008,7 @@ class ProjectRules(Project):
             "| commit_regex | `(feat\|fix\|docs)(\\(.*\\))?: ` | |\n| forbidden_paths | `secrets/**, .env` | |\n"
             "| forbidden_commands | `gh workflow run\|terraform apply` | |\n", "utf-8")
         self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("## Review\n\n- no findings\n", "utf-8")  # V14: the push waits for the review
+        self.docket.write_text("## Review\n\n- code | no findings\n- spec | no findings\n", "utf-8")  # V14
 
     def test_push_to_other_branch_refused(self):
         code, err, _ = self.tool("Bash", command="git push origin main")
@@ -2027,7 +2027,8 @@ class AgentNames(Project):
 
     def agent(self, description, **extra):
         payload = {"session_id": SID, "cwd": self.p, "tool_name": "Agent",
-                   "tool_input": {"subagent_type": "docket:refiner", "description": description, "prompt": "x"}}
+                   "tool_input": {"subagent_type": "docket:refiner", "model": "sonnet", "description": description,
+                                  "prompt": "x"}}
         payload.update(extra)
         return run_hook("pre_tool_use.py", payload, self.p)
 
@@ -2144,7 +2145,7 @@ class PluginSource(Project):
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("## Refinement\n- feasibility: fine → adopted\n## Evidence\n- \n"
                                "## Refinement (second round)\n- spec: the token expires after an hour\n", "utf-8")
-        code, err, _ = self.tool("Agent", subagent_type="docket:implementer", prompt="point 1")
+        code, err, _ = self.tool("Agent", subagent_type="docket:implementer", model="sonnet", prompt="point 1")
         self.assertEqual(code, 2)
         self.assertIn("the token expires", err)
 
@@ -2161,13 +2162,17 @@ class ReviewGate(Project):
         code, err, _ = self.tool("Bash", command="git push origin next")
         self.assertEqual(code, 2)
         self.assertIn("Review", err)
-        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n- the expiry test asserts nothing | "
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n- code | the expiry test asserts nothing | "
                                "src/auth_test.rs:12 | test\n", "utf-8")
         code, err, _ = self.tool("Bash", command="git push origin next")
         self.assertEqual(code, 2)
         self.assertIn("without a decision", err)
-        self.docket.write_text(self.docket.read_text("utf-8") + "- the expiry test asserts nothing → fixed, asserts the 401 now\n", "utf-8")
-        self.docket.write_text(self.docket.read_text("utf-8").replace("| test\n", "| test → deferred\n"), "utf-8")
+        # The docket is append-only: the line is written again below with its decision, the later one counts.
+        self.add("- code | the expiry test asserts nothing | src/auth_test.rs:12 | test | fixed, asserts the 401 now")
+        code, err, _ = self.tool("Bash", command="git push origin next")
+        self.assertEqual(code, 2)
+        self.assertIn("no line of the angle `spec`", err)
+        self.add("- spec | no findings")
         self.assertEqual(self.tool("Bash", command="git push origin next")[0], 0)
         code, _, _ = run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Bash", "agent_id": "x",
                                                   "tool_input": {"command": "git push origin other"}}, self.p)
@@ -2178,6 +2183,336 @@ class ReviewGate(Project):
         code, err, _ = self.run_stop()
         self.assertEqual(code, 2)
         self.assertIn("## Review", err)
+
+    def add(self, *lines):
+        self.docket.write_text(self.docket.read_text("utf-8") + "".join(line + "\n" for line in lines), "utf-8")
+
+    def review(self, *lines):
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n" + "".join(line + "\n" for line in lines), "utf-8")
+        return self.tool("Bash", command="git push origin next")
+
+    def test_a_bug_an_unmet_point_and_a_broken_rule_are_never_deferred(self):
+        for severity in ("bug", "unmet", "rule"):
+            code, err, _ = self.review(f"- code | the token never expires | src/auth.rs:40 | {severity} | deferred",
+                                       "- spec | no findings")
+            self.assertEqual(code, 2, severity)
+            self.assertIn("not deferred into a delivery", err)
+        for severity in ("test", "docs", "scope", "cleanup"):
+            self.assertEqual(self.review(f"- code | a stale comment | src/auth.rs:40 | {severity} | deferred",
+                                         "- spec | no findings")[0], 0, severity)
+        # Fixed after all: the later line of the same finding counts.
+        self.review("- code | the token never expires | src/auth.rs:40 | bug | deferred", "- spec | no findings")
+        self.add("- code | the token never expires | src/auth.rs:40 | bug | fixed, expires after an hour")
+        self.assertEqual(self.tool("Bash", command="git push origin next")[0], 0)
+        self.end_spec("BLOCKED: the token never expires", result="Login works, the token stays valid.", review=False)
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["outcomes"], {SPEC: "blocked"})
+
+    def test_a_finding_carries_its_severity(self):
+        code, err, _ = self.review("- code | the token never expires | src/auth.rs:40 | rejected: covered by the server",
+                                   "- spec | no findings")
+        self.assertEqual(code, 2)
+        self.assertIn("without a severity", err)
+        self.assertEqual(self.review("- no findings")[0], 2)  # the form of 0.4: one reviewer, no angle
+        self.assertEqual(self.review("- code: no findings", "- **spec** | no findings",
+                                     "- recheck | no findings")[0], 0)
+
+    def transcript(self, *agents):
+        """Each agent as (kind, returned), in order, then the push is tried."""
+        entries = []
+        for n, (kind, returned) in enumerate(agents):
+            entries.append({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": f"a{n}", "name": "Agent", "input": {"subagent_type": f"docket:{kind}"}}]}})
+            if returned:
+                entries.append({"type": "user", "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": f"a{n}", "content": "done", "is_error": returned == "refused"}]}})
+        path = self.tmp / "review.jsonl"
+        path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
+        return str(path)
+
+    def push(self, *agents):
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n- code | no findings\n- spec | no findings\n", "utf-8")
+        return run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Bash",
+                                            "transcript_path": self.transcript(*agents),
+                                            "tool_input": {"command": "git push origin next"}}, self.p)
+
+    def test_the_review_is_run_not_written(self):
+        """V15: `no findings` in the docket is no review; a reviewer returned after the last agent that wrote."""
+        code, err, _ = self.push(("implementer", True))
+        self.assertEqual(code, 2)
+        self.assertIn("No reviewer has returned", err)
+        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("reviewer", True))[0], 0)
+        self.assertEqual(self.push(("implementer", True), ("reviewer", "refused"))[0], 2)  # a spawn the hook refused
+        self.assertEqual(self.push(("implementer", True), ("reviewer", False))[0], 2)  # still running
+        self.assertEqual(self.push(("refiner", True))[0], 0)  # nothing written in this session: a resume at the push
+
+    def test_a_fix_after_the_review_is_reviewed_again(self):
+        """V15: round two reads what the fix wrote; a reviewer started beside the fixer has not read it."""
+        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("fixer", True))[0], 2)
+        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("fixer", True), ("reviewer", True))[0], 0)
+        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("fixer", False), ("reviewer", True))[0], 2)
+        self.end_spec()
+        code, err, _ = self.run_stop(transcript_path=self.transcript(("implementer", True), ("reviewer", True),
+                                                                     ("implementer", True)), background_tasks=[])
+        self.assertEqual(code, 2)
+        self.assertIn("No reviewer has returned", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_reviewer_is_briefed_without_the_docket(self):
+        spawn = lambda prompt: self.tool("Agent", subagent_type="docket:reviewer", model="opus", prompt=prompt)
+        code, err, _ = spawn(f"Angle code. Spec {self.spec}, docket {self.work}/dockets/core/{SPEC}.md, base abc1234.")
+        self.assertEqual(code, 2)
+        self.assertIn("not your account", err)
+        self.assertEqual(spawn(f"Angle code. Spec {self.spec}. Read `git diff abc1234...HEAD`.")[0], 0)
+
+
+class ModelPerSpawn(Project):
+    """V17: the model is the orchestrator's decision per spawn, by tier and role, not an inheritance of its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("## Refinement\n\n- feasibility: fine → adopted\n", "utf-8")
+
+    def test_every_agent_but_the_fixer_names_its_model(self):
+        for kind in ("implementer", "refiner", "reviewer", "diagnoser"):
+            code, err, _ = self.tool("Agent", subagent_type=f"docket:{kind}", prompt="x")
+            self.assertEqual(code, 2, kind)
+            self.assertIn("has no `model`", err)
+            self.assertEqual(self.tool("Agent", subagent_type=f"docket:{kind}", model="sonnet", prompt="x")[0], 0, kind)
+        self.assertEqual(self.tool("Agent", subagent_type="docket:conceptor", prompt="x")[0], 2)
+        self.assertEqual(self.state()["mode"], "sealed")  # refused before the rewrite opened
+        self.assertEqual(self.tool("Agent", subagent_type="docket:fixer", prompt="CHANGELOG.md: add `- login`")[0], 0)
+        self.set_state(mode="spec")
+        self.assertEqual(self.tool("Agent", subagent_type="docket:conceptor", prompt="draft")[0], 0)  # no run, no rule
+
+    def test_an_agent_may_look_an_error_up_in_a_run(self):
+        for tool, given in (("WebSearch", {"query": "tokio JoinError cancelled"}),
+                            ("WebFetch", {"url": "https://docs.rs/tokio", "prompt": "JoinError"})):
+            code, err, _ = run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": tool,
+                                                        "agent_id": "d1", "tool_input": given}, self.p)
+            self.assertEqual(code, 0, err)
+        tools = (HOOKS.parent / "agents" / "diagnoser.md").read_text("utf-8").split("---")[1]
+        self.assertIn("WebSearch, WebFetch", tools)
+
+
+class Triage(Project):
+    """V18, V19: against edge-case hunting. A failure gets its second attempt after it was examined and no third
+    attempt at a symptom; `observe` (a possible fault that needs watching) is the late exit, never the early one."""
+
+    POINTS = ("## Points\n\n| # | Point | Evidence line expected | State |\n|---|---|---|---|\n"
+              "| 1 | login | `cargo test login → 3 passed` | [x] |\n| 2 | refresh | `cargo test refresh → 1 passed` | [ ] |\n"
+              "\n## Refinement\n\n- feasibility: fine → adopted\n")
+    FLAKY = ("- point 2 | cause: unknown after src/auth.rs and three runs | repro: `cargo test refresh` → 1 of 3 | "
+             "impact: the suite, one run in three | observe: a red refresh test in CI")
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        (self.root / "src").mkdir()
+        (self.root / "src" / "auth.rs").write_text("a\nb\nc\n", "utf-8")
+        self.docket.write_text(self.POINTS, "utf-8")
+        self.path = self.tmp / "triage.jsonl"
+
+    def transcript(self, *steps):
+        """Steps in order: an agent kind, a shell command, or (command, "failed")."""
+        entries = []
+        for n, step in enumerate(steps):
+            command, failed = step if isinstance(step, tuple) else (step, "")
+            agent = command in ("implementer", "diagnoser", "reviewer", "fixer")
+            given = {"subagent_type": f"docket:{command}"} if agent else {"command": command}
+            entries.append({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": f"t{n}", "name": "Agent" if agent else "Bash", "input": given}]}})
+            entries.append({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"t{n}", "content": "x", "is_error": bool(failed)}]}})
+        self.path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
+        return str(self.path)
+
+    def implementer(self, *steps):
+        return run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Agent",
+                                            "transcript_path": self.transcript(*steps),
+                                            "tool_input": {"subagent_type": "docket:implementer", "model": "opus",
+                                                           "prompt": "point 2"}}, self.p)
+
+    def triage(self, line):
+        self.docket.write_text(self.POINTS + "\n## Triage\n\n" + line + "\n", "utf-8")
+
+    def test_round_two_waits_for_the_triage_and_round_three_for_a_named_cause(self):
+        self.assertEqual(self.implementer()[0], 0)  # round one
+        code, err, _ = self.implementer("implementer")
+        self.assertEqual(code, 2)
+        self.assertIn("point 2 and the point is still open", err)
+        self.triage("- point 2 | cause: unknown after src/auth.rs | repro: `cargo test refresh` → 3 of 3 | "
+                    "impact: every login after an hour | fix")
+        self.assertEqual(self.implementer("implementer", "diagnoser")[0], 0)  # round two: examined
+        code, err, _ = self.implementer("implementer", "diagnoser", "implementer")
+        self.assertEqual(code, 2)
+        self.assertIn("a third attempt at a symptom is not made", err)
+        self.docket.write_text(self.docket.read_text("utf-8") + "- point 2 | cause: src/auth.rs:2, the expiry is "
+                               "read before it is set | repro: `cargo test refresh` → 3 of 3 | impact: every login | fix\n",
+                               "utf-8")
+        self.assertEqual(self.implementer("implementer", "diagnoser", "implementer", "diagnoser")[0], 0)
+
+    def test_a_closed_point_starts_the_count_again(self):
+        now = datetime.utcnow()
+        stamp = lambda seconds: (now + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (self.work / "LOG.md").write_text(f"{stamp(-60)}  {SPEC}  sealed             session=test-ses\n"
+                                          f"{stamp(-10)}  {SPEC}  point-delivered    session=test-ses  count=1\n", "utf-8")
+        entry = lambda seconds, block: {"type": block["role"], "timestamp": stamp(seconds).replace("Z", ".000Z"),
+                                        "message": {"content": [block["content"]]}}
+        call = {"role": "assistant", "content": {"type": "tool_use", "id": "a1", "name": "Agent",
+                                                 "input": {"subagent_type": "docket:implementer"}}}
+        back = {"role": "user", "content": {"type": "tool_result", "tool_use_id": "a1", "content": "done"}}
+        self.path.write_text(json.dumps(entry(-40, call)) + "\n" + json.dumps(entry(-30, back)) + "\n", "utf-8")
+        spawn = lambda: run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Agent",
+                                                     "transcript_path": str(self.path),
+                                                     "tool_input": {"subagent_type": "docket:implementer",
+                                                                    "model": "sonnet", "prompt": "point 2"}}, self.p)
+        self.assertEqual(spawn()[0], 0)  # point 1's implementer returned before point 1 was flipped
+        self.path.write_text(json.dumps(entry(-5, call)) + "\n" + json.dumps(entry(-2, back)) + "\n", "utf-8")
+        self.assertEqual(spawn()[0], 2)  # this one returned for point 2
+
+    def write(self, line, *steps):
+        """The orchestrator appends `line` to the docket; the hook answers after the write."""
+        snap = self.root / ".claude" / "docket" / f"snap-{SPEC}.md"
+        before = self.docket.read_text("utf-8")
+        snap.write_text(before, "utf-8")
+        self.docket.write_text(before + "\n## Triage\n\n" + line + "\n", "utf-8")
+        code, err, _ = run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
+                                                     "transcript_path": self.transcript(*steps),
+                                                     "tool_input": {"file_path": str(self.docket)}}, self.p)
+        return code, err, self.docket.read_text("utf-8") != before
+
+    RUNS = ("cargo test refresh", ("cargo test refresh", "failed"), "cargo test refresh")
+
+    def test_observe_is_the_late_exit(self):
+        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", *self.RUNS)
+        self.assertEqual((code, kept), (2, False))  # undone: nobody challenged the first answer
+        self.assertIn("no second diagnoser has returned", err)
+        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", "diagnoser", "cargo test refresh")
+        self.assertEqual((code, kept), (2, False))
+        self.assertIn("1 of three times", err)
+        failed = [("cargo test refresh", "failed")] * 3
+        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", "diagnoser", *failed)
+        self.assertEqual((code, kept), (2, False))
+        self.assertIn("shown three of three is a fault", err)
+        code, err, kept = self.write("- point 2 | observe: a red refresh test in CI", "diagnoser", "diagnoser")
+        self.assertEqual((code, kept), (2, False))
+        self.assertIn("it has no `cause:`", err)
+        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", "diagnoser", *self.RUNS)
+        self.assertEqual((code, kept), (0, True), err)
+        self.assertIn("docket-undone", self.log())
+
+    def test_a_fault_no_command_of_a_reasonable_size_shows_still_needs_the_challenge(self):
+        line = ("- point 2 | cause: unknown after src/auth.rs | repro: none, it needs a day of production load | "
+                "impact: one session in thousands | observe: a 401 right after a refresh in the access log")
+        self.assertEqual(self.write(line, "implementer", "diagnoser")[0], 2)
+        self.assertEqual(self.write(line, "implementer", "diagnoser", "diagnoser")[0], 0)
+        self.assertEqual(self.write("- point 2 | cause: src/auth.rs:2 | repro: `x` → 3 of 3 | impact: all | fix")[0], 0)
+
+    def review(self, *lines):
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n" + "".join(line + "\n" for line in lines), "utf-8")
+        return self.tool("Bash", command="git push origin next")
+
+    def test_a_suspect_is_examined_not_deferred_and_only_a_suspect_is_observed(self):
+        suspect = "- code | the refresh may race the logout | src/auth.rs:2 | suspect | "
+        code, err, _ = self.review(suspect + "deferred", "- spec | no findings")
+        self.assertEqual(code, 2)
+        self.assertIn("A suspect is not deferred, it is examined", err)
+        self.assertEqual(self.review(suspect + "cause: unknown after src/auth.rs | repro: `cargo test race` → 0 of 3 | "
+                                     "impact: one logout in thousands | observe: a 401 after logout in the log",
+                                     "- spec | no findings")[0], 0)
+        self.assertEqual(self.review(suspect + "rejected: src/auth.rs:3 takes the lock first", "- spec | no findings")[0], 0)
+        code, err, _ = self.review("- code | the token never expires | src/auth.rs:2 | bug | cause: unknown | "
+                                   "repro: `x` → 1 of 3 | impact: all | observe: a stale token", "- spec | no findings")
+        self.assertEqual(code, 2)
+        self.assertIn("Only a `suspect` is observed", err)
+
+    def test_what_is_observed_reaches_the_user_as_a_line_to_watch(self):
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Triage\n\n" + self.FLAKY.replace("point 2", "point 1") + "\n",
+                               "utf-8")
+        self.end_spec()
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("no `watch:` line", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+        # The user cuts a spec from the line and has nothing else at hand: a line that is not the whole case is refused.
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.end_spec(lines=["watch: the refresh test failed once in three runs; a red refresh test in CI shows it again"])
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("has no `seen:`, `suspected:`, `impact:`, `signal:`", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.end_spec(lines=[
+            "watch: the refresh test fails now and then | seen: `cargo test refresh | tail` was red in one of three "
+            "runs on this branch, green on the two others | suspected: the expiry in src/auth.rs is read before the "
+            "refresh has set it, when both land in the same second | impact: a user is logged out once, right after "
+            "an hour | signal: a red refresh test in CI, or a 401 right after a refresh in the access log"])
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        lines = self.closing().splitlines()
+        start = lines.index("To watch: The refresh test fails now and then.")
+        self.assertEqual(lines[start + 1:start + 5], [
+            "- Seen: `cargo test refresh | tail` was red in one of three runs on this branch, green on the two others.",
+            "- Suspected: The expiry in src/auth.rs is read before the refresh has set it, when both land in the same second.",
+            "- Impact: A user is logged out once, right after an hour.",
+            "- Look for: A red refresh test in CI, or a 401 right after a refresh in the access log."])
+        self.assertNotIn("Nothing open", self.closing())
+
+
+class AcceptanceCommands(Project):
+    """V16: a delivered point's own command ran after the last implementer or fixer and did not fail. The Stop hook
+    checked the project's check only; whether the point's criterion ran was the orchestrator's word."""
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "auth.md").write_text("login\n", "utf-8")
+        self.docket.write_text("## Points\n\n| # | Point | Evidence line expected | State |\n|---|---|---|---|\n"
+                               "| 1 | login | `cargo test login → 3 passed` | [x] |\n"
+                               "| 2 | piped | `cargo test \\| grep ok` → `ok` | [x] |\n"
+                               "| 3 | doc | `docs/auth.md → contains login` | [x] |\n"
+                               "| 4 | refresh | `cargo test refresh → 1 passed` | [~] |\n", "utf-8")
+
+    def deliver(self, *steps):
+        """Steps in order: a shell command, (command, "failed") or an agent kind."""
+        entries = []
+        for n, step in enumerate(steps):
+            command, failed = step if isinstance(step, tuple) else (step, "")
+            agent = command in ("implementer", "fixer", "reviewer")
+            given = {"subagent_type": f"docket:{command}"} if agent else {"command": command}
+            entries.append({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": f"t{n}", "name": "Agent" if agent else "Bash", "input": given}]}})
+            entries.append({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"t{n}", "content": "x", "is_error": bool(failed)}]}})
+        path = self.tmp / "acceptance.jsonl"
+        path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        if "## Terminal state" not in self.docket.read_text("utf-8"):
+            self.end_spec()
+        return self.run_stop(transcript_path=str(path), background_tasks=[])
+
+    def test_every_delivered_points_command_ran_after_the_last_change(self):
+        code, err, _ = self.deliver("implementer", "cargo test login", "reviewer")
+        self.assertEqual(code, 2)
+        self.assertIn("point 2 (`cargo test | grep ok`) never ran", err)
+        self.assertNotIn("point 1", err)
+        self.assertNotIn("point 3", err)  # a file and what it must contain: no command
+        self.assertNotIn("point 4", err)  # a deviation delivers nothing
+        self.assertEqual(self.state()["mode"], "sealed")
+        code, err, _ = self.deliver("cargo test login", "implementer", "cargo test | grep ok", "reviewer")
+        self.assertEqual(code, 2)
+        self.assertIn("point 1 (`cargo test login`) last ran before the last implementer or fixer returned", err)
+        code, err, _ = self.deliver("implementer", "reviewer", ("cargo test login", "failed"), "cargo test | grep ok")
+        self.assertEqual(code, 2)
+        self.assertIn("point 1 (`cargo test login`) failed in its last run", err)
+        self.deliver("implementer", ("cargo test login", "failed"), "reviewer", "cd app && cargo test login",
+                     "cargo test | grep ok")
+        self.assertEqual(self.state()["mode"], "closing")
 
 
 class InboxNotice(Project):
@@ -2321,7 +2656,8 @@ class ReviewFindings(Project):
         self.assertEqual(self.state()["mode"], "sealed")
 
     def test_the_terminal_lines_may_carry_bold_backticks_and_dashes(self):
-        self.docket.write_text(self.docket.read_text("utf-8") + "\n## Review\n\n- no findings\n\n## Terminal state\n\n"
+        self.docket.write_text(self.docket.read_text("utf-8") + "\n## Review\n\n- code | no findings\n"
+                               "- spec | no findings\n\n## Terminal state\n\n"
                                "- **state:** `DELIVERED`.\n- `result: Login works.`\n- open: none\n- user: keine\n", "utf-8")
         self.assertEqual(self.run_stop()[0], 2)
         self.assertEqual(self.state()["mode"], "closing")
@@ -2389,7 +2725,7 @@ class ReviewFindings(Project):
         self.assertEqual(json.loads(out)["hookSpecificOutput"]["displayContent"], text)
 
     def test_only_the_conceptor_ends_a_rewrite(self):
-        self.tool("Agent", subagent_type="docket:conceptor", prompt="rewrite")
+        self.tool("Agent", subagent_type="docket:conceptor", model="opus", prompt="rewrite")
         stop = lambda kind: run_hook("subagent_stop.py", {"session_id": SID, "cwd": self.p, "agent_type": kind,
                                                           "last_assistant_message": "done\nUnverified: none"}, self.p)
         stop("docket:refiner")
@@ -2495,12 +2831,18 @@ class ExperimentTwelve(Project):
         refused = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "f1", "is_error": True,
                                                             "content": "[docket] The docket is yours"}]}}
         path = self.tmp / "t.jsonl"
-        path.write_text("\n".join(json.dumps(e) for e in (call(1), refused, call(2))) + "\n", "utf-8")
+        back = lambda tool_id: {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": tool_id, "content": "done"}]}}
+        review = {"type": "assistant", "timestamp": now, "message": {"content": [
+            {"type": "tool_use", "id": "r1", "name": "Agent", "input": {"subagent_type": "docket:reviewer", "model": "opus"}}]}}
+        path.write_text("\n".join(json.dumps(e) for e in (call(1), refused, call(2), back("f2"), review, back("r1")))
+                        + "\n", "utf-8")
         self.docket.write_text("| 1 | x | `x` | [x] |\n", "utf-8")
         self.end_spec()
         self.run_stop(transcript_path=str(path), background_tasks=[])
         metrics = json.loads((self.work / "metrics" / f"{SPEC}.json").read_text("utf-8"))
-        self.assertEqual(metrics["agents"], {"fixer": 1})
+        self.assertEqual(metrics["agents"], {"fixer": 1, "reviewer": 1})
+        self.assertEqual(metrics["reviewer_models"], ["opus"])
 
 
 

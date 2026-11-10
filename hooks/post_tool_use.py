@@ -9,7 +9,9 @@ Dockets are append-only: after an edit every previous line (snapshot taken in pr
 still be there, in order. A violation is reported to the model with exit 2 and logged; the hook
 cannot undo it, the model must restore the lines. New lines that cite a `file:line` which does not
 exist undo the write (the snapshot is restored, a skeleton removed): a citation is checked at the one
-moment the line may still change. Point flips `[ ]` -> `[x]` / `[~]` become LOG
+moment the line may still change. So does a new line whose decision is `observe` before the means were
+spent (V19: cause, repro and impact named, the repro command run three times by the orchestrator and not
+failed all three, a second diagnoser returned). Point flips `[ ]` -> `[x]` / `[~]` become LOG
 events (point-delivered, deviation): the LOG knows every point, written by the hook only.
 
 Specs: the ready gate. A spec whose state became `ready` must have a verifiable criterion for
@@ -25,8 +27,8 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (Paths, absolute, clock_line, config_values, frontmatter, load_state, log_event, log_has,
-                        missing_citations, read_input, refuse, set_context, under)
+from docket_lib import (Paths, absolute, bullets, clock_line, config_values, frontmatter, load_state, log_event,
+                        log_has, missing_citations, observe_problems, observed, read_input, refuse, set_context, under)
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b|==)", re.IGNORECASE)
@@ -43,7 +45,7 @@ def main():
     if hook_input.get("tool_name") in WRITE_TOOLS and isinstance(file_path, str) and file_path:
         path = absolute(file_path, paths.cwd)
         if under(path, paths.dockets):
-            result = docket_check(path, paths, session_id)
+            result = docket_check(path, paths, session_id, hook_input.get("transcript_path"))
         elif under(path, paths.specs):
             result = ready_gate(path, paths, session_id)
         elif (under(path, paths.root) and not under(path, paths.work) and os.path.isfile(paths.config)
@@ -85,7 +87,7 @@ def log_grant(tool_input, paths, session_id):
 
 # --- dockets -----------------------------------------------------------------
 
-def docket_check(path, paths, session_id):
+def docket_check(path, paths, session_id, transcript_path=None):
     state = load_state(paths, session_id)
     spec_id = state.get("spec", "")
     set_context(paths, spec_id)
@@ -116,6 +118,15 @@ def docket_check(path, paths, session_id):
         return refuse("[docket] The write was undone, the docket is as before: it cited locations that do not exist: "
                       + ", ".join(missing) + ". Cite `path/file.ext:line` relative to the repo root, as it is on "
                       "disk, then write the lines again.")
+    for line in bullets("\n".join(new_lines(before or "", after))):
+        # V19: `observe` is the late exit; like a citation it is checked while the line may still change.
+        early = observe_problems(line, paths, spec_id, transcript_path) if observed(line) else []
+        if early:
+            undo_write(path, snap, before)
+            log_event(paths, session_id, spec_id, "docket-undone", "observe before the means were spent")
+            return refuse("[docket] The write was undone, the docket is as before: `observe` is the late exit, and for `"
+                          + line[:60] + "` " + "; ".join(early) + ". Spend the means first, then write the line again; "
+                          "a failure that is shown is `fix` or `deviation`, a finding that is refuted is rejected.")
     log_points(paths, session_id, spec_id, before or "", after)
     return 0
 

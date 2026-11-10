@@ -8,7 +8,10 @@ Write rights by state x path (roles are write rights, not sessions):
 Done specs and dockets are not a reference source: Read/Grep on them outside concept mode is refused.
 Sealed: AskUserQuestion and the next-step box refused; an agent's description names its place in the series in
 everyday words (V8); a fixer never gets the docket or the metrics (V6, the orchestrator keeps the docket, the hook
-writes the metrics); the plugin's own source is not read (V10); a push waits for a decided review (V14).
+writes the metrics); the plugin's own source is not read (V10); a push waits for a decided review (V14) that
+reviewer agents ran after the last implementer or fixer (V15); a reviewer never gets the docket (V15); an
+implementer, refiner, reviewer, diagnoser or conceptor is spawned with its model (V17); a point's second
+implementer waits for the failure's Triage line, its third for a cause named there at a file:line (V18).
 Closing: only the rendered closing message is sent; the box may ask only the decision it names. Closed: writes,
 agents and box questions refused. Degraded: writes, shell and agents refused until the required reading has been observed. Shell read
 commands are redirected to Read.
@@ -29,14 +32,19 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (PLUGIN_ROOT, RUN_MODES, Paths, absolute, blocker_since_prompt, closing_path, config_values,
                         frontmatter, language_code, load_state, log_event, position, read_input, read_text,
-                        refinement_problem, refuse, review_problem, save_state, set_context, under)
+                        refinement_problem, refuse, review_problem, review_run_problem, rework_problem, save_state,
+                        set_context, under)
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 INIT_FILES = {"docket.md", "contributing.md", "claude.md", "agents.md", ".gitignore", "settings.json", "settings.local.json"}
 # V8: the agent's description is what the user reads when it finishes; plugin words mean nothing to the user
 # (luradb-web-client 2026-11-06: 80 completions, 59 names in the plugin's words, none naming its spec).
-PLUGIN_WORDS = re.compile(r"\b(refiners?|fixers?|conceptors?|implementers?|orchestrators?|flip\w*|dockets?|skeletons?)\b",
+PLUGIN_WORDS = re.compile(r"\b(refiners?|fixers?|conceptors?|implementers?|diagnosers?|orchestrators?|flip\w*|dockets?|"
+                          r"skeletons?)\b",
                           re.IGNORECASE)
+# V17: the model is a decision of the orchestrator per spawn, by the point's tier and the role, never an inheritance
+# from its own. The fixer's model is fixed in its definition.
+MODEL_ROLES = ("implementer", "refiner", "reviewer", "conceptor", "diagnoser")
 GIT_PUSH = re.compile(r"\bgit\s+push\b([^|;&\n]*)")
 GIT_COMMIT = re.compile(r"\bgit\s+commit\b[^|;&\n]*?(?:-m|--message)[=\s]+(?:\"([^\"]*)\"|'([^']*)'|(\S+))")
 HEREDOC_MESSAGE = re.compile(r"\bgit\s+commit\b[^\n]*<<\s*['\"]?(\w+)['\"]?\)?\s*\n([^\n]*)")
@@ -143,7 +151,8 @@ def main():
 
     # The first implementer runs only after pre-registration and a closed refinement.
     if tool == "Agent" and mode == "sealed" and "implementer" in str(tool_input.get("subagent_type", "")).lower():
-        problem = refinement_problem(paths, state.get("spec", ""))
+        problem = (refinement_problem(paths, state.get("spec", ""))
+                   or (not subagent and rework_problem(paths, state.get("spec", ""), hook_input.get("transcript_path"))))
         if problem:
             return refuse(problem)
 
@@ -160,7 +169,8 @@ def main():
             if problem:
                 return refuse(problem)
             if mode in ("sealed", "rewrite") and GIT_PUSH.search(command) and not subagent:
-                problem = review_problem(paths, state.get("spec", ""))
+                problem = (review_problem(paths, state.get("spec", ""))
+                           or review_run_problem(paths, state.get("spec", ""), hook_input.get("transcript_path")))
                 if problem:
                     return refuse(problem + " The push waits for it.")
         if isinstance(command, str) and registered_check(command, paths, state):
@@ -260,7 +270,8 @@ def registered_check(command, paths, state):
 
 def agent_problem(paths, state, tool_input):
     """V8: the description names the place in the series and the task in everyday words; V6: a fixer changes project
-    files only, the orchestrator keeps the docket and the hook writes the metrics."""
+    files only, the orchestrator keeps the docket and the hook writes the metrics; V15: a reviewer is briefed
+    without the docket; V17: the spawn names its model."""
     description = str(tool_input.get("description") or "")
     kind = str(tool_input.get("subagent_type") or "").lower()
     i, n = position(state)
@@ -276,6 +287,13 @@ def agent_problem(paths, state, tool_input):
     if "fixer" in kind and re.search(r"\bdockets[/\\]|\bmetrics[/\\]|\.violations\.json", prompt, re.IGNORECASE):
         return ("[docket] The docket is yours: write it yourself (skeleton with Write, then Edit: boxes, evidence, "
                 "Terminal state); the hook writes the metrics. A fixer changes project files only.")
+    if "reviewer" in kind and re.search(r"\bdockets[/\\]", prompt, re.IGNORECASE):
+        return ("[docket] A reviewer reads the order and the delivery, not your account of them: brief it with its "
+                "angle, the spec path and the range to read, without the docket.")
+    if any(role in kind for role in MODEL_ROLES) and not str(tool_input.get("model") or "").strip():
+        return ("[docket] This agent has no `model`: an implementer runs on the model of its point's tier, one tier "
+                "higher per rework round; refiners, reviewers, the diagnoser and the conceptor on the model DOCKET.md "
+                "`model_ladder` gives their role. Spawn it again with that model.")
     return ""
 
 

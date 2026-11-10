@@ -32,10 +32,12 @@ from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, agent_returns, box_questions, check_commands, claim_lock,
+from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, acceptance_problems, agent_returns, box_questions,
+                        check_commands, claim_lock, review_run_problem,
                         closing_path, collect_judge, frontmatter,
                         config_values, hook_outputs, language_problem, load_state, log_event, log_lines, log_time,
-                        message_text, missing_citations, normalized_lines, notice, point_counts,
+                        message_text, missing_citations, normalized_lines, notice, observed, point_counts,
+                        review_lines, triage_lines, watch_parts, WATCH_PARTS,
                         position, previous_turn_texts, read_input, read_text, refinement_problem, refuse,
                         release_lock, render_closing, resume_judge, review_problem, save_display, save_state, say,
                         section_text, session_live, lock_holder, set_context, set_spec_state, settled_display,
@@ -197,6 +199,10 @@ def run_stop(paths, session_id, state, hook_input):
     return refuse("[docket] " + say(paths, "not_finished", problem="; ".join(problems)))
 
 
+def _cut(text, limit=50):
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
 def terminal_problems(terminal, spec_id, paths, hook_input):
     """The end of a spec as the docket states it. Its lines go into the run's closing message, so they are in the
     user's language and carry no ids or hashes; DELIVERED needs the evidence."""
@@ -211,8 +217,22 @@ def terminal_problems(terminal, spec_id, paths, hook_input):
     if any("/docket:" not in line for line in terminal["decision"]):
         problems.append("a `decision:` line asks one question with its recommendation and names the command that "
                         "carries it out (`/docket:spec`, `/docket:concept`)")
-    prose = "\n".join([terminal["result"], terminal["reason"]] + terminal["open"] + terminal["user"]
-                      + terminal["decision"] + terminal["dissent"])
+    body = read_text(paths.docket_file(spec_id))
+    watched = [line for line in list(triage_lines(body).values()) + review_lines(body) if observed(line)]
+    if watched and not terminal["watch"]:
+        problems.append(f"the docket sets {len(watched)} possible fault(s) to `observe` and the Terminal state has no "
+                        "`watch:` line: say for each what was seen and the signal that would show it again")
+    for value in terminal["watch"]:
+        parts = watch_parts(value)
+        missing = [key for key in WATCH_PARTS if not parts[key]]
+        if missing or not parts["subject"]:
+            problems.append("a `watch:` line is the whole case for the user, who cuts a spec from it and has nothing "
+                            "else at hand: `watch: <what it is about> | seen: <what happened, where, how often> | "
+                            "suspected: <the cause you suspect and what speaks for it> | impact: <who notices what, in "
+                            "which case> | signal: <what to look for, and where>`; `" + _cut(value) + "` has no "
+                            + ", ".join(f"`{key}:`" for key in missing or ["subject"]))
+    prose = "\n".join([terminal["result"], terminal["reason"]] + terminal["open"] + terminal["watch"]
+                      + terminal["user"] + terminal["decision"] + terminal["dissent"])
     if HASH_IN_TEXT.search(prose):
         problems.append("no commit hashes in the Terminal state lines: they are read by the user; the hash stays in "
                         "the Evidence section")
@@ -230,7 +250,8 @@ def terminal_problems(terminal, spec_id, paths, hook_input):
         problems.append(f"{open_points} docket point(s) still open `[ ]`; each needs `[x]` with evidence or `[~]` "
                         "with a deviation line")
     problems += provenance_problems(body, spec_id, paths, hook_input)
-    for problem in (refinement_problem(paths, spec_id), review_problem(paths, spec_id)):
+    for problem in (refinement_problem(paths, spec_id), review_problem(paths, spec_id),
+                    review_run_problem(paths, spec_id, hook_input.get("transcript_path"))):
         if problem:
             problems.append(problem.replace("[docket] ", "", 1))
     return problems
@@ -346,6 +367,8 @@ def provenance_problems(body, spec_id, paths, hook_input):
     2. Every file:line the docket cites exists and has that many lines.
     3. Every reference doc the spec names is marked in the docket as updated (and the file changed
        after sealing) or as not needed.
+    4. The command of every delivered point's acceptance line ran after the last implementer or fixer returned
+       and did not fail in its last run (V16).
     """
     problems = []
     blocks = transcript_blocks(hook_input.get("transcript_path"))
@@ -365,6 +388,7 @@ def provenance_problems(body, spec_id, paths, hook_input):
                 problems.append(f"the check `{command}` last ran before the last agent returned; run it again yourself")
             elif runs[-1][1].get("id") in failed:
                 problems.append(f"the check `{command}` failed in its last run; the point is not delivered")
+    problems += acceptance_problems(paths, spec_id, body, hook_input.get("transcript_path"))
     # Citations are checked when a docket line is written (post_tool_use, the write is undone otherwise); here only
     # the evidence sections, so an old refinement line never forces an in-place edit of an append-only docket
     # (luradb-web-client 2026-11-06: three DELIVERED attempts, seven append-only violations).

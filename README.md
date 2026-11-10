@@ -53,32 +53,45 @@ latest commit shows whether they passed.
    your decisions closed with one word each, reference docs named. Then it is `ready` and frozen.
 4. **Leave:** `/docket:implement <id>`. What only you can provide, a key or a running server, is checked first;
    then the session seals. Refinement, pre-registered docket, one implementer per point, checks run by the
-   orchestrator, one review of the whole change, commits per the project's rules. Your messages wait in the
+   orchestrator, a review of the whole change from two angles, commits per the project's rules. Your messages wait in the
    inbox; `/docket:stop` ends the run cleanly. Nothing asks you anything until the run is over.
 5. **Read:** one message for the whole run, in your language: each spec by its title and what it delivered,
-   whether the work is pushed and CI is green, what was checked, what is open, what only you can do, and the
+   whether the work is pushed and CI is green, what was checked, what is open, what to watch, what only you can do, and the
    decision that is due. The dockets hold the evidence. What deviated goes back to step 2.
 
 Several specs can wait as `ready`; several sessions can run on different specs at once, each locked to its own.
 
 ```mermaid
-flowchart LR
-    init["/docket:init<br/>once per project<br/>DOCKET.md"]
-    concept["/docket:concept<br/>think with you<br/>short, interactive"]
-    spec["/docket:spec<br/>points + done criteria<br/>state: ready, frozen"]
-    subgraph run ["/docket:implement &lt;id&gt; · sealed · long, unattended, no questions"]
-        direction LR
-        refine["3 refiners"] --> register["docket<br/>pre-registered"]
-        register --> points["implementer<br/>per point"]
-        points --> check["orchestrator runs<br/>the check"]
-        check --> points
-        check --> review["one review<br/>of the whole change"] --> close["one final message<br/>for the whole run"]
+flowchart TD
+    init["/docket:init<br/>once per project"]
+    concept["/docket:concept<br/>agree the WHAT with you"]
+    spec["/docket:spec<br/>points + done criteria,<br/>then frozen"]
+    init --> concept --> spec --> refine
+
+    subgraph run ["/docket:implement"]
+        refine["1 · Refine<br/>3 agents read the spec<br/>against code, concept,<br/>project rules"]
+        register["2 · Pre-register the docket<br/>per point: its evidence<br/>and its tier"]
+        build["3 · Build one point<br/>one implementer,<br/>model by tier"]
+        gate{"point's command and<br/>project check green?"}
+        triage["Examine the failure<br/>cause · repro · impact"]
+        review["4 · Review the change<br/>2 reviewers: the code,<br/>the delivery vs. the spec"]
+        fix["Fix the findings"]
+        push["5 · Push, read CI"]
+
+        refine --> register --> build --> gate
+        gate -- "no" --> triage
+        triage -- "next round,<br/>3 at most" --> build
+        gate -- "yes: next point" --> build
+        gate -- "yes: last point" --> review
+        review -- "findings" --> fix
+        fix -- "review again,<br/>3 rounds at most" --> review
+        review -- "none left" --> push
     end
-    docket[("docket<br/>evidence, append-only<br/>LOG by hooks only")]
-    init --> concept --> spec --> run
-    run --> docket
-    docket -- "deviations" --> concept
-    inbox["your messages → inbox<br/>/docket:stop"] -.-> run
+
+    push --> close["One closing message<br/>delivered · open ·<br/>to watch · decisions due"]
+    push -.-> docket[("docket<br/>the evidence,<br/>append-only")]
+    close --> back["deviations and things<br/>to watch go back to<br/>/docket:concept"]
+    inbox["sealed: it asks nothing,<br/>your notes go to an inbox,<br/>/docket:stop ends it"] -.-> build
 ```
 
 ## Commands
@@ -117,10 +130,19 @@ the specs not started and the command that resumes them. `/docket:stop` ends the
 ## How a sealed run works
 
 1. Three refiner agents read the spec against the code, the concept and the project rules.
-2. A docket skeleton is pre-registered: one line per point with the evidence that will count.
-3. One implementer agent per point. The orchestrator reads every diff and runs the project check itself.
+2. A docket skeleton is pre-registered: one line per point with the evidence that will count, and the point's
+   tier (simple, standard, complex), which picks the implementer's model.
+3. One implementer agent per point, at most three rounds, each rework round on a stronger model and briefed with
+   what failed. The orchestrator reads every diff and runs the point's own command and the project check itself.
+   A failure gets its second attempt only after a diagnoser agent examined it: where it comes from, whether a
+   command shows it (three runs at most, no time limit), who notices what. A third attempt needs a named cause.
+   An error the code does not explain may be looked up on the web, three lookups at most: to read the error,
+   never to reopen what the spec decided.
 4. Every delivered point gets its evidence line; what differs from the spec becomes a deviation line.
-5. One reviewer agent reads the whole change before it is pushed; every finding is decided in the docket.
+5. Two reviewer agents read the whole change before it is pushed: one the code, one the delivery against the
+   spec, neither the orchestrator's docket. Every finding is decided in the docket; a bug, an unmet point or a
+   broken rule is fixed or refuted, never deferred. What a fix wrote is reviewed again, three rounds at most.
+   What a reviewer suspects but cannot show is examined the same way before anyone fixes it.
 6. The spec ends in its docket: delivered, blocked or in dissent, with its result in one sentence and what is
    left open.
 7. The run ends with one message, which the hook writes from the dockets and git, in the language `DOCKET.md`
@@ -133,9 +155,16 @@ says what came of them.
 ## What you can rely on
 
 - A spec that is `ready` does not change under you; a rewrite is a logged event.
-- A delivered spec means: the project's own check ran green after the last agent, every cited location exists,
-  every reference doc the spec names is updated or accounted for.
-- Nothing is pushed before one review of the whole change is decided, finding by finding.
+- A delivered spec means: the project's own check ran green after the last agent, every delivered point's own
+  command ran green after the last change, every cited location exists, every reference doc the spec names is
+  updated or accounted for.
+- Nothing is pushed before the review of the whole change is decided, finding by finding, and before reviewer
+  agents have read the last change: a review written into the docket without them is refused.
+- A run does not chase a symptom and does not wave a fault away. "Possible fault, needs watching" is the late
+  exit: it stands only after three runs of the command that should show it and after a second agent tried to
+  refute the first one's answer. It reaches you under "To watch" in the closing message as a block that stands on
+  its own (what it is about, what was seen, what is suspected, the impact, what to look for), ready to be handed
+  to `/docket:spec`.
 - The message at the end is written by the hook from the dockets and git, not from the model's memory.
 - The log is written by hooks, not by the model.
 
@@ -186,7 +215,7 @@ Code's function hooks, an early-access API: where a client does not draw panes, 
 
 ```
 commands/   concept, spec, implement, init, register, status, stop
-agents/     conceptor, refiner, implementer, reviewer, fixer
+agents/     conceptor, refiner, implementer, diagnoser, reviewer, fixer
 hooks/      hooks.json, Python hooks, tests
 hooks/mod/  the pane (function hooks, TypeScript), its tests
 templates/  DOCKET.md, concept.md, spec.md, delivery-docket.md, judge-hook.json
@@ -197,7 +226,7 @@ Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 
-0.4.5, an early stage of development, already in use in several repositories.
+0.5.0, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

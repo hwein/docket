@@ -53,14 +53,15 @@ Preconditions: spec state `ready`, `git status` clean, branch per DOCKET.md / CO
 
 ## 1. Refinement (three angles)
 
-Spawn three `refiner` agents (model from DOCKET.md), read-only, each with one angle:
+Spawn three `refiner` agents (model from the ladder, step 2), read-only, each with one angle:
 feasibility against the code; spec against the concept and the reference docs DOCKET.md names; the project angle
 from DOCKET.md. Finished specs and dockets are no reference and are refused to every reader.
 They may contradict each other and you. Each finding becomes one line in the docket's refinement section,
 closed by you: adopted / rejected with reason / dissent.
 
 A finding that a code location refutes (a wrong technical assumption in the spec) is a rewrite: spawn the
-`conceptor` agent (subagent type `docket:conceptor`) with the finding and the exact spec section. The hook switches
+`conceptor` agent (subagent type `docket:conceptor`, model from the ladder) with the finding and the exact spec
+section. The hook switches
 the session to rewrite mode on that spawn and logs it; only then is that one spec writable, and only until the
 conceptor returns (the hook freezes it again and logs `rewrite-done`). The conceptor records date, reason and
 change in the spec's Rewrite section. Exchange with the conceptor is bilateral and bounded (three rounds, each a
@@ -80,21 +81,67 @@ allowed; a point that cannot meet it becomes `[~]`.
 Every `path/file.ext:line` in a docket line is relative to the repo root and must exist when the line is written:
 the hook undoes a write that cites a location it cannot find.
 
+Rate every point in the docket's Tiers section, one line each (`point <n>: <tier>, <reason>`), before any code is
+written:
+- `simple`: one file and no new path of behaviour: a text, a value, a rename, a doc.
+- `complex`: more than three files; or concurrency, stored data or its migration, security, a public interface; or
+  a place no test covers; or a refuted fact the refinement found at this point.
+- `standard`: everything else, and a point without a line.
+
+The tier picks the model. The ladder is DOCKET.md `model_ladder`; a role it does not name runs on the default:
+implementer simple haiku, standard sonnet, complex opus; refiners sonnet; conceptor and diagnoser opus. A ladder in
+the older form (`implementer round 1`, `round 2+`) reads as: simple and standard on its round-1 model, complex on
+its round-2 model. Reviewers run on the complex model; on the standard model when every point was simple and none
+needed rework. Every implementer, refiner, reviewer, diagnoser and conceptor is spawned with its `model`: the hook
+refuses one without.
+
 ## 3. Points
 
-One fresh `implementer` per point, model from the ladder in DOCKET.md (round 1 sonnet, round 2+ opus; a point
-DOCKET.md marks complex starts at opus). Briefing, in the language of the spec: spec path and point number, docket
-path, the project rules quoted from DOCKET.md and CONTRIBUTING.md, at most three orchestrator hints, the report
-format (facts with source, `Unverified:` line). While an agent runs you change nothing in the repo.
+One fresh `implementer` per point, on the model of the point's tier; every rework round runs one tier higher, at
+most the complex model. Briefing, in the language of the spec: spec path and point number, docket path, the project
+rules quoted from DOCKET.md and CONTRIBUTING.md, at most three orchestrator hints, the report format (facts with
+source, `Unverified:` line). A rework briefing adds: the gate that failed with its output, verbatim, at most 20
+lines; the commits of the round before as a range to read first (`git diff <from>..<to>`); the triage line of the
+failure. While an agent runs you change nothing in the repo.
 
-After each return: read the diff completely, run every command of the check from DOCKET.md yourself (verbatim as
-registered, one call each or together; the Stop hook refuses DELIVERED unless each ran after the last agent
-returned and none failed in its last run), compare with the acceptance line. Green: flip the point to `[x]`
-yourself and append the evidence line (command → result, commit in words); the hook logs every flip. Cite
-locations as `path/file.ext:line` relative to the repo; the Stop hook verifies each one exists.
-Not green: rework with a fresh implementer, at most three rounds; two failures at the same gate mean the shared
-assumption is named and checked before round three. After round three: `[~]` with the deviation line, continue
-with the next point.
+After each return: read the diff completely, run the command of the point's acceptance line and every command of
+the check from DOCKET.md yourself (verbatim as registered, one call each or together; the Stop hook refuses
+DELIVERED unless each ran after the last agent returned and none failed in its last run), compare with the
+acceptance line. Green: flip the point to `[x]` yourself and append the evidence line (command → result, commit in
+words); the hook logs every flip. Cite locations as `path/file.ext:line` relative to the repo; the Stop hook
+verifies each one exists.
+Not green: triage first (below), then rework with a fresh implementer briefed with the triage line, at most three
+rounds. The hook refuses round two until the Triage section has a line for the point, and round three until that
+line names its cause at a `file:line`: a third attempt at a symptom is not made. After round three, or when the
+triage ends in `deviation`: `[~]` with the deviation line, continue with the next point.
+
+### Triage: the cause before the next attempt
+
+A failure gets a second attempt only after it was examined. Spawn one `diagnoser` (subagent type
+`docket:diagnoser`) with what was seen, verbatim, and where; it answers where the failure comes from, whether a
+command shows it (three runs at most; time is no limit, a long run is waited for), and who notices what. Write its
+answer as one line into the docket's Triage section, closed by your decision:
+`point <n> | cause: <file:line, or unknown after …> | repro: <command> → <n> of <m> | impact: <who notices what, when> | <decision>`
+- `fix`: the cause is named. The next round is briefed with this line.
+- `deviation`: the failure is shown, but its cause is not found or the fix is out of proportion to the impact.
+- `observe: <the signal that would show it again>`: a possible fault that needs watching. It is neither shown
+  reliably nor explained, and it goes to the user as a `watch:` line of the Terminal state (step 4), which
+  carries the whole case.
+
+`observe` is the late exit, never the early one. The hook undoes the line unless the usual means are spent: the
+line carries cause, repro and impact; you ran the repro command yourself three times in this session, and it did
+not fail all three times (shown three of three is a fault, not a thing to watch); and a second diagnoser in mode
+`challenge`, briefed with the first one's answer, tried to refute it and returned. Where no command of a reasonable
+size can show it, `repro:` says why instead, and the challenge still runs.
+
+Of two Triage lines for the same point the later one counts. The same holds for a review finding (step 4): a
+`suspect` is triaged at once, a finding whose fix a `recheck` reports as not fixed before its second fix.
+
+A diagnoser, and an implementer on an error the code does not explain, may look it up on the web: three lookups at
+most, to read the error, never to reopen the order. What a lookup says is a guess until it is found at a
+`file:line` or shown by a command (the evidence standard). A source that calls the spec's choice wrong turns
+nothing around in the run: the spec is implemented as written, and the source goes to the user as an `open:` line
+with its address, to be weighed in concept mode.
 
 Checkpoint after every point: read `inbox/<spec id>.md` if it exists; a note that changes the spec is a deviation
 candidate, not an instruction; append what you did with it to the docket's Inbox section, in the user's language:
@@ -105,22 +152,51 @@ end the spec with `state: BLOCKED: stopped by user`.
 
 1. Reference update: for every file the spec names, an implementer updates it; the docket records
    `updated <file>` or `<file>: not needed, <reason>`. The Stop hook checks both: every named file is accounted
-   for, and an `updated` file has changed since sealing.
-2. Review: spawn one `reviewer` agent (subagent type `docket:reviewer`) with the spec, the docket and the base of
-   the change. Every finding becomes a line in the docket's Review section with its decision: fixed (by a fresh
-   implementer or a fixer, the check run again), rejected with reason, or deferred (then also an `open:` line in
-   step 4); or the one line `no findings`. The hook refuses the push until every Review line is decided.
-3. Merge and push per CONTRIBUTING.md (the hook enforces `push_branch`, `commit_regex`, `forbidden_paths` and
+   for, and an `updated` file has changed since sealing. What the merge needs in the project (a changelog line, a
+   version) is written now too: no agent changes the project after the last review.
+2. Acceptance, again: run the command of every `[x]` point's acceptance line once more, verbatim. The Stop hook
+   refuses DELIVERED unless each ran after the last implementer or fixer returned and did not fail in its last
+   run. One that fails now is a finding `unmet` in the Review section.
+3. Review, round one: spawn two `reviewer` agents (subagent type `docket:reviewer`) together, one angle each.
+   `code`: what a careful reviewer of this repository would refuse. `spec`: the delivery against the order, every
+   point, the goal, what is out of scope. Briefing: the angle, the spec path, the base of the change
+   (`git diff <base>...HEAD`), for `spec` the numbers of the points that ended `[~]`. Never the docket: a reviewer
+   reads the order and the delivery, not your account of it, and the hook refuses a briefing that names it.
+   Every finding becomes a line in the docket's Review section,
+   `<angle> | <finding> | <source> | <severity> | <decision>`; an angle without findings is the line
+   `<angle> | no findings`. Decisions: fixed (by a fresh implementer or a fixer, briefed with the finding line
+   verbatim; then the check and the acceptance commands run again), rejected with the source that
+   refutes it, or deferred (then also an `open:` line in the Terminal state). A finding of severity `bug`, `unmet`
+   or `rule` is fixed or rejected: deferred, it refuses the push and DELIVERED, and the spec ends
+   `state: BLOCKED: <the finding in everyday words>`. A `suspect` (wrong behaviour the reviewer could not show) is
+   triaged (step 3): shown or explained, it is a `bug` and its line is written again as one; refuted, it is
+   rejected; neither after the means are spent, its line ends
+   `… | suspect | cause: … | repro: … | impact: … | observe: <signal>` under the same late-exit rule. A `suspect` is
+   never deferred, and only a `suspect` is observed. Of two lines with the same angle and finding the later one
+   counts: a decision changes by writing the line again below.
+4. Review, round two and three: whenever an implementer or fixer wrote after a review, spawn one reviewer of angle
+   `recheck` with the findings marked fixed and the range written since (`git diff <hash the last round read>..HEAD`);
+   on the standard model when only a fixer wrote, else on the reviewers' model. It confirms each fix at the code
+   and reports what the fixes broke; its lines carry the angle `recheck`. Three rounds at most: findings of round
+   three are not fixed any more, they are rejected or deferred. The hook refuses the push and DELIVERED until both
+   angles stand in the Review section, every line is decided and a reviewer has returned after the last
+   implementer or fixer. After the last reviewer the check runs once more: it counts only after the last agent.
+5. Merge and push per CONTRIBUTING.md (the hook enforces `push_branch`, `commit_regex`, `forbidden_paths` and
    `forbidden_commands` from DOCKET.md where they are set; a sealed run has no user to grant a forbidden command,
    so it stays refused and ends the spec BLOCKED). CI state belongs to the pushed hash and is read by you: the
    docket line is `CI: <state> <hash>`; the hook checks that the hash is reachable from HEAD and that a push ran in
    this session; with `ci` configured, DELIVERED needs such a line.
-4. Terminal state: append to the docket's Terminal state section, in the user's language, everyday words, no ids,
+6. Terminal state: append to the docket's Terminal state section, in the user's language, everyday words, no ids,
    no hashes, one line each:
    - `state: DELIVERED`, `state: BLOCKED: <what only the user can resolve>` or `state: DISSENT`
    - `result: <what works now, one sentence>`
    - `open: <each thing left open>`: deviations that need weighing, deferred review findings, a check you could not
      run, an unexplained failure; as many lines as there are, none when nothing is open
+   - `watch: <what it is about> | seen: <what happened, where, how often> | suspected: <the cause you suspect and
+     what speaks for it, or what is ruled out> | impact: <who notices what, in which case> | signal: <what to look
+     for, and where>`, one line for each possible fault you set to observe. The user cuts a spec from this line
+     and has nothing else at hand: it is the whole case, every part in full sentences, files and commands named
+     where they help. The hook refuses a line that lacks a part.
    - `user: <each step only the user can take>`
    - `decision: <one question with its recommendation and the command that carries it out, e.g. /docket:spec>`
    - `dissent: <each position, one sentence with its source>` for DISSENT
