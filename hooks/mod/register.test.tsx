@@ -213,8 +213,13 @@ test('a docket project opens the pane, sets the status line and lists specs unde
     const ui = await $.ui.mount({ ...PANE, surface })
 
     expect((await ui.find({ type: 'Text', text: /^Accounts$/ }))?.text).toBe('Accounts')
-    expect((await ui.find({ key: 'spec-s-aaaa1111' }))?.text).toContain('Waits for: Login')
-    expect((await ui.find({ key: 'spec-s-bbbb2222' }))?.text).toContain('2 open decisions')
+    // A row is position, state glyph and title; what holds the spec stands beside it, the predecessor by its
+    // position (luradb-web-client 2026-11-10: the state word and the predecessor's title in every row).
+    expect((await ui.find({ key: 'spec-s-aaaa1111' }))?.text).toBe('2. ● Logout')
+    expect(await ui.find({ type: 'Text', text: /^Waits for #1$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^2 open decisions$/ })).toBeDefined()
+    // The finished specs of a group stand under a line of their own, below the open ones.
+    expect(await ui.find({ type: 'Text', text: /^Finished \(1\)$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Without a concept/ })).toBeDefined()
     expect((await ui.find({ key: 'all-c-11112222' }))?.text).toBe('Implement all ready (2)')
     expect(await ui.find({ type: 'Text', text: /Done 1/ })).toBeDefined()

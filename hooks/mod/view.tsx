@@ -76,6 +76,8 @@ const LEAD_HEADING = /^\s*#\s[^\n]*\n+/
 // monospaced too, and a finished spec's blank is as wide as a position.
 const DIGIT_BLANK = '\u2007'
 const STOP_BLANK = '\u2008'
+// The tick's slot in a row, in cells: wide enough for the glyph, and the same with and without one.
+const PICK_WIDTH = 3
 
 const stateText = (t: Words, state: string): string => `${GLYPH[state] ?? '·'} ${t.states[state] ?? state}`
 
@@ -133,16 +135,18 @@ const progress = (t: Words, run: Run): string => {
   return run.n > 1 ? `${t.runOf(run.i, run.n)} · ${points}` : points
 }
 
-/** What holds a spec or stands out about it, as one dim line part. */
-const marks = (t: Words, data: Overview, spec: Spec): string => {
+/**
+ * What holds a spec or stands out about it, as the row's dim note. A predecessor is named by its position in the
+ * list, which the row in front of it shows: its title six times over made the rows unreadable (luradb-web-client
+ * 2026-11-10). One without a position is named by its title.
+ */
+const marks = (t: Words, data: Overview, spec: Spec, rank: ReadonlyMap<string, number>): string => {
   const found: string[] = []
 
-  if (spec.running) {
-    found.push('▶')
-  }
-
   if (spec.waits_for.length > 0) {
-    found.push(`${t.waitsFor}: ${spec.waits_for.map(id => titleOf(data, id)).join(', ')}`)
+    const before = spec.waits_for.map(id => (rank.has(id) ? `#${rank.get(id)}` : titleOf(data, id)))
+
+    found.push(`${t.waitsFor} ${before.join(', ')}`)
   }
 
   if (spec.decisions > 0) {
@@ -192,9 +196,16 @@ const specRow = (
   act: Actions,
 ) => {
   const { Box, Button, Text } = kit
-  const note = marks(t, data, spec)
+  const note = marks(t, data, spec, rank)
   const position = positionText(rank, spec)
-  const parts = [<Text color={COLOR[spec.state] ?? 'text'}>{stateText(t, spec.state)}</Text>, `  ${spec.title}`]
+  // The state is its glyph and color alone: the counters above the list name each one, and the word in every row
+  // stood between the position and the title.
+  const parts = [
+    <Text color={COLOR[spec.state] ?? 'text'}>{`${GLYPH[spec.state] ?? '·'} `}</Text>,
+    <Text weight={spec.state === 'in-progress' ? 'semibold' : 'regular'} strikethrough={spec.state === 'superseded'}>
+      {spec.title}
+    </Text>,
+  ]
 
   if (position) {
     parts.unshift(
@@ -204,30 +215,41 @@ const specRow = (
     )
   }
 
-  if (note) {
-    parts.push(<Text dimColor>{`  ${note}`}</Text>)
+  if (spec.running) {
+    parts.push(<Text color="claude">{' ▶'}</Text>)
   }
 
+  // Three columns: the tick in a slot of one width whether a row has one or not, so every position starts at the
+  // same place; the row itself, which takes the room; the note and the docket at the right edge.
   return (
     <Box flexDirection="row" gap="sm" alignItems="center">
-      {canRun(spec) ? (
+      <Box width={PICK_WIDTH} flexShrink={0}>
+        {canRun(spec) && (
+          <Button
+            key={`pick-${spec.id}`}
+            plain
+            label={s.picked.includes(spec.id) ? '☑' : '☐'}
+            onPress={() => act.togglePick(spec.id)}
+          />
+        )}
+      </Box>
+      <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
         <Button
-          key={`pick-${spec.id}`}
+          key={`spec-${spec.id}`}
           plain
-          label={s.picked.includes(spec.id) ? '☑' : '☐'}
-          onPress={() => act.togglePick(spec.id)}
-        />
-      ) : (
-        <Text dimColor>{'  '}</Text>
+          dimColor={FINISHED.includes(spec.state)}
+          onPress={() => act.openSpec(spec.id)}
+        >
+          {parts}
+        </Button>
+      </Box>
+      {note !== '' && (
+        <Box flexShrink={0}>
+          <Text dimColor size="caption">
+            {note}
+          </Text>
+        </Box>
       )}
-      <Button
-        key={`spec-${spec.id}`}
-        plain
-        dimColor={FINISHED.includes(spec.state)}
-        onPress={() => act.openSpec(spec.id)}
-      >
-        {parts}
-      </Button>
       {spec.state === 'done' && spec.docket !== '' && (
         <Button key={`docket-${spec.id}`} plain dimColor label={`[${t.docket}]`} onPress={() => act.openDocket(spec.id)} />
       )}
@@ -293,6 +315,8 @@ const group = (
 ) => {
   const { Box, Button, Text } = kit
   const shown = listed(s.isOnlyOpen ? specs.filter(isOpen) : specs, rank)
+  const openRows = shown.filter(isOpen)
+  const finishedRows = shown.filter(spec => !isOpen(spec))
   const hidden = specs.length - shown.length
   const ready = specs.filter(spec => spec.state === 'ready').length
   const open = specs.filter(isOpen).length
@@ -332,7 +356,15 @@ const group = (
         </Box>
       )}
       {specs.length === 0 && <Text dimColor>{t.noSpecsInConcept}</Text>}
-      {shown.map(spec => specRow(kit, t, data, spec, rank, s, act))}
+      {openRows.map(spec => specRow(kit, t, data, spec, rank, s, act))}
+      {openRows.length > 0 && finishedRows.length > 0 && (
+        <Box marginTop="xs">
+          <Text dimColor size="caption">
+            {t.finished(finishedRows.length)}
+          </Text>
+        </Box>
+      )}
+      {finishedRows.map(spec => specRow(kit, t, data, spec, rank, s, act))}
       {hidden > 0 && <Text dimColor>{t.hiddenDone(hidden)}</Text>}
     </Box>
   )
