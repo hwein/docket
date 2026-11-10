@@ -519,7 +519,7 @@ const head = (kit: Kit, s: PaneState, t: Words) => {
   const { Box, Svg, Text } = kit
 
   return (
-    <Box flexDirection="row" alignItems="center" marginBottom="xs">
+    <Box flexDirection="row" alignItems="center" marginRight="sm">
       {Svg !== undefined && s.hasVectors && s.logo !== '' ? (
         <Svg source={s.logo} alt={t.title} width={LOGO_WIDTH} height={LOGO_HEIGHT} />
       ) : (
@@ -563,8 +563,8 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
 
   return (
     <Box flexDirection="column" gap="xs">
-      {head(kit, s, t)}
       <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
+        {head(kit, s, t)}
         {tab('register', t.register)}
         {tab('log', t.log)}
         {tab('config', t.config)}
