@@ -30,6 +30,7 @@ const S: PaneState = {
   isOnlyOpen: false,
   notice: '',
   logo: '',
+  hasVectors: false,
   picked: [],
 }
 
@@ -291,6 +292,14 @@ const actions = ($: EngineInterface): Actions => {
         S.supersedeBy = ''
         S.notice = ''
       })(),
+    openDocket: id =>
+      show(() => {
+        S.openSpec = id
+        S.detail = 'docket'
+        S.isSuperseding = false
+        S.supersedeBy = ''
+        S.notice = ''
+      })(),
     back: show(() => {
       S.openSpec = ''
       S.isSuperseding = false
@@ -436,6 +445,8 @@ export const register: Register = on => {
     if (S.data === undefined && S.error === '' && !isReading) {
       void refresh($)
     }
+
+    S.hasVectors = e.surface !== 'terminal'
 
     return drawPane($.ui.resolve(e), S, t(), actions($), await content($))
   })

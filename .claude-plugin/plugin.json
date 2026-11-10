@@ -1,6 +1,6 @@
 {
   "name": "docket",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Spec in, docket out. Three modes (concept, spec, implement), frozen specs, append-only delivery dockets, provenance-checking hooks and a judge whose verdicts go to Claude and the log, never to your screen.",
   "author": {
     "name": "Heiko Wein"

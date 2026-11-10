@@ -161,7 +161,7 @@ In a project with a `DOCKET.md` a pane opens beside the chat; `/docket-pane` bri
 - Register: every concept with its specs, specs without a concept in a group of their own. Each spec shows its
   state (draft, ready, in progress, done, superseded) and what holds it: the spec it waits for, open decisions,
   a blocked or dissenting last run. A counter per state stands on top and, as one line, under the prompt.
-- A spec opens to its text, its docket and its LOG lines.
+- A spec opens to its text, its docket and its LOG lines; a done spec's docket is one click from the register.
 - Buttons: implement a spec, every ready spec of a concept, or the ready specs you tick, in this session or in a
   session of its own (Claude Code Desktop); mark a spec as superseded, with the spec that replaces it; stop a
   run; refresh. Several specs run as one series, in implementation order, one after another.
@@ -197,7 +197,7 @@ Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 
-0.4.1, an early stage of development, already in use in several repositories.
+0.4.2, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

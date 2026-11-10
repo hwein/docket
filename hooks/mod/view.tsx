@@ -26,6 +26,8 @@ export type PaneState = {
   notice: string
   /** The logo's SVG document, '' until it is read or where it cannot be. */
   logo: string
+  /** Whether the surface drawing now draws vectors: every one but the terminal. */
+  hasVectors: boolean
   /** Ready specs ticked in the register, to run together as one series. */
   picked: string[]
 }
@@ -34,6 +36,7 @@ export type Actions = {
   refresh: () => void
   setTab: (tab: Tab) => void
   openSpec: (id: string) => void
+  openDocket: (id: string) => void
   back: () => void
   setDetail: (detail: Detail) => void
   toggleOnlyOpen: () => void
@@ -166,6 +169,9 @@ const specRow = (kit: Kit, t: Words, data: Overview, spec: Spec, s: PaneState, a
       >
         {parts}
       </Button>
+      {spec.state === 'done' && spec.docket !== '' && (
+        <Button key={`docket-${spec.id}`} plain dimColor label={`[${t.docket}]`} onPress={() => act.openDocket(spec.id)} />
+      )}
     </Box>
   )
 }
@@ -514,7 +520,7 @@ const head = (kit: Kit, s: PaneState, t: Words) => {
 
   return (
     <Box flexDirection="row" alignItems="center" marginBottom="xs">
-      {Svg !== undefined && s.logo !== '' ? (
+      {Svg !== undefined && s.hasVectors && s.logo !== '' ? (
         <Svg source={s.logo} alt={t.title} width={LOGO_WIDTH} height={LOGO_HEIGHT} />
       ) : (
         <Text size="title" weight="bold">
