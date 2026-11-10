@@ -6,7 +6,9 @@ import type { Color, Elements } from 'claude-code'
 import type { Concept, Overview, Run, Spec } from './data'
 import type { Words } from './strings'
 
-export type Kit = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button' | 'Select' | 'Markdown'>
+// `Svg` is the graphical surfaces' alone: the terminal draws the name as text.
+export type Kit = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button' | 'Select' | 'Markdown'> &
+  Partial<Pick<Elements['desktop'], 'Svg'>>
 
 export type Tab = 'register' | 'log' | 'config'
 export type Detail = 'spec' | 'docket' | 'log'
@@ -22,6 +24,8 @@ export type PaneState = {
   supersedeBy: string
   isOnlyOpen: boolean
   notice: string
+  /** The logo's SVG document, '' until it is read or where it cannot be. */
+  logo: string
   /** Ready specs ticked in the register, to run together as one series. */
   picked: string[]
 }
@@ -500,6 +504,27 @@ const runBanner = (kit: Kit, t: Words, run: Run, act: Actions) => {
   )
 }
 
+const LOGO_HEIGHT = 30
+// The logo file is 203.1 by 52.
+const LOGO_WIDTH = Math.round((LOGO_HEIGHT * 203.1) / 52)
+
+/** The pane's head: the logo where the surface draws vectors, the name in title size elsewhere. */
+const head = (kit: Kit, s: PaneState, t: Words) => {
+  const { Box, Svg, Text } = kit
+
+  return (
+    <Box flexDirection="row" alignItems="center" marginBottom="xs">
+      {Svg !== undefined && s.logo !== '' ? (
+        <Svg source={s.logo} alt={t.title} width={LOGO_WIDTH} height={LOGO_HEIGHT} />
+      ) : (
+        <Text size="title" weight="bold">
+          {t.title}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
 /** The pane: tabs and counters on top, then the register, one spec, the LOG or DOCKET.md. */
 export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content: string | undefined) => {
   const { Box, Button, Markdown, Text } = kit
@@ -508,6 +533,7 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
   if (data === undefined || !data.initialized) {
     return (
       <Box flexDirection="column" gap="xs">
+        {head(kit, s, t)}
         <Text color={s.error ? 'error' : 'text'} dimColor={!s.error}>
           {s.error || (data === undefined ? t.loading : t.bandText)}
         </Text>
@@ -531,6 +557,7 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
 
   return (
     <Box flexDirection="column" gap="xs">
+      {head(kit, s, t)}
       <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
         {tab('register', t.register)}
         {tab('log', t.log)}

@@ -133,7 +133,11 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
   })
   on('ui.notify', () => ({ value: { isSent: false, reason: 'no-surface' } }))
   on('ui.invalidate', () => ({ value: undefined }))
-  on('fs.read', (_, e) => ({ value: `---\nid: x\n---\n# Body of ${e.path}\n` }))
+  on('fs.read', (_, e) => ({
+    value: e.path.endsWith('.svg')
+      ? '<svg xmlns="http://www.w3.org/2000/svg" width="203.1" height="52" viewBox="0 0 203.1 52"><g transform="scale(1)"><path fill="#E6EDF3" d="M0 0H9V9H0Z"/></g></svg>'
+      : `---\nid: x\n---\n# Body of ${e.path}\n`,
+  }))
   on('process.run', (_, e) => {
     seen.argv.push([...e.argv])
     const reply = e.argv[2] === 'overview' ? read() : { ok: true }
@@ -199,6 +203,19 @@ test('a docket project opens the pane, sets the status line and lists specs unde
     expect(await ui.find({ type: 'Text', text: /Without a concept/ })).toBeDefined()
     expect((await ui.find({ key: 'all-c-11112222' }))?.text).toBe('Implement all ready (2)')
     expect(await ui.find({ type: 'Text', text: /Done 1/ })).toBeDefined()
+
+    // The head: the logo where the surface draws vectors, the name as text on the terminal.
+    const logo = await ui.find({ type: 'Svg' })
+
+    if (surface === 'desktop') {
+      expect(logo?.props.alt).toBe('docket')
+      expect(String(logo?.props.source)).toContain('class="f" fill="#8B949E"')
+      expect(String(logo?.props.source)).toContain('prefers-color-scheme:dark')
+    } else {
+      expect(logo).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: /^docket$/ })).toBeDefined()
+    }
+
     await ui.unmount()
   }
 })

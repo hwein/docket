@@ -29,6 +29,7 @@ const S: PaneState = {
   supersedeBy: '',
   isOnlyOpen: false,
   notice: '',
+  logo: '',
   picked: [],
 }
 
@@ -359,7 +360,22 @@ const hiddenRoots = async ($: EngineInterface): Promise<string[]> => {
   return Array.isArray(stored) ? stored.filter((root): root is string => typeof root === 'string') : []
 }
 
+// The foreground of the logo follows the surface's light or dark scheme where it honours the style; the
+// attribute beside it is a grey that reads on both where it does not.
+const LOGO_STYLE = '<style>.f{fill:#1F2328}@media (prefers-color-scheme:dark){.f{fill:#E6EDF3}}</style>'
+
+const readLogo = async ($: EngineInterface): Promise<string> => {
+  try {
+    const svg = await $.fs.read(`${$.plugin.root}/assets/logo-dark.svg`)
+
+    return svg.replaceAll('fill="#E6EDF3"', 'class="f" fill="#8B949E"').replace('<g ', `${LOGO_STYLE}<g `)
+  } catch {
+    return ''
+  }
+}
+
 const boot = async ($: EngineInterface): Promise<void> => {
+  S.logo = await readLogo($)
   isBandHidden = (await hiddenRoots($)).includes(await $.session.root())
   await refresh($)
 
