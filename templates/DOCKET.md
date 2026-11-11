@@ -15,6 +15,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |
 | user_language | `<language of every message to the user, e.g. "Deutsch" or "English"; not the repo's language; the hooks' own lines follow it>` | question 12 |
 | ci | `<how CI is waited for and read, or "none">` | |
+| commit_records | `<"yes": the hook commits docket's records at the end of a run where they lie inside another repository (only their folder, never a push); unset: the closing message names the two commands>` | question 7 |
 | push_branch | `<regex the pushed branch must match, e.g. "feature/.*" or "main">` | question 1 |
 | commit_regex | `<regex for the first line of a commit message; escape pipes as \|>` | question 2 |
 | forbidden_paths | `<comma-separated globs no agent writes, e.g. "secrets/**, .env">` | question 10 |

@@ -347,9 +347,9 @@ def plan_problem(paths, tool_input):
 
 
 def closing_decision(paths, session_id):
-    """Whether the rendered closing message asks a decision (its `Entscheidung:` / `Decision:` line)."""
+    """Whether the rendered closing message puts something to the user (its `Empfehlung …:` / `Advice …:` line)."""
     text = read_text(closing_path(paths, session_id))
-    return bool(re.search(r"^(Entscheidung|Decision):", text, re.MULTILINE))
+    return bool(re.search(r"^(Empfehlung|Advice)\b[^:\n]*:", text, re.MULTILINE))
 
 
 def ask(reason):

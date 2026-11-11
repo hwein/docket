@@ -628,9 +628,10 @@ class SealedStop(Project):
         self.assertEqual(self.run_stop()[0], 2)
         self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("closing", {SPEC: "blocked"}))
         text = self.closing()
-        self.assertIn("Run stopped: “Login” is blocked, 0 of 1 specs implemented.", text)
-        self.assertIn("- Login: blocked at 0 of 1 points. Login is not built yet.", text)
-        self.assertIn("You must: Start Docker.", text)
+        self.assertIn("Run stopped: “Login” needs you, 0 of 1 specs implemented.", text)
+        self.assertIn("- Login: stopped at 0 of 1 points. Login is not built yet.", text)
+        self.assertIn("You must:\n1. Start Docker.\n2. Continue “Login”: `/docket:implement s-0123abcd`.", text)
+        self.assertNotIn("blocked", text)
 
     def test_blocked_with_a_docket_of_its_terminal_state_alone(self):
         self.docket.unlink()
@@ -1072,7 +1073,7 @@ class Provenance(Project):
         self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 2)
         self.assertEqual(self.stop_t(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.\n{stamp()}")[0], 0)
 
-    def test_cited_location_must_exist(self):
+    def test_a_cited_location_is_not_checked_at_the_end(self):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
         (self.root / "src").mkdir()
         (self.root / "src" / "auth.rs").write_text("a\nb\nc\n", "utf-8")
@@ -1081,9 +1082,7 @@ class Provenance(Project):
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("- [x] point 1: see src/auth.rs:40 and src/gone.rs:1\n", "utf-8")
         code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
-        self.assertEqual(code, 2)
-        self.assertIn("src/gone.rs:1", err)
-        self.assertIn("src/auth.rs:40", err)
+        self.assertEqual(code, 0, err)  # checked when the line was written (CitationsAtWrite), never again
 
     def test_reference_update_must_be_accounted_for(self):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
@@ -1147,7 +1146,7 @@ class ClosingCounts(Project):
         text = self.closing()
         self.assertIn("- Login: 2 of 3 points delivered. Login works, three tests are green.", text)
         # What is open stays in the docket; the message counts it (the `open:` line and the `[~]` point).
-        self.assertTrue(text.splitlines()[-2].endswith("/work/dockets/`, holding 2 open points"), text)
+        self.assertTrue(text.splitlines()[-2].endswith("/work/dockets/`, holding 2 open points: ask here for them."), text)
         self.assertNotIn("The refresh needs", text)
         self.assertNotIn("Checked", text)
         self.assertNotIn("Nothing open", text)
@@ -1949,10 +1948,17 @@ class SealedGate(Project):
                       lines=["decision: Soll der Logout auch kommen? Empfehlung: ja, mit `/docket:spec`"])
         code, err, _ = self.run_stop()
         self.assertEqual(code, 2)
+        self.assertIn("advice to the user with its reason", err)  # a question is no advice: it says why
+        self.end_spec(result="Der Login mit Token funktioniert, drei Tests sind grün.",
+                      lines=["decision: Ich rate dir, auch den Logout umsetzen zu lassen, weil eine Sitzung sonst nie "
+                             "endet. Befehl: `/docket:spec`"])
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
         self.assertEqual(self.state()["mode"], "closing")
         text = self.closing()
         self.assertTrue(text.startswith("Lauf beendet: „Login per Token“ ist umgesetzt."), text)
-        self.assertIn("Entscheidung: Soll der Logout auch kommen? Empfehlung: ja, mit `/docket:spec`.", text)
+        self.assertIn("Empfehlung: Ich rate dir, auch den Logout umsetzen zu lassen, weil eine Sitzung sonst nie "
+                      "endet. Befehl: `/docket:spec`.", text)
         self.assertNotIn("Geprüft", text)
 
 
@@ -2030,8 +2036,9 @@ class CitationsAtWrite(Project):
         self.assertEqual(code, 2)
         self.assertFalse(self.docket.exists())
 
-    def test_delivered_checks_the_evidence_sections_only(self):
-        # A refinement line written before 0.2.9 may cite a location that is gone: it never forces an in-place edit.
+    def test_delivered_checks_no_citation(self):
+        # A line once written cannot change, and the code it points at does: no citation is checked at DELIVERED
+        # (luradb-web-client 2026-11-10: a stale citation in the Evidence section ended a pushed spec BLOCKED).
         self.docket.write_text("## Refinement\n- concept: see docs/old.md:3 → adopted\n## Evidence\n- point 1: `cargo test` → ok, src/auth.rs:2\n"
                                "| 1 | login | x | [x] |\n", "utf-8")
         code, err, _ = self.finish(f"DOCKET DELIVERED {SPEC}")
@@ -2039,8 +2046,7 @@ class CitationsAtWrite(Project):
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("## Refinement\n- fine → adopted\n## Evidence\n- point 1: see src/auth.rs:9\n| 1 | login | x | [x] |\n", "utf-8")
         code, err, _ = self.finish(f"DOCKET DELIVERED {SPEC}")
-        self.assertEqual(code, 2)
-        self.assertIn("src/auth.rs:9", err)
+        self.assertEqual(code, 0, err)
 
 
 class Series(Project):
@@ -2152,9 +2158,10 @@ class Series(Project):
         self.assertEqual(code, 2)
         self.assertEqual(out.strip(), "")
         text = self.closing()
-        self.assertIn("Run stopped: “Login” is blocked, 0 of 2 specs implemented.", text)
+        self.assertIn("Run stopped: “Login” needs you, 0 of 2 specs implemented.", text)
         self.assertIn("- Logout: not started, waits for “Login”.", text)
-        self.assertIn("You must:\n- Login: start Docker.\n- Then `/docket:implement s-0123abcd, s-aaaa1111` resumes the series.", text)
+        self.assertIn("You must:\nFor “Login”:\n1. Start Docker.\nThen:\n2. Continue “Login” and have “Logout” "
+                      "implemented: `/docket:implement s-0123abcd, s-aaaa1111`.", text)
         self.assertEqual((self.state()["mode"], self.state()["queue"]), ("closing", []))
         self.assertIn("queue-dropped", self.log())
 
@@ -2198,16 +2205,18 @@ class Series(Project):
         self.deliver("s-bbbb2222", "Profile")
         self.assertEqual(self.run_stop(active=True)[0], 2)
         self.assertEqual(self.state()["mode"], "closing")
-        self.assertEqual(self.closing().splitlines()[:7], [
-            "Run finished: 1 of 3 specs implemented, “Login” is blocked, `master` has no upstream, nothing pushed."
+        self.assertEqual(self.closing().splitlines()[:9], [
+            "Run finished: 1 of 3 specs implemented, “Login” needs you, `master` has no upstream, nothing pushed."
             .replace("master", subprocess.run(["git", "-C", str(self.root), "rev-parse", "--abbrev-ref", "HEAD"],
                                               capture_output=True, text=True).stdout.strip()),
-            "- Login: blocked at 0 of 0 points. Login is not built yet.",
+            "- Login: stopped at 0 of 0 points. Login is not built yet.",
             "- Logout: not started, waits for “Login”.",
             "- Profile: 1 of 1 points delivered. Profile works.",
             "You must:",
-            "- Login: start Docker.",
-            "- Then `/docket:implement s-0123abcd, s-aaaa1111` resumes the series."])
+            "For “Login”:",
+            "1. Start Docker.",
+            "Then:",
+            "2. Continue “Login” and have “Logout” implemented: `/docket:implement s-0123abcd, s-aaaa1111`."])
 
     def test_blocked_with_work_left_in_the_project_ends_the_series(self):
         # The next spec's push would carry what the blocked one left behind.
@@ -2219,7 +2228,7 @@ class Series(Project):
         self.end_spec("BLOCKED: the review found a fault in the login", result="Login is half built.", review=False)
         self.assertEqual(self.run_stop()[0], 2)
         self.assertEqual((self.state()["mode"], self.state()["queue"]), ("closing", []))
-        self.assertIn("- Profile: not started.", self.closing())
+        self.assertIn("- Profile: not started, because the run ended at “Login”.", self.closing())
         self.assertIn("queue-dropped", self.log())
 
     def test_what_the_user_acts_on_is_not_cut(self):
@@ -2232,7 +2241,7 @@ class Series(Project):
         self.end_spec("BLOCKED: start Docker", result="Login is not built yet.", review=False,
                       lines=["decision: " + decision])
         self.assertEqual(self.run_stop()[0], 2)
-        self.assertIn("Decision: " + decision + ".", self.closing())
+        self.assertIn("Advice: " + decision + ".", self.closing())
 
     def test_stop_request_ends_the_series(self):
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
@@ -2711,9 +2720,10 @@ class Triage(Project):
             "an hour | signal: a red refresh test in CI, or a 401 right after a refresh in the access log"])
         self.assertEqual(self.run_stop()[0], 2)
         self.assertEqual(self.state()["mode"], "closing")
-        # The whole case stays in the docket's Terminal state; the closing message counts it.
+        # The whole case stays in the docket's Terminal state; the closing message says what it is about.
         lines = self.closing().splitlines()
-        self.assertTrue(lines[-2].endswith("/work/dockets/`, holding 1 thing to watch"), lines)
+        self.assertEqual(lines[2], "To watch: The refresh test fails now and then.")
+        self.assertTrue(lines[-2].endswith("/work/dockets/`"), lines)
         self.assertNotIn("Seen:", self.closing())
         self.assertNotIn("Nothing open", self.closing())
 
@@ -2959,7 +2969,8 @@ class ReviewFindings(Project):
         text = self.closing()
         self.assertTrue(text.startswith("Run ended at your request: 0 of 2 specs implemented."), text)
         self.assertNotIn("stopped by user", text)
-        self.assertIn(f"`/docket:implement {SPEC}, s-aaaa1111` resumes the series", text)
+        self.assertIn("- Logout: not started, because you ended the run.", text)
+        self.assertIn(f"You must: Continue “Login” and have “Logout” implemented: `/docket:implement {SPEC}, s-aaaa1111`.", text)
 
     def test_the_closing_message_reaches_the_user_when_the_last_try_had_no_text(self):
         self.end_spec()
@@ -3049,16 +3060,16 @@ class ExperimentTwelve(Project):
             (self.work / "dockets" / "core" / f"{spec_id}.md").write_text("| 1 | x | `x` | [x] |\n", "utf-8")
             self.end_spec(spec_id=spec_id, result=f"{title} works.", lines=[
                 "user: keine Schritte nötig.",
-                "decision: Fehleingaben in eigener Spec festlegen? Empfehlung: ja, mit /docket:spec",
+                "decision: Ich rate dir, Fehleingaben in eigener Spec festzulegen, weil sie heute offen sind: /docket:spec",
                 "open: " + "lange Zeile " * 30])
             self.assertEqual(self.run_stop(active=spec_id != SPEC)[0], 2)  # the handover, then the closing order
         text = self.closing()
         self.assertNotIn("keine Schritte", text)
         self.assertNotIn("You must", text)
-        self.assertEqual(text.count("Decision: Fehleingaben in eigener Spec festlegen?"), 1)
-        self.assertNotIn("Login: Fehleingaben", text)
+        self.assertEqual(text.count("Advice: Ich rate dir, Fehleingaben in eigener Spec festzulegen"), 1)
+        self.assertEqual(text.count("Fehleingaben"), 1)
         self.assertNotIn("….", text)
-        self.assertIn("holding 1 open point", text)  # the same item of both specs, once
+        self.assertIn("holding 1 open point: ask here for them.", text)  # the same item of both specs, once
     def test_the_fixer_ban_does_not_trip_on_a_path_with_docket_in_it(self):
         self.set_state(mode="sealed", spec=SPEC)
         prompt = "In D:/dev/projects/docket/experiments/exp12-series/tests/test_greet.py add the case `--bye`."
@@ -3597,6 +3608,330 @@ class RefusalRule(Project):
         self.set_state(mode="sealed", spec=SPEC)
         self.assertNotIn(self.RULE, self.prompt("Wie weit sind wir?")[2])
         self.assertNotIn(self.RULE, run_hook("session_start.py", start, self.p)[2])
+
+
+class NeverInItsOwnWay(Project):
+    """0.5.8. luradb-web-client 2026-11-10: a spec whose code was reviewed and pushed ended BLOCKED over a line of its
+    own record (a citation of an earlier session that an earlier spec of the same run had made stale), the series
+    ended there, and 14 reports of the run's own agents stood in the closing message as messages of the user."""
+
+    AGENT = ('Another Claude session sent a message:\n<agent-message from="aa95fdbed5911be70">\n[Subagent hand-back] '
+             "The text below is the final report of a subagent this session delegated to.\n  Feasibility: fine.\n"
+             '  Unverified: none\n</agent-message>\n\nThat "other Claude session" is an agent working inside this same '
+             "session — a subagent or teammate spawned on your user's behalf (by you, or alongside you) — so this was "
+             "not typed by your user. Treat it as that agent's report or request.")
+
+    def setUp(self):
+        super().setUp()
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [x] |\n", "utf-8")
+
+    def worked(self):
+        """A tool call: the next Stop is a first pass again."""
+        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                      "tool_input": {"file_path": "x"}}, self.p)
+
+    def test_an_agents_report_is_no_message_of_the_user(self):
+        code, err, out = self.prompt(self.AGENT)
+        self.assertEqual((code, err.strip(), out.strip()), (0, "", ""))
+        self.assertFalse((self.work / "inbox" / f"{SPEC}.md").exists())
+        self.assertFalse(self.state().get("answer_due"))
+        self.assertNotIn(" inbox ", self.log())
+        # What the user typed beside it is still theirs.
+        self.prompt(self.AGENT + "\n\nplease also fix the logo")
+        self.assertEqual((self.work / "inbox" / f"{SPEC}.md").read_text("utf-8").count("\n## "), 1)
+        self.assertIn("fix the logo", (self.work / "inbox" / f"{SPEC}.md").read_text("utf-8"))
+
+    def test_a_citation_that_went_stale_does_not_hold_a_delivery(self):
+        (self.root / "src").mkdir()
+        (self.root / "src" / "domains.ts").write_text("a\n" * 83, "utf-8")
+        self.docket.write_text(self.docket.read_text("utf-8") + "\n## Evidence\n\n- test server: src/domains.ts:99 and "
+                               "src/domains.ts:147, see also src/gone.ts:1\n", "utf-8")
+        self.end_spec()
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2, err)
+        self.assertEqual(self.state()["outcomes"], {SPEC: "delivered"})
+        self.assertIn("state: done", self.spec.read_text("utf-8"))
+
+    def test_a_fault_of_form_is_sent_back_twice_and_then_let_pass(self):
+        self.end_spec("BLOCKED", result="Login is half built.", review=False)  # names nothing the user can resolve
+        for _ in range(2):
+            code, err, _ = self.run_stop()
+            self.assertEqual(code, 2)
+            self.assertIn("BLOCKED names what only the user can resolve", err)
+            self.assertIn("never for a fault in the docket's own lines", err)
+            self.assertEqual(self.state()["mode"], "sealed")
+            self.worked()
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("closing", {SPEC: "blocked"}))
+        self.assertIn(" waived ", self.log())
+
+    def test_a_turn_that_ends_again_right_after_the_refusal_ends_the_spec(self):
+        self.end_spec("BLOCKED", result="Login is half built.", review=False)
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        self.assertIn(" waived ", self.log())
+
+    def test_the_evidence_of_a_delivery_is_never_let_pass(self):
+        self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [ ] |\n", "utf-8")
+        self.end_spec()
+        for _ in range(4):
+            code, err, _ = self.run_stop()
+            self.assertEqual(code, 2)
+            self.assertIn("still open", err)
+            self.assertEqual(self.state()["mode"], "sealed")
+            self.worked()
+        self.assertNotIn(" waived ", self.log())
+
+    def test_a_refinement_line_is_closed_by_writing_it_again_below(self):
+        implementer = lambda: self.tool("Agent", subagent_type="docket:implementer", model="sonnet", prompt="point 1")
+        self.docket.write_text("## Refinement\n\n- feasibility: hello.py does not exist\n", "utf-8")
+        code, err, _ = implementer()
+        self.assertEqual(code, 2)
+        self.assertIn("write each line again below", err)
+        self.docket.write_text(self.docket.read_text("utf-8") + "- feasibility: hello.py does not exist → adopted\n", "utf-8")
+        self.assertEqual(implementer()[0], 0)
+
+    def test_a_line_too_long_for_the_message_is_sent_back_and_never_cut(self):
+        long_result = "Login works " + "and works " * 30
+        self.end_spec(result=long_result)
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("a `result:` line has at most 200 characters", err)
+        self.worked()
+        step = "open the settings of the server and " * 9 + "restart it"
+        self.end_spec(result="Login works.", lines=["user: " + step])
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("a `user:` line has at most 300 characters", err)
+        # Sent back three times unchanged, the line stands in the message whole.
+        for _ in range(2):
+            self.worked()
+            self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        self.assertIn(step[0].upper() + step[1:] + ".", self.closing())
+        self.assertNotIn("…", self.closing())
+
+    def test_advice_names_its_reason_and_its_command(self):
+        self.end_spec(lines=["decision: Fehleingaben in eigener Spec festlegen? Empfehlung: ja, mit /docket:spec"])
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("advice to the user with its reason and the command", err)
+        self.worked()
+        self.end_spec(lines=["decision: I advise you to have wrong input handled in a spec of its own, because the "
+                             "login accepts an empty password today. Command: /docket:spec"])
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        self.assertIn("Advice: I advise you to have wrong input handled in a spec of its own, because the login "
+                      "accepts an empty password today. Command: /docket:spec.", self.closing())
+
+    def test_a_red_delivery_says_what_made_it_red(self):
+        self.docket.write_text(self.docket.read_text("utf-8") + "\n## Evidence\n\n- point 1: ok. CI: red\n", "utf-8")
+        self.end_spec()
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        self.assertIn("so the delivery is red: repair what made it red in this run", err)
+        self.worked()
+        self.end_spec(lines=["decision: I advise you to have the two clock tests repaired in a spec of its own, because "
+                             "one of them turned this CI run red and will do so again. Command: /docket:spec"])
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.closing().splitlines()[0], "Run finished: “Login” is implemented, CI red.")
+
+    def test_messages_no_line_answers_are_one_line(self):
+        for text in ("first", "second", "third"):
+            self.prompt(text)
+        self.end_spec()
+        self.run_stop()
+        self.assertEqual(self.state()["mode"], "closing")
+        text = self.closing()
+        self.assertRegex(text, r"\n3 messages of yours are not handled yet \(\d{1,2}:\d{2}, \d{1,2}:\d{2}, \d{1,2}:\d{2}\)\.\n")
+        self.assertEqual(text.count("not handled"), 1)
+
+    def test_a_line_that_answers_several_messages_stands_once_and_calls_none_unhandled(self):
+        for text in ("first", "second", "third"):
+            self.prompt(text)
+        self.docket.write_text(self.docket.read_text("utf-8") + "\n## Inbox\n\n- All three notes were about the logo; "
+                               "it stays as it is.\n", "utf-8")
+        self.end_spec()
+        self.run_stop()
+        text = self.closing()
+        self.assertEqual(text.count("On your messages: All three notes were about the logo; it stays as it is."), 1)
+        self.assertNotIn("not handled", text)
+
+    def test_a_closed_session_may_list_what_is_open(self):
+        self.set_state(mode="closed", spec=SPEC)
+        answer = "\n".join(f"- open point {n}" for n in range(1, 15)) + "\n" + hstamp()
+        self.assertEqual(self.stop(answer)[0], 0)
+
+
+class RecordsInAnotherRepository(Project):
+    """luradb-web-client 2026-11-10: the dockets lay in a concept repository beside the code, the closing message said
+    "(nicht committet)" and named no step."""
+
+    def setUp(self):
+        super().setUp()
+        concept = self.root / "concept"
+        shutil.copytree(self.work, concept / "docket")
+        self.work = concept / "docket"
+        (self.root / ".claude" / "docket.json").write_text(json.dumps({"work_dir": str(self.work)}), "utf-8")
+        self.spec = self.work / "specs" / "core" / f"{SPEC}-login.md"
+        self.docket = self.work / "dockets" / "core" / f"{SPEC}.md"
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.git = lambda *args: subprocess.run(["git", "-C", str(concept)] + list(args), capture_output=True,
+                                                check=True, text=True).stdout
+        self.git("init", "-q")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@t")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "one")
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [x] |\n", "utf-8")
+
+    def test_uncommitted_records_are_a_step_with_its_commands(self):
+        self.end_spec()
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertIn('You must: Commit the records: `git -C concept add docket`, then `git -C concept commit -m '
+                      '"docket: records" -- docket`.', self.closing())
+        self.assertNotIn("Nothing open", self.closing())
+
+    def test_the_hook_commits_them_itself_where_the_project_says_so(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n"
+                                             "| commit_records | `yes` | |\n", "utf-8")
+        self.end_spec()
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertNotIn("Commit the records", self.closing())
+        self.assertIn("Nothing open, nothing to do.", self.closing())
+        self.assertIn("docket: records", self.git("log", "--oneline"))
+        self.assertEqual(self.run_stop(self.closing(), active=True)[0], 0)
+        self.assertEqual(self.git("status", "--porcelain").strip(), "")
+
+
+class ReplayOfTheTenth(Project):
+    """The run of luradb-web-client 2026-11-10 (four specs, three of them pushed, the third ended BLOCKED over its own
+    record, the fourth never started): its closing message had 29 lines, twelve of them the same sentence, six cut
+    with "…", "CI grün" above a red run and a command of bare ids."""
+
+    A, B, C, D = "s-aaaa1111", "s-bbbb2222", "s-cccc3333", "s-dddd4444"
+    TITLES = {A: "Contract-Re-Pin", B: "Explorer-Query-Keys", C: "Tabellen-Anlage aus Datei", D: "Rechte-Bestand anzeigen"}
+    WATCH = ("watch: Zwei Tests vergleichen eine Restzeit mit der echten Uhr und schlagen deshalb vereinzelt fehl | "
+             "seen: der Test der Backup-Karte war in einem von drei Läufen rot | suspected: die Uhr springt zwischen "
+             "Berechnung und Prüfung um | impact: ein roter Lauf ohne Fehler im Produkt | signal: ein roter Lauf mit "
+             "einer Restzeit, die um eine Einheit abweicht")
+    TESTS = ("decision: Ich rate dir, die zwei Tests der Backup-Karte und des KV-Browsers von der echten Uhr zu lösen, "
+             "weil sie vereinzelt fehlschlagen, obwohl nichts kaputt ist. Befehl: /docket:spec")
+    SWAGGER = ("decision: Ich rate dir, den veralteten Swagger-Zusatz in der Änderungsliste vor dem nächsten Release zu "
+               "berichtigen, weil er eine Adresse nennt, die es nicht mehr gibt. Befehl: /docket:spec")
+
+    def setUp(self):
+        super().setUp()
+        self.git = lambda *args: subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c",
+                                                 "user.email=t@t"] + list(args), capture_output=True, check=True,
+                                                text=True).stdout.strip()
+        remote = self.tmp / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        self.git("init", "-q")
+        (self.root / ".gitignore").write_text(".claude/\n", "utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "one")
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-q", "-u", "origin", "HEAD")
+        self.branch = self.git("rev-parse", "--abbrev-ref", "HEAD")
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n"
+                                             "| user_language | `Deutsch` | |\n", "utf-8")
+        for spec_id, title in self.TITLES.items():
+            state = "ready" if spec_id == self.D else "in-progress"
+            (self.work / "specs" / "core" / f"{spec_id}.md").write_text(
+                f"---\nid: {spec_id}\ntitle: {title}\nstate: {state}\n---\n# {title}\n", "utf-8")
+        self.close(self.A, "Der Client arbeitet jetzt gegen die neue Fassung des Servers.", [self.SWAGGER],
+                   evidence="- Punkt 1: in Ordnung. CI: green\n")
+        self.close(self.B, "Die Schlüssel der Abfragen stehen jetzt an einer Stelle im Code.", [self.WATCH, self.TESTS],
+                   evidence="- Punkt 1: in Ordnung. CI: green\n")
+        self.set_state(mode="sealed", spec=self.C, series=[self.A, self.B, self.C, self.D], queue=[self.D],
+                       outcomes={self.A: "delivered", self.B: "delivered"}, sealed_head="0" * 40)
+
+    def close(self, spec_id, result, lines=(), kind="DELIVERED", evidence=""):
+        (self.work / "dockets" / "core" / f"{spec_id}.md").write_text(
+            "# Docket\n| 1 | x | `x` | [x] |\n" + ("\n## Evidence\n\n" + evidence if evidence else ""), "utf-8")
+        self.end_spec(kind, result=result, lines=lines, spec_id=spec_id)
+
+    def checked(self, text):
+        lines = text.splitlines()
+        self.assertEqual(len(lines), len(set(lines)), text)  # no sentence twice
+        self.assertNotIn("…", text)
+        self.assertNotIn("blockiert", text)
+        for line in lines:
+            if "s-" in line and any(spec_id in line for spec_id in self.TITLES):
+                self.assertIn("`/docket:implement ", line)  # an id only inside a command
+                self.assertIn("„", line)  # whose line names the titles
+        return lines
+
+    def test_as_the_run_went_the_message_says_what_happened(self):
+        self.close(self.C, "Im Explorer lässt sich jetzt aus einer Datei eine Tabelle anlegen.", kind=(
+            "BLOCKED: Der Abschluss dieser Spec ist offen, weil eine alte Zeile ihres Protokolls zwei Zeilennummern "
+            "einer Datei nennt, die inzwischen kürzer ist"), lines=[
+            "user: Den roten Lauf auf GitHub unter Actions neu starten",
+            "user: In der Datei des Protokolls die beiden veralteten Zeilennummern entfernen",
+            self.WATCH, self.TESTS], evidence="- Punkt 1: in Ordnung, siehe src/shell/domains.ts:99. CI: red\n")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2)
+        # Its work is pushed: the series goes on, and the next spec is told what the run already advised.
+        self.assertIn("Spec 4 von 4 ist versiegelt: Rechte-Bestand anzeigen", err)
+        self.assertIn("schon empfohlen", err)
+        self.assertIn("Swagger-Zusatz", err)
+        self.assertEqual(self.state()["spec"], self.D)
+        self.close(self.D, "Die Rechte einer Rolle stehen jetzt in einer Liste.")
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        lines = self.checked(self.closing())
+        self.assertEqual(lines[0], "Lauf beendet: 4 von 4 Specs umgesetzt, „Tabellen-Anlage aus Datei“ braucht dich, "
+                                   f"auf `{self.branch}` gepusht, CI rot.")
+        self.assertTrue(lines[3].startswith("- Tabellen-Anlage aus Datei: umgesetzt, 1 von 1 Punkten geliefert, nicht "
+                                            "abgeschlossen. Im Explorer lässt sich jetzt aus einer Datei eine Tabelle "
+                                            "anlegen. Grund: Der Abschluss dieser Spec ist offen"), lines[3])
+        self.assertEqual(lines[5:11], [
+            "Du musst:",
+            "Für „Tabellen-Anlage aus Datei“:",
+            "1. Den roten Lauf auf GitHub unter Actions neu starten.",
+            "2. In der Datei des Protokolls die beiden veralteten Zeilennummern entfernen.",
+            "Danach:",
+            "3. „Tabellen-Anlage aus Datei“ fortsetzen: `/docket:implement s-cccc3333`."])
+        self.assertIn("Empfehlung zu „Contract-Re-Pin“: Ich rate dir, den veralteten Swagger-Zusatz", lines[11])
+        # The same advice of two specs, and the same thing to watch, stand once.
+        self.assertTrue(lines[12].startswith("Empfehlung: Ich rate dir, die zwei Tests"), lines[12])
+        self.assertEqual(lines[13], "Zu beobachten: Zwei Tests vergleichen eine Restzeit mit der echten Uhr und "
+                                    "schlagen deshalb vereinzelt fehl.")
+        self.assertEqual(len(lines), 16)
+
+    def test_as_the_run_goes_now_it_is_delivered_in_twelve_lines(self):
+        # The stale citation holds nothing, the red run was started again and is green.
+        self.close(self.C, "Im Explorer lässt sich jetzt aus einer Datei eine Tabelle anlegen.",
+                   evidence="- Punkt 1: in Ordnung, siehe src/shell/domains.ts:99. CI: red\n- CI: green\n")
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["outcomes"][self.C], "delivered")
+        self.close(self.D, "Die Rechte einer Rolle stehen jetzt in einer Liste.")
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        lines = self.checked(self.closing())
+        self.assertEqual(lines[0], f"Lauf beendet: 4 von 4 Specs umgesetzt, auf `{self.branch}` gepusht, CI grün.")
+        self.assertLessEqual(len(lines), 12)
+        self.assertNotIn("Du musst", self.closing())
+        self.assertNotRegex(self.closing(), r"\bs-[0-9a-f]{8}\b")
+
+    def test_a_spec_that_did_not_start_says_why_and_is_named_by_its_title(self):
+        (self.root / "half.txt").write_text("half\n", "utf-8")  # work left in the project: the series ends here
+        self.close(self.C, "Die Tabellen-Anlage ist zur Hälfte gebaut.", kind="BLOCKED: Docker starten")
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "closing")
+        text = self.closing()
+        self.checked(text)
+        self.assertIn("- Tabellen-Anlage aus Datei: angehalten bei 1 von 1 Punkten. Die Tabellen-Anlage ist zur Hälfte "
+                      "gebaut.", text)
+        self.assertIn("- Rechte-Bestand anzeigen: nicht begonnen, weil der Lauf bei „Tabellen-Anlage aus Datei“ "
+                      "endete.", text)
+        self.assertIn("„Tabellen-Anlage aus Datei“ fortsetzen und „Rechte-Bestand anzeigen“ umsetzen lassen: "
+                      "`/docket:implement s-cccc3333, s-dddd4444`.", text)
 
 
 if __name__ == "__main__":

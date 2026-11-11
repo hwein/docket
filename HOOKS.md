@@ -10,7 +10,9 @@ Hooks check provenance, form and state, never content. This is the mechanics beh
 - The docket is append-only: after every edit each previous line must still be there, in order; a checkbox flip
   `[ ]` to `[x]` or `[~]` and filling a placeholder are the only in-place changes.
 - A docket line that cites a `file:line` which does not exist is undone at once (the snapshot is restored, a
-  skeleton removed), so no citation has to be corrected in place later.
+  skeleton removed). A citation is checked at that moment and never again: the line stays, the code moves on.
+- A line is corrected by writing it again below: of two lines the later one counts, in the Refinement, Triage and
+  Review sections and for the Terminal state block.
 - `LOG.md` is written by hooks only: sealed, point-delivered, deviation, delivered, blocked, dissent, grants,
   judge verdicts.
 
@@ -21,26 +23,55 @@ DELIVERED, BLOCKED or DISSENT, `result:`, `open:`, `watch:`, `user:`, `decision:
 ids or hashes; the last block counts. The Stop hook accepts DELIVERED only if every command of the project's check (as
 many as the project has, listed in `DOCKET.md`) ran after the last agent returned and none failed in its last run;
 the command of every delivered point's acceptance line (`<command> → <expected>`) ran after the last implementer or
-fixer returned and did not fail in its last run; every `file:line` cited in the docket's Evidence, Deviations and
-Reference update sections exists; every reference doc the spec names is marked `updated` (and changed since
-sealing) or `not needed`; every refinement line and every review line carries a decision, and the review holds
-(below); with `ci` configured, a `CI: <state> <hash>` line names a hash reachable from HEAD
-after a push in this session. Otherwise the run goes on until it holds. An accepted end closes the spec, writes its
-metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts the closing. The series goes on
-after DELIVERED, and after BLOCKED or DISSENT when the project is as it was at the spec's sealing (`sealed_head`,
-`untouched_since`: no commit and no uncommitted change outside docket's own folders); a spec that left work behind
-ends the series, since the next spec's push would carry it. A queued spec whose predecessor is not done is passed
-over (LOG `passed-over`) and named in the closing message with what it waits for.
+fixer returned and did not fail in its last run; every reference doc the spec names is marked `updated` (and
+changed since the spec's first sealing) or `not needed`; every refinement line and every review line carries a
+decision, and the review holds (below); with `ci` configured, the last `CI: <state> <hash>` line names a hash
+reachable from HEAD after a push in this session. Otherwise the run goes on until it holds. An accepted end closes
+the spec, writes its metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts the closing.
+The series goes on after DELIVERED, and after BLOCKED or DISSENT when the spec left nothing in the project that the
+next spec's push would carry: the project is as it was at the spec's sealing (`sealed_head`, `untouched_since`), or
+everything is pushed and the tree is clean. A queued spec whose predecessor is not done is passed over (LOG
+`passed-over`) and named in the closing message with what it waits for.
+
+## docket never stands in its own way
+
+A run ends without DELIVERED only for what the project lacks or what only the user can do. The record is never
+such a reason (luradb-web-client 2026-11-10: a spec whose code was reviewed and pushed ended BLOCKED because a
+line of an earlier session cited two line numbers of a file that had since become shorter; the series ended there
+and the next spec never started):
+
+- No check at the end of a spec reads a line that can no longer be changed against a state that has moved on: no
+  citation is checked at DELIVERED, a reference doc counts from the spec's first sealing, and of the CI lines the
+  last one counts.
+- What the Terminal state lacks in form (a line too long for the closing message, a missing part of a `watch:`
+  line, advice without its reason, an id or a hash, a red CI line without a word about it) is sent back to be
+  written again below. Sent back the third time unchanged, or when the turn ends again right after the refusal,
+  the hook lets the spec end as written (LOG `waived`). The evidence of a DELIVERED is never let pass.
+- A red CI run is the run's to make green, also when its cause lies outside the order (implement command, step 4).
 
 ## The closing message
 
 When the last spec of a run has ended, or the series ended at a BLOCKED or DISSENT spec, or the user stopped the
-run, the hook renders the run's one message from the dockets, the LOG and git: one line for the run (whether the
-work is pushed and CI green), one line per spec by its title with its points and result (a spec not started with
-what it waits for), then only what the user acts on: what only the user can do, which decision is due and with
-which command (neither cut below 400 characters), what came of the user's notes. The last line names where the
-dockets are and counts what they hold beyond that: the `open:` lines and deviations, and the `watch:` lines of the
-Terminal state. The orchestrator sends it verbatim; the display gate shows nothing else, and after three misses it
+run, the hook renders the run's one message from the dockets, the LOG and git:
+
+- one line for the run: how many specs are implemented, whether the work is pushed, the CI state of the last spec
+  that has one (red stays red, whatever state that spec ended in);
+- one line per spec by its title with its points and result. A spec that needs the user is not called blocked: it
+  is "stopped at x of n points", or, with every point done and its work pushed, "implemented, not closed". A spec
+  that did not start says why (it waits for a predecessor, the run ended at another spec, the user stopped it);
+- what the user does, as numbered steps under the spec they belong to: its `user:` lines, or what it stopped at;
+  then the specs to take up again, by their titles, with the one command that does it (an id stands nowhere else),
+  and, where docket's records lie uncommitted inside another repository, the two commands that commit them
+  (`commit_records: yes` in `DOCKET.md` lets the hook do it; it never pushes);
+- each `decision:` line as advice with its reason, once for the whole run;
+- each `watch:` line by its first part, what it is about;
+- what came of the user's messages: each with its Inbox line; messages no line answers are one line with their
+  count. A report an agent hands back to the session is no message of the user (`agent-message`);
+- where the dockets are, and how many `open:` lines and deviations they hold: the session answers from the dockets
+  after the run, so the user asks there for them.
+
+No line is cut: a line too long for the message is refused when the Terminal state is written. No sentence stands
+twice. The orchestrator sends the message verbatim; the display gate shows nothing else, and after three misses it
 shows the rendered text itself. The session is closed afterwards.
 
 ## Project rules

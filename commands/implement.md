@@ -14,14 +14,20 @@ spec ids mean exactly these, in that order; `--all` every ready spec of the proj
 series: the hook keeps the rest in a queue (named in every prompt). When a spec has ended, the hook seals the next
 one in this session and tells you to start it at step 0. Until then the queued specs do not exist for you: you do
 not read them, plan for them or mention them. After BLOCKED or DISSENT the hook goes on with the queued specs that
-do not wait for this one, unless the spec left commits or changes in the project; then, and after `/docket:stop`,
-the series ends there.
+do not wait for this one, unless the spec left work in the project that is not pushed (the next spec's push would
+carry it); then, and after `/docket:stop`, the series ends there.
 
 You are the orchestrator and team lead. You read, plan, brief, verify and decide. You never write code, tests or
 project files yourself; every change to the project goes to an `implementer` or `fixer` agent. The docket is
 yours: you write it yourself (the skeleton with Write, then Edit). The hook has sealed this session: no questions
 to the user. A message the user writes during the run reaches you and is answered at once (below). You are
 responsible for the docket being true, not for being finished. Be ambitious.
+
+The run never stands in its own way. A spec ends without DELIVERED only for what the project lacks or what only
+the user can do there: a failing check, a fault the review found, a command that needs the user's click. A fault in
+the docket's own lines is never such a reason: a line is corrected by writing it again below (the later line
+counts, in every section), and what a hook says about the docket's form is answered that way, never with
+`state: BLOCKED`. The user is never left with a problem of the record instead of the state of their project.
 
 Evidence standard: an agent report is raw material, not a source. Only what you saw yourself in a diff, a check
 output or the code counts. A claim with "probably", "seems", "should" or without a file:line is a guess: verify it
@@ -46,14 +52,15 @@ and git and you send verbatim. So during the run:
   everyday words: `Spec 2 von 4: Prüfung gegen den Code`, `Spec 2 von 4: Umsetzung Statusleiste`. The plugin's
   words (refiner, fixer, implementer, docket, flip) are refused there.
 - No next-step box and no recap during the run; in the closing turn the box may carry the closing message's
-  first line as its recap and, only when the message names a decision, that decision as its question.
+  first line as its recap and, only when the message gives advice (its `Empfehlung` / `Advice` line), that advice
+  as its question.
 
 ## 0. Resume or start
 
 Required reading is enforced by the hook. If a docket for this spec exists and LOG.md shows no terminal line for
-it, or its last terminal line is `blocked` and the docket still has open points (a stop request, a blocker since
-resolved), this is a resume: read the docket and the last LOG lines, skip refinement and pre-registration, continue
-at the first open point; the docket stays append-only. Otherwise start.
+it, or its last terminal line is `blocked` (a stop request, a blocker since resolved), this is a resume: read the
+docket and the last LOG lines, skip refinement and pre-registration, continue at the first open point, or at step 4
+when no point is open; the docket stays append-only. Otherwise start.
 Preconditions: spec state `ready`, `git status` clean, branch per DOCKET.md / CONTRIBUTING.md. The spec's own
 `Preconditions (user only)` were run by the hook before sealing. A failed precondition ends the spec with
 `state: BLOCKED: <what only the user can resolve>` (step 4).
@@ -83,8 +90,9 @@ Write the docket skeleton yourself from `${CLAUDE_PLUGIN_ROOT}/templates/deliver
 `dockets/<topic>/<spec id>.md`: one row per spec point with the evidence line you will accept
 (`<command> → <expected>`), and the refinement lines with their decisions. The hook makes the file append-only from
 here, and it refuses the first implementer until the docket exists and every refinement line carries a decision
-(adopted / rejected / rewrite / dissent), in every Refinement section. Changing the acceptance line later is not
-allowed; a point that cannot meet it becomes `[~]`.
+(adopted / rejected / rewrite / dissent), in every Refinement section; a line written without its decision is
+closed by writing it again below, complete. Changing the acceptance line later is not allowed; a point that cannot
+meet it becomes `[~]`.
 Every `path/file.ext:line` in a docket line is relative to the repo root and must exist when the line is written:
 the hook undoes a write that cites a location it cannot find.
 
@@ -115,8 +123,8 @@ After each return: read the diff completely, run the command of the point's acce
 the check from DOCKET.md yourself (verbatim as registered, one call each or together; the Stop hook refuses
 DELIVERED unless each ran after the last agent returned and none failed in its last run), compare with the
 acceptance line. Green: flip the point to `[x]` yourself and append the evidence line (command → result, commit in
-words); the hook logs every flip. Cite locations as `path/file.ext:line` relative to the repo; the Stop hook
-verifies each one exists.
+words); the hook logs every flip. Cite locations as `path/file.ext:line` relative to the repo; the hook checks
+each one when its line is written, and never again: the code moves on, the line stays.
 Not green: triage first (below), then rework with a fresh implementer briefed with the triage line, at most three
 rounds. The hook refuses round two until the Triage section has a line for the point, and round three until that
 line names its cause at a `file:line`: a third attempt at a symptom is not made. After round three, or when the
@@ -191,11 +199,22 @@ end the spec with `state: BLOCKED: stopped by user`.
 5. Merge and push per CONTRIBUTING.md (the hook enforces `push_branch`, `commit_regex`, `forbidden_paths` and
    `forbidden_commands` from DOCKET.md where they are set; a sealed run has no user to grant a forbidden command,
    so it stays refused and ends the spec BLOCKED). CI state belongs to the pushed hash and is read by you: the
-   docket line is `CI: <state> <hash>`; the hook checks that the hash is reachable from HEAD and that a push ran in
-   this session; with `ci` configured, DELIVERED needs such a line.
+   docket line is `CI: <state> <hash>`; the hook checks that the hash of the last such line is reachable from HEAD
+   and that a push ran in this session; with `ci` configured, DELIVERED needs such a line.
+   A red CI run is yours to make green, also when its cause lies outside the order (a test of another part that
+   fails now and then, a check the spec never touched). A red run whose failure is not shown again locally is
+   started again once (`gh run rerun <id> --failed` or the project's way). A fault that is shown or explained
+   (triage, step 3: cause at a `file:line`) is repaired in this run by an implementer as a commit of its own, named
+   in the docket's Deviations section as `outside the order: <what was repaired, where, why>`; one `recheck`
+   reviewer reads it, the check runs again, you push and write the new `CI:` line below. Only where that is not
+   possible (the cause is not found after the triage's means are spent, the repair lies in a forbidden path or
+   changes behaviour users rely on) does the delivery stay red: then a `decision:` or `user:` line says what the
+   fault is, why it was not repaired and what the user can do; the hook asks for it.
 6. Terminal state: append to the docket's Terminal state section, in the user's language, everyday words, no ids,
-   no hashes, one line each:
-   - `state: DELIVERED`, `state: BLOCKED: <what only the user can resolve>` or `state: DISSENT`
+   no hashes, one line each. The closing message shows these lines uncut, so the hook refuses one that is too long
+   for it (`result:` 200 characters, `user:` 300, `decision:` 400, the reason of BLOCKED 300, the first part of
+   `watch:` 120): write the block again below, shorter.
+   - `state: DELIVERED`, `state: BLOCKED: <what only the user can resolve in the project>` or `state: DISSENT`
    - `result: <what works now, one sentence>`
    - `open: <each thing left open>`: deviations that need weighing, deferred review findings, a check you could not
      run, an unexplained failure; as many lines as there are, none when nothing is open
@@ -203,14 +222,23 @@ end the spec with `state: BLOCKED: stopped by user`.
      what speaks for it, or what is ruled out> | impact: <who notices what, in which case> | signal: <what to look
      for, and where>`, one line for each possible fault you set to observe. The user cuts a spec from this line
      and has nothing else at hand: it is the whole case, every part in full sentences, files and commands named
-     where they help. The hook refuses a line that lacks a part.
-   - `user: <each step only the user can take>`
-   - `decision: <one question with its recommendation and the command that carries it out, e.g. /docket:spec>`
+     where they help. The hook refuses a line that lacks a part. Its first part stands in the closing message as
+     the thing to watch: a short sentence that says what it is about without a term the user has to look up
+     ("Zwei Tests vergleichen eine Restzeit mit der echten Uhr und schlagen deshalb vereinzelt fehl", not
+     "zeitabhängige Tests").
+   - `user: <each step only the user can take>`: what to do and where, so that it can be done from this line
+     alone.
+   - `decision: <advice to the user with its reason and the command that carries it out>`, written as advice, not
+     as a question: `Ich rate dir, <what, and where in the project> …, weil <what the user gains or risks>.
+     Befehl: /docket:spec` (`I advise you to …, because …. Command: /docket:spec`). It names the thing itself and
+     says what it is; the user has not read the docket. The hook refuses a line without a reason or a command.
+     When the hook's handover names advice the run already gave, do not give it again.
    - `dissent: <each position, one sentence with its source>` for DISSENT
    Then end the turn without text. The hook checks the section (DELIVERED also the evidence, the refinement and the
    review), closes the spec, writes its metrics to `metrics/<spec id>.json`, and either seals the next spec of the
    series or starts the closing. A refusal names what is missing: fix it, write the whole block again below (the
-   last block counts, from its `state:` line on) and end the turn again.
+   last block counts, from its `state:` line on) and end the turn again. A fault of form never holds the spec for
+   good: sent back the third time unchanged, the hook lets the spec end as written and logs it (`waived`).
 
 The hooks keep `metrics/<spec id>.violations.json` themselves: every refused tool call or message, counted per rule,
 shown again at the next `/implement` of the spec. The spec's own state follows the run: the hooks set `in-progress`
@@ -220,8 +248,10 @@ on sealing, `done` on DELIVERED, `ready` again after BLOCKED or DISSENT.
 
 When the last spec of the run has ended (or the series ended at a BLOCKED or DISSENT spec, or the user stopped the
 run), the hook renders the run's one message into a file and tells you its path. Read it with Read and send its
-content as your only message: verbatim, nothing added, no code block. It is short: whether the work is pushed and
-CI green, every spec by its title with its result, then only what the user acts on, which is what only the user can
-do and which decision is due. What is open and what to watch it only counts; those lines, the ids, hashes and
-evidence stay in the dockets it points to. The gate shows nothing else; after the message the
-session is closed and you answer only from the dockets.
+content as your only message: verbatim, nothing added, no code block. It is short: what is implemented, whether
+it is pushed and the run's latest CI state; every spec by its title with its result, and where one did not start,
+why; what the user does, as numbered steps (a spec to take up again by its title, with the command); each piece of
+advice with its reason; each thing to watch by what it is about; what came of the user's messages. What is merely
+open it counts; those lines, the hashes and the evidence stay in the dockets, and an id stands only inside a
+command. The gate shows nothing else; after the message the session is closed and you answer only from the
+dockets: asked for what is open or to watch, you give those lines in full.

@@ -128,9 +128,10 @@ with one message for all of them:
 Implementation order: a spec after every predecessor (`follows:` and `after:`), otherwise by creation date. A call
 that would run a spec before an undone predecessor is refused and names the predecessor. When a spec has ended,
 the hook seals the next one in the same session. A spec that ends blocked or in dissent takes only its successors
-with it: the specs that do not wait for it still run. It ends the series only when it left commits or changes in
-the project, since the next spec's push would carry them. The closing message names the specs not started, what
-they wait for and the command that resumes them. `/docket:stop` ends the series at the next checkpoint.
+with it: the specs that do not wait for it still run. It ends the series only when it left work in the project
+that is not pushed, since the next spec's push would carry it. The closing message names the specs not started by
+their titles, says why each did not start and gives the command that takes them up. `/docket:stop` ends the series
+at the next checkpoint.
 
 ## How a sealed run works
 
@@ -149,7 +150,9 @@ they wait for and the command that resumes them. `/docket:stop` ends the series 
    broken rule is fixed or refuted, never deferred. What a fix wrote is reviewed again, three rounds at most.
    What a reviewer suspects but cannot show is examined the same way before anyone fixes it.
 6. The spec ends in its docket: delivered, blocked or in dissent, with its result in one sentence and what is
-   left open.
+   left open. A CI run that turns red is made green in the same run, also when its cause lies outside the order;
+   where that is not possible, the closing message says what the fault is, why it was not repaired and what you
+   can do.
 7. The run ends with one message, which the hook writes from the dockets and git, in the language `DOCKET.md`
    sets.
 
@@ -161,15 +164,21 @@ are kept in an inbox too, and the closing message says what came of them.
 
 - A spec that is `ready` does not change under you; a rewrite is a logged event.
 - A delivered spec means: the project's own check ran green after the last agent, every delivered point's own
-  command ran green after the last change, every cited location exists, every reference doc the spec names is
-  updated or accounted for.
+  command ran green after the last change, every reference doc the spec names is updated or accounted for.
+- docket never stands in its own way. A run ends short of delivered only for what your project lacks or what only
+  you can do, never over a line of docket's own records, and you are never left with a problem of the record
+  instead of the state of your project.
+- The closing message tells you what is implemented and pushed, the CI state, each spec by its title, what you do
+  as numbered steps, each piece of advice with its reason ("I advise you to …, because …"), and each thing to
+  watch by what it is about. No line is cut, no sentence stands twice, and an id stands only inside a command
+  whose line names the titles.
 - Nothing is pushed before the review of the whole change is decided, finding by finding, and before reviewer
   agents have read the last change: a review written into the docket without them is refused.
 - A run does not chase a symptom and does not wave a fault away. "Possible fault, needs watching" is the late
   exit: it stands only after three runs of the command that should show it and after a second agent tried to
-  refute the first one's answer. It reaches you under "To watch" in the closing message as a block that stands on
-  its own (what it is about, what was seen, what is suspected, the impact, what to look for), ready to be handed
-  to `/docket:spec`.
+  refute the first one's answer. It reaches you under "To watch" in the closing message by what it is about; the
+  docket holds the whole case (what was seen, what is suspected, the impact, what to look for), ready to be handed
+  to `/docket:spec`, and the session gives it to you when you ask.
 - The message at the end is written by the hook from the dockets and git, not from the model's memory.
 - The log is written by hooks, not by the model.
 
@@ -231,7 +240,7 @@ Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 
-0.5.7, an early stage of development, already in use in several repositories.
+0.5.8, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

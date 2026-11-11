@@ -23,6 +23,7 @@ tool call) is let through and logged; in a run it tells the user in one line tha
 The user has read a message by the time this hook runs, so a refusal never asks to repeat a message the user saw;
 only a message the display gate (message_display.py) held back is written again in full.
 """
+import hashlib
 import json
 import os
 import posixpath
@@ -33,14 +34,14 @@ from datetime import datetime, timedelta
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (FILE_LINE, JUDGE_ACK, Paths, acceptance_problems, agent_returns, box_questions,
-                        check_commands, claim_lock, review_run_problem,
+from docket_lib import (FILE_LINE, JUDGE_ACK, TERMINAL_LIMITS, Paths, acceptance_problems, agent_returns,
+                        box_questions, check_commands, ci_state, claim_lock, commit_records, review_run_problem,
                         closing_path, collect_judge, frontmatter,
                         config_values, hook_outputs, language_problem, load_state, log_event, log_lines, log_time,
-                        message_text, missing_citations, normalized_lines, notice, observed, point_counts,
+                        message_text, normalized_lines, notice, observed, point_counts,
                         review_lines, triage_lines, watch_parts, WATCH_PARTS,
                         open_predecessors, position, previous_turn_texts, project_head, read_input, read_text,
-                        refinement_problem, refuse, untouched_since,
+                        refinement_problem, refuse, repo_facts, untouched_since,
                         release_lock, render_closing, resume_judge, review_problem, save_display, save_state, say,
                         section_text, session_live, lock_holder, set_context, set_spec_state, settled_display,
                         spec_title, take_lock, terminal_base, terminal_section, text_of, transcript_blocks,
@@ -69,13 +70,17 @@ ROADMAP = re.compile(r"\b(next,? i will|afterwards i will|then i will|als n[äa]
 PROPOSAL = re.compile(r"\b(i suggest|i propose|should we|shall i|vorschlag|soll ich|wollen wir)\b", re.IGNORECASE)
 SELF = re.compile(r"\b(sorry|apologi[sz]e|my mistake|my fault|took me|i spent|this took|hours of work|"
                   r"entschuldig\w*|tut mir leid|mein fehler|leider)\b", re.IGNORECASE)
-# Sections of the docket whose citations are checked at DELIVERED; refinement lines were checked when written.
-EVIDENCE_SECTIONS = ("Evidence", "Deviations", "Reference update")
+# A `decision:` line is advice with its reason (V15).
+BECAUSE = re.compile(r"\b(weil|denn|because|since)\b", re.IGNORECASE)
+# How often the same faults of form in a Terminal state are sent back before the hook lets the spec end with them.
+FORM_TRIES = 3
 BLOCKER =re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\b", re.IGNORECASE)
 BLOCKER_UNCHANGED = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?blocker\s+(?:unver[äa]ndert|unchanged)(?:\*\*)?[.!]?\s*$",
                                re.IGNORECASE)
 TOLERANCE = timedelta(minutes=5)
-MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 8}
+# closed: the session answers from the dockets, and the closing message sends the user here for what is open
+# (luradb-web-client 2026-11-10: 14 open points behind a count), so an answer may be a list.
+MAX_LINES = {"concept": 30, "spec": 30, "init": 40, "closed": 30}
 CLOSING_TRIES = 3
 # The display gate holds messages back in these modes; in a run it replaces every text with the hook's status
 # line, and in closing it shows only the rendered closing message.
@@ -184,9 +189,10 @@ def run_stop(paths, session_id, state, hook_input):
     if text and TERMINAL.match(lines_of(text)[0]):
         problems.append(say(paths, "docket_message"))
     if terminal["kind"]:
-        problems += terminal_problems(terminal, spec_id, paths, hook_input)
-        if not problems:
+        form, evidence = terminal_problems(terminal, spec_id, paths, hook_input)
+        if not problems and not evidence and (not form or waived(paths, session_id, state, spec_id, form, hook_input)):
             return end_spec(paths, session_id, state, terminal["kind"], transcript)
+        problems += form + evidence
     elif not problems:
         problems.append(say(paths, "no_terminal"))
     if bool(hook_input.get("stop_hook_active")) and state.get("refused"):
@@ -203,13 +209,33 @@ def run_stop(paths, session_id, state, hook_input):
     return refuse("[docket] " + say(paths, "not_finished", problem="; ".join(problems)))
 
 
+def waived(paths, session_id, state, spec_id, form, hook_input):
+    """docket never stands in its own way (luradb-web-client 2026-11-10: a spec whose code was reviewed and pushed
+    ended BLOCKED over a line of its own record, and the spec after it never started). What a Terminal state lacks
+    in form (a line too long, a missing part, a word) is sent back to be written again below; when the same faults
+    come back the third time, or the turn ends again right after the refusal, the hook lets the spec end as the
+    docket states it and logs what it let pass. The evidence of a DELIVERED is never let pass: that is the project,
+    not the record."""
+    key = hashlib.sha1("\n".join(sorted(form)).encode("utf-8")).hexdigest()[:12]
+    seen = state.get("form_refusals") or {}
+    count = int(seen.get("n", 0)) + 1 if seen.get("key") == key else 1
+    if count >= FORM_TRIES or (bool(hook_input.get("stop_hook_active")) and state.get("refused")):
+        state.pop("form_refusals", None)
+        log_event(paths, session_id, spec_id, "waived", "; ".join(form)[:160])
+        return True
+    state["form_refusals"] = {"key": key, "n": count}
+    return False
+
+
 def _cut(text, limit=50):
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
 def terminal_problems(terminal, spec_id, paths, hook_input):
-    """The end of a spec as the docket states it. Its lines go into the run's closing message, so they are in the
-    user's language and carry no ids or hashes; DELIVERED needs the evidence."""
+    """The end of a spec as the docket states it, as (form, evidence). Form: its lines go into the run's closing
+    message, so they are in the user's language, carry no ids or hashes, are complete and short enough to stand
+    there uncut; every one of these is corrected by writing the block again below, and none of them holds a spec
+    for good (`waived`). Evidence: what a DELIVERED rests on in the project."""
     kind = terminal["kind"]
     problems = []
     if not terminal["result"]:
@@ -218,10 +244,29 @@ def terminal_problems(terminal, spec_id, paths, hook_input):
         problems.append("BLOCKED names what only the user can resolve: `state: BLOCKED: <that>` or a `user:` line")
     if kind == "dissent" and not (terminal["reason"] or terminal["dissent"]):
         problems.append("DISSENT names both positions: `dissent:` lines, one sentence each with its source")
-    if any("/docket:" not in line for line in terminal["decision"]):
-        problems.append("a `decision:` line asks one question with its recommendation and names the command that "
-                        "carries it out (`/docket:spec`, `/docket:concept`)")
+    if any("/docket:" not in line or not BECAUSE.search(line) for line in terminal["decision"]):
+        problems.append("a `decision:` line is advice to the user with its reason and the command that carries it "
+                        "out, in everyday words: `decision: Ich rate dir, <what, and where in the project> …, weil "
+                        "<what the user gains or risks>. Befehl: /docket:spec` (`I advise you to …, because …`); "
+                        "no term the user would have to look up, the thing itself is named and said what it is")
+    # The closing message never cuts a line: what is too long for it is shortened here, by the one who wrote it.
+    sized = ([("result", terminal["result"]), ("state: BLOCKED", terminal["reason"])]
+             + [("user", value) for value in terminal["user"]]
+             + [("decision", value) for value in terminal["decision"]]
+             + [("watch", watch_parts(value)["subject"]) for value in terminal["watch"]])
+    for name, value in sized:
+        limit = TERMINAL_LIMITS["reason" if name.startswith("state") else name]
+        if len(" ".join(value.split())) > limit:
+            what = "the first part of a `watch:` line (what it is about)" if name == "watch" else f"a `{name}:` line"
+            problems.append(f"{what} has at most {limit} characters, since the closing message shows it uncut; `"
+                            + _cut(value) + f"` has {len(' '.join(value.split()))}: write the block again below, "
+                            "that line shorter")
     body = read_text(paths.docket_file(spec_id))
+    if kind == "delivered" and ci_state(body) == "red" and not (terminal["user"] or terminal["decision"]):
+        problems.append("the docket's last CI line is red, so the delivery is red: repair what made it red in this "
+                        "run, also when the fault lies outside the order (implement command, step 4), push, and "
+                        "write the new `CI:` line; where that is not possible, a `user:` or `decision:` line says in "
+                        "everyday words what the fault is, why it was not repaired and what the user can do")
     watched = [line for line in list(triage_lines(body).values()) + review_lines(body) if observed(line)]
     if watched and not terminal["watch"]:
         problems.append(f"the docket sets {len(watched)} possible fault(s) to `observe` and the Terminal state has no "
@@ -244,21 +289,21 @@ def terminal_problems(terminal, spec_id, paths, hook_input):
         problems.append("no spec or concept ids in the Terminal state lines: name the title")
     problems += [p.replace("the message is", "the Terminal state is") for p in language_problem(prose, paths)]
     if kind != "delivered":
-        return problems
+        return problems, []
     docket = paths.docket_file(spec_id)
     if docket is None:
-        return problems + ["the docket file does not exist"]
-    body = read_text(docket)
+        return problems, ["the docket file does not exist"]
+    evidence = []
     open_points = point_counts(body)[" "]
     if open_points:
-        problems.append(f"{open_points} docket point(s) still open `[ ]`; each needs `[x]` with evidence or `[~]` "
+        evidence.append(f"{open_points} docket point(s) still open `[ ]`; each needs `[x]` with evidence or `[~]` "
                         "with a deviation line")
-    problems += provenance_problems(body, spec_id, paths, hook_input)
+    evidence += provenance_problems(body, spec_id, paths, hook_input)
     for problem in (refinement_problem(paths, spec_id), review_problem(paths, spec_id),
                     review_run_problem(paths, spec_id, hook_input.get("transcript_path"))):
         if problem:
-            problems.append(problem.replace("[docket] ", "", 1))
-    return problems
+            evidence.append(problem.replace("[docket] ", "", 1))
+    return problems, evidence
 
 
 def end_spec(paths, session_id, state, kind, transcript):
@@ -273,8 +318,14 @@ def end_spec(paths, session_id, state, kind, transcript):
     write_metrics(paths, spec_id, transcript, kind)  # before the LOG line: its commit carries the metrics
     log_event(paths, session_id, spec_id, kind, "spec closed")
     state.setdefault("outcomes", {})[spec_id] = kind
+    state.pop("form_refusals", None)
     queue = [s for s in (state.get("queue") or []) if s]
-    goes_on = kind == "delivered" or untouched_since(paths, state.get("sealed_head", ""))
+    # A spec that ended without DELIVERED holds the series only while it has work lying in the project that the
+    # next spec's push would carry: with everything pushed and the tree clean there is nothing to carry
+    # (luradb-web-client 2026-11-10: the third spec's work was pushed, and the fourth never started).
+    git = repo_facts(paths)
+    settled = bool(git) and bool(git["upstream"]) and git["ahead"] == 0 and not git["dirty"]
+    goes_on = kind == "delivered" or settled or untouched_since(paths, state.get("sealed_head", ""))
     if goes_on and not state.get("stop_requested"):
         while queue:
             following = queue.pop(0)
@@ -293,6 +344,11 @@ def end_spec(paths, session_id, state, kind, transcript):
             set_spec_state(paths, following, "in-progress")
             i, n = position(state)
             order = say(paths, "handover", i=i, n=n, title=spec_title(paths, following) or following, spec=following)
+            # What the run already advised the user stands once in the closing message (luradb-web-client
+            # 2026-11-10: two specs asked for the same small spec in different words).
+            advised = [line for done in state["outcomes"] for line in terminal_section(paths, done)["decision"]]
+            if advised:
+                order += say(paths, "handover_known", items=" | ".join(dict.fromkeys(advised)))
             return notice("[docket] " + order)
     if queue:
         log_event(paths, session_id, spec_id, "queue-dropped", ", ".join(queue))
@@ -302,6 +358,7 @@ def end_spec(paths, session_id, state, kind, transcript):
 
 def start_closing(paths, session_id, state):
     log_event(paths, session_id, state.get("spec", ""), "closing")  # first: a work dir of its own is committed
+    commit_records(paths)  # DOCKET.md `commit_records`: records inside another repository, before the message counts
     text = render_closing(paths, state)
     path = closing_path(paths, session_id)
     try:
@@ -358,6 +415,7 @@ def finish_run(paths, session_id, state, forced):
     log_event(paths, session_id, state.get("spec", ""), "run-closed", "forced" if forced else "")
     if resume_judge(paths, session_id):
         log_event(paths, session_id, state.get("spec", ""), "judge-resumed")
+    commit_records(paths)  # the LOG lines of the closing itself
     return 0
 
 
@@ -384,11 +442,16 @@ def provenance_problems(body, spec_id, paths, hook_input):
 
     1. Every command of the project's check (DOCKET.md `check`, as many as the project has) ran in this session
        after the last agent returned, alone or together with others, and its last run did not fail.
-    2. Every file:line the docket cites exists and has that many lines.
-    3. Every reference doc the spec names is marked in the docket as updated (and the file changed
-       after sealing) or as not needed.
-    4. The command of every delivered point's acceptance line ran after the last implementer or fixer returned
+    2. Every reference doc the spec names is marked in the docket as updated (and the file changed
+       after the spec's first sealing) or as not needed.
+    3. The command of every delivered point's acceptance line ran after the last implementer or fixer returned
        and did not fail in its last run (V16).
+
+    A `file:line` the docket cites is checked when its line is written (post_tool_use), never here: a line once
+    written cannot change, and the code it points at does. luradb-web-client 2026-11-10: a line of an earlier
+    session cited two lines of a file that an earlier spec of the same run had shortened; DELIVERED was refused
+    twice, the correction was undone twice as a breach of append-only, and a spec whose code was pushed ended
+    BLOCKED.
     """
     problems = []
     blocks = transcript_blocks(hook_input.get("transcript_path"))
@@ -409,26 +472,21 @@ def provenance_problems(body, spec_id, paths, hook_input):
             elif runs[-1][1].get("id") in failed:
                 problems.append(f"the check `{command}` failed in its last run; the point is not delivered")
     problems += acceptance_problems(paths, spec_id, body, hook_input.get("transcript_path"))
-    # Citations are checked when a docket line is written (post_tool_use, the write is undone otherwise); here only
-    # the evidence sections, so an old refinement line never forces an in-place edit of an append-only docket
-    # (luradb-web-client 2026-11-06: three DELIVERED attempts, seven append-only violations).
-    evidence = "\n".join(section_text(body, title) for title in EVIDENCE_SECTIONS)
-    missing = missing_citations(evidence if evidence.strip() else body, paths)
-    if missing:
-        problems.append("cited locations that do not exist: " + ", ".join(missing))
     problems += reference_problems(body, spec_id, paths)
     problems += ci_problems(body, paths, blocks)
     return problems
 
 
 def ci_problems(body, paths, blocks):
-    """A CI state belongs to a pushed hash: every hash on a CI line of the docket is reachable from HEAD,
-    and a `git push` ran in this session. With `ci` configured in DOCKET.md, DELIVERED needs such a line."""
+    """A CI state belongs to a pushed hash: the hash on the docket's last CI line is reachable from HEAD, and a
+    `git push` ran in this session. With `ci` configured in DOCKET.md, DELIVERED needs such a line. Only the last
+    line counts: the docket is append-only, and the hash of an earlier line (an earlier session, a commit since
+    squashed) may be gone for good."""
     import subprocess
     problems = []
     hashes = []
     for line in CI_LINE.findall(body):
-        hashes += HASH.findall(line)
+        hashes = HASH.findall(line) or hashes
     ci = config_values(paths).get("ci", "")
     if ci and ci.lower() != "none" and not hashes:
         problems.append("DOCKET.md configures CI: the docket needs a `CI: <state> <pushed hash>` line per delivered point")
@@ -466,7 +524,8 @@ def reference_problems(body, spec_id, paths):
         cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")] if line.strip().startswith("|") else []
         if len(cells) >= 2 and cells[0] and cells[0].lower() not in ("file", "none") and not re.fullmatch(r":?-+:?", cells[0]):
             files.append(cells[0])
-    sealed_at = max((log_time(line) or 0 for line in log_lines(paths, spec_id) if " sealed " in line), default=0)
+    # The first sealing: a spec taken up again in a later session updated its docs in the earlier one.
+    sealed_at = min((log_time(line) or 0 for line in log_lines(paths, spec_id) if " sealed " in line), default=0)
     problems = []
     lowered = body.lower()
     for name in files:

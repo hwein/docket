@@ -26,7 +26,8 @@ the implementer's model.
 
 ## Refinement
 
-One line per finding: angle, finding, decision (adopted / rejected with reason / to the user as DISSENT).
+One line per finding: angle, finding, decision (adopted / rejected with reason / to the user as DISSENT). A line
+written without its decision is closed by writing it again below, complete.
 
 - 
 
@@ -80,12 +81,13 @@ Messages the user left during the run and what was done with them at the next ch
 ## Terminal state
 
 Written by the orchestrator when the spec ends; then the turn ends without text. One line each, in the user's
-language and everyday words, no ids, no hashes: `state:` DELIVERED, BLOCKED: what only the user can resolve, or
-DISSENT; `result:` what works now, one sentence; `open:` each thing left open (as many lines as there are);
-`watch:` each possible fault set to observe, the whole case in one line the user can cut a spec from
-(`watch: <what it is about> | seen: … | suspected: … | impact: … | signal: …`); `user:` each step only the user can
-take; `decision:` a question with its recommendation and the command that
-carries it out; `dissent:` each position, one sentence with its source. The run's closing message is rendered from
-these lines.
+language and everyday words, no ids, no hashes: `state:` DELIVERED, BLOCKED: what only the user can resolve in the
+project (never a fault in this docket's own lines), or DISSENT; `result:` what works now, one sentence; `open:`
+each thing left open (as many lines as there are); `watch:` each possible fault set to observe, the whole case in
+one line the user can cut a spec from (`watch: <what it is about, a short sentence without a term to look up> |
+seen: … | suspected: … | impact: … | signal: …`); `user:` each step only the user can take, doable from the line
+alone; `decision:` advice with its reason and the command that carries it out (`Ich rate dir, …, weil …. Befehl:
+/docket:spec`); `dissent:` each position, one sentence with its source. The run's closing message is rendered from
+these lines and shows them uncut: `result:` has at most 200 characters, `user:` 300, `decision:` 400.
 
 - 
