@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 HOOKS = Path(__file__).resolve().parent
@@ -25,16 +25,6 @@ def run_hook(script, payload, project_dir):
     result = subprocess.run([sys.executable, str(HOOKS / script)], input=json.dumps(payload).encode("utf-8"),
                             capture_output=True, env=env)
     return result.returncode, result.stderr.decode("utf-8", "replace"), result.stdout.decode("utf-8", "replace")
-
-
-def hstamp(minutes_off=0):
-    when = datetime.now() + timedelta(minutes=minutes_off)
-    return f"stamp: {when:%Y-%m-%d %H:%M}"
-
-
-def stamp(minutes_off=0, counts="1/1"):
-    when = datetime.now() + timedelta(minutes=minutes_off)
-    return f"stamp: {when:%Y-%m-%d %H:%M} {SPEC}" + (f" {counts}" if counts else "")
 
 
 # The judge entry of templates/judge-hook.json at c7cf2b7 (0.5.11), the file 1c.7 removes: test datum of
@@ -95,7 +85,7 @@ class Project(unittest.TestCase):
         return json.loads(path.read_text("utf-8")) if path.exists() else {}
 
     def set_state(self, **fields):
-        base = {"version": 2, "mode": "none", "spec": "", "degraded": False, "read": []}
+        base = {"version": 2, "mode": "none", "spec": ""}
         base.update(fields)
         (self.root / ".claude" / "docket").mkdir(parents=True, exist_ok=True)
         (self.root / ".claude" / "docket" / f"state-{SID}.json").write_text(json.dumps(base), "utf-8")
@@ -144,7 +134,7 @@ class Project(unittest.TestCase):
 
 class SessionStart(Project):
     def test_every_start_names_the_work_dir_and_writes_no_state(self):
-        # 1c.5: the work dir, DOCKET.md and user_language at every source; no degraded, no required reading.
+        # 1c.5: the work dir, DOCKET.md and user_language at every source, and no state file.
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n"
                                              "| user_language | `Deutsch` | |\n", "utf-8")
         config = str(self.work / "DOCKET.md").replace("\\", "/")
@@ -341,7 +331,7 @@ class ModeSwitch(Project):
         for command in ("/docket:concept the next step", "/concept", "/docket:spec", "/spec", "/docket:init"):
             code, err, out = self.prompt(command)
             self.assertEqual(code, 0, err)
-            self.assertIn("Work dir: ", out, command)
+            self.assertIn("work dir: ", out, command)
             self.assertEqual(self.state()["mode"], "none", command)  # 1c.2: no mode for concept, spec, init
 
     def test_builtin_init_and_status_are_not_docket_commands(self):
@@ -387,7 +377,7 @@ class ModeSwitch(Project):
     def test_a_command_that_did_not_take_effect_holds_nothing(self):
         self.spec.write_text(f"---\nid: {SPEC}\nstate: draft\n---\n# Login\n", "utf-8")
         self.prompt("/docket:implement")
-        self.assertNotIn("declined", self.state())
+        self.assertEqual(self.state().get("mode", "none"), "none")
         self.assertEqual(self.tool("Write", file_path=f"{self.p}/a.txt", content="x"), (0, "", ""))
 
     def test_harness_notifications_pass_through_when_sealed(self):
@@ -791,7 +781,7 @@ class Provenance(Project):
             ("user", {"type": "tool_result", "tool_use_id": "a1", "content": "done"}),
             ("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}}),
         ])
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.")
         self.assertEqual(code, 0, err)
 
     def test_check_before_last_agent_return_is_refused(self):
@@ -800,14 +790,14 @@ class Provenance(Project):
             ("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {"prompt": "x"}}),
             ("user", {"type": "tool_result", "tool_use_id": "a1", "content": "done"}),
         ])
-        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
+        code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.")
         self.assertEqual(code, 2)
         self.assertIn("before the last agent returned", err)
 
     def test_check_never_run_is_refused_but_blocked_passes(self):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
-        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 2)
-        self.assertEqual(self.stop_t(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.")[0], 2)
+        self.assertEqual(self.stop_t(f"DOCKET BLOCKED {SPEC}\nno docker\nYou must start Docker.")[0], 0)
 
     def several(self, *commands):
         (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
@@ -820,7 +810,7 @@ class Provenance(Project):
                                     "content": "Exit code 1" if failed else "ok"}))
         self.write_transcript(blocks)
         self.set_state(mode="sealed", spec=SPEC)
-        return self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
+        return self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.")
 
     def test_a_check_of_several_commands_passes_alone_or_together(self):
         self.assertEqual(self.several(("npm run check && npm test", False))[0], 0)
@@ -839,7 +829,7 @@ class Provenance(Project):
     def test_placeholder_check_is_not_a_check(self):
         (self.work / "DOCKET.md").write_text("| check | `<command that exits 0>` | |\n", "utf-8")
         self.write_transcript([("assistant", {"type": "tool_use", "id": "a1", "name": "Agent", "input": {}})])
-        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")[0], 0)
+        self.assertEqual(self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.")[0], 0)
 
 
 class ProjectRules(Project):
@@ -995,6 +985,161 @@ class NoRefusalOutsideTheRules(Project):
                 code, err, out = self.tool(name, **tool_input)
                 self.assertEqual((code, err), (0, ""), (state["mode"], name, tool_input))
                 self.assertNotIn("permissionDecision", out, (state["mode"], name))
+
+
+class HookTexts(Project):
+    """REWORK-SPEC 1e.2 and 1e.3: every text a hook gives comes from the table SAY in docket_lib.py, states a fact and
+    gives no order; evals/refusals.py counts the blocking feedbacks of docket's hooks without an identifier."""
+
+    HOOK_FILES = ("pre_tool_use.py", "post_tool_use.py", "user_prompt.py", "session_start.py", "stop.py")
+    RULE_WORDS = r"(?i)\b(never|must|always|do not|don't|nie|niemals|muss|musst|immer|darfst)\b"
+    ORDERS = ("Continue", "Start", "Read", "Send", "Answer", "Write", "Work", "Run", "Beginne", "Lies", "Sende",
+              "Arbeite", "Schreibe", "Antworte", "Führe")
+    PROTOCOL = ("PreToolUse", "ask")  # values of the hook output's JSON fields, no text
+    LETTER = r"[A-Za-zÄÖÜäöüß]"
+
+    @staticmethod
+    def table():
+        sys.path.insert(0, str(HOOKS))
+        import docket_lib
+        return docket_lib.SAY
+
+    def test_no_entry_is_a_rule_or_an_order(self):
+        import re
+        for language, entries in self.table().items():
+            self.assertEqual(set(entries), set(self.table()["en"]), language)
+            for key, text in entries.items():
+                self.assertIsNone(re.search(self.RULE_WORDS, text), (language, key, text))
+                body = re.sub(r"^\[docket[^\]]*\]\s*", "", text.strip())
+                for sentence in re.split(r"(?<=[.!?;:])\s+", body):
+                    first = (re.findall(r"[\wÄÖÜäöüß]+", sentence) or [""])[0]
+                    self.assertNotIn(first, self.ORDERS, (language, key, sentence))
+
+    def test_no_hook_prints_a_text_of_its_own(self):
+        """Static: what a hook hands to print, refuse, notice or ask holds no string literal with a letter (a JSON
+        field name and the protocol's own values aside), and no file but the table spells an identifier."""
+        import ast
+        for name in self.HOOK_FILES + ("docket_lib.py",):
+            tree = ast.parse((HOOKS / name).read_text("utf-8"))
+            say = next((n for n in tree.body if isinstance(n, ast.Assign)
+                        and getattr(n.targets[0], "id", "") == "SAY"), None)
+            in_table = {id(node) for node in ast.walk(say)} if say else set()
+            docstrings = {id(node.body[0].value) for node in ast.walk(tree)
+                          if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)) and node.body
+                          and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant)}
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Constant) and isinstance(node.value, str) and "[docket" in node.value
+                        and id(node) not in in_table and id(node) not in docstrings):
+                    self.fail(f"{name}:{node.lineno}: an identifier outside the table")
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                called = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+                if called not in ("print", "refuse", "notice", "ask", "write") or name == "docket_lib.py" and called == "write":
+                    continue
+                keys = {id(k) for sub in ast.walk(node) if isinstance(sub, ast.Dict) for k in sub.keys if k is not None}
+                # the names of table entries: say(paths, "<key>"), marked(paths, "<mark>", ...), mark="<mark>"
+                keys |= {id(sub.args[1]) for sub in ast.walk(node) if isinstance(sub, ast.Call)
+                         and getattr(sub.func, "id", "") in ("say", "marked") and len(sub.args) > 1}
+                keys |= {id(k.value) for sub in ast.walk(node) if isinstance(sub, ast.Call)
+                         for k in sub.keywords if k.arg == "mark"}
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Constant) and isinstance(sub.value, str) and id(sub) not in keys
+                            and sub.value not in self.PROTOCOL):
+                        self.assertNotRegex(sub.value, self.LETTER, f"{name}:{sub.lineno}")
+
+    def texts(self, code, err, out):
+        """What the model or the user reads of a hook's answer."""
+        found = [err] if code == 2 else []
+        try:
+            data = json.loads(out)
+        except ValueError:
+            return found + ([out] if out.strip() else [])
+        specific = data.get("hookSpecificOutput") or {}
+        return found + [t for t in (data.get("systemMessage"), specific.get("additionalContext"),
+                                    specific.get("permissionDecisionReason")) if t]
+
+    def residue(self, text, language):
+        """The text with every table entry taken out, its values with it: letters left over are a hook's own."""
+        import re
+        for template in sorted(self.table()[language].values(), key=len, reverse=True):
+            parts = re.split(r"\{\w+\}", template)
+            pattern = "".join(re.escape(part) + ("[^\n]*?" if i < len(parts) - 2 else "[^\n]*" if i == len(parts) - 2
+                                                 else "") for i, part in enumerate(parts))
+            text = re.sub(pattern, " ", text)
+        return text
+
+    def answers(self):
+        """One hook answer of every kind a hook gives: state lines, the four rules and the dialog, the Skill trigger,
+        the gate, the statements of the Stop hook, the line to the user after the second Stop, the series' end."""
+        other = "s-0fedcba9"
+        (self.work / "specs" / "core" / f"{other}-logout.md").write_text(
+            f"---\nid: {other}\nstate: ready\ntitle: Logout\n---\n# Logout\n", "utf-8")
+        found = [run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p),
+                 self.prompt("/docket:status"), self.prompt("/docket:implement s-99999999"),
+                 self.tool("Bash", command="gh workflow run deploy.yml"),
+                 self.prompt(f"/docket:implement {SPEC} {other}"), self.prompt("hello"),
+                 self.tool("Bash", command="gh workflow run deploy.yml"),
+                 self.tool("Bash", command="git push origin main"),
+                 self.tool("Bash", command='git commit -m "login works"'),
+                 self.tool("Write", file_path=f"{self.p}/secrets/key.pem", content="x"),
+                 self.tool("Skill", skill="docket:implement", args=SPEC),
+                 run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "compact"}, self.p),
+                 self.run_stop(), self.run_stop(active=True)]
+        self.docket.write_text("## Points\n\n| # | Point | Acceptance | |\n|---|---|---|---|\n"
+                               "| 1 | login | `pytest` → passed | [x] |\n| 2 | logout | `pytest` → passed | [ ] |\n", "utf-8")
+        found += [self.run_stop()]
+        self.end_spec()
+        found += [self.run_stop(), self.run_stop(active=True)]
+        self.end_spec("BLOCKED: no database")
+        found += [self.run_stop(), run_hook("session_start.py", {"session_id": "other-session", "cwd": self.p,
+                                                                "source": "startup"}, self.p)]
+        return found
+
+    def test_every_text_a_hook_gives_is_made_of_table_entries(self):
+        for language, setting in (("en", "English"), ("de", "Deutsch")):
+            self.tearDown()
+            self.setUp()
+            (self.work / "DOCKET.md").write_text(
+                "| Key | Value | Source |\n|---|---|---|\n| push_branch | `feature/.*` | |\n"
+                "| commit_regex | `feat: ` | |\n| forbidden_paths | `secrets/**` | |\n"
+                f"| forbidden_commands | `gh workflow run` | |\n| user_language | `{setting}` | |\n"
+                "| check | `pytest` | |\n", "utf-8")
+            texts = [t for answer in self.answers() for t in self.texts(*answer)]
+            marks = [t.lstrip()[:15] for t in texts]
+            for mark in ("[docket rule: f", "[docket rule: p", "[docket rule: c", "[docket gate] ", "[docket state] "):
+                self.assertTrue(any(m.startswith(mark) for m in marks), (language, mark, marks))
+            for text in texts:
+                self.assertNotRegex(self.residue(text, language), self.LETTER, (language, text))
+            # and a hook text of its own would be found
+            self.assertRegex(self.residue("[docket] Read the docket first.", language), self.LETTER)
+
+    def test_refusals_counts_the_feedback_of_a_docket_hook_without_an_identifier(self):
+        hook = "s=\"${CLAUDE_PLUGIN_ROOT}/hooks/%s.py\"; [ -f \"$s\" ] || exit 0; p=$(command -v python); \"$p\" \"$s\""
+        error = lambda text: {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
+             "content": f"PreToolUse:Bash hook error: [{hook % 'pre_tool_use'}]: {text}"}]}}
+        entries = [
+            error("[docket rule: push_branch] The push goes to `main`; push_branch in DOCKET.md is `feature/.*`."),
+            {"type": "system", "subtype": "stop_hook_summary",
+             "hookInfos": [{"command": hook % "stop"}, {"command": "lint.sh"}],
+             "hookErrors": [f"[{hook % 'stop'}]: [docket state] The docket of Login (s-0123abcd) has no Terminal "
+                            "state; 1 of 2 points are open.",
+                            "[/home/u/lint.sh]: The linter found 3 problems."]},
+            {"type": "user", "isMeta": True, "message": {"role": "user", "content": (
+                f"Stop hook feedback:\n[{hook % 'stop'}]: [docket state] The docket of Login (s-0123abcd) has no "
+                "Terminal state; 1 of 2 points are open.")}},
+            error("[docket] Writes in this mode are refused."),
+            {"type": "attachment", "attachment": {"type": "hook_success", "command": hook % "post_tool_use",
+                                                  "exitCode": 0, "stdout": "no identifier, no block"}},
+        ]
+        transcript = self.tmp / "session.jsonl"
+        transcript.write_text("\n".join(json.dumps(e) for e in entries) + "\n", "utf-8")
+        result = subprocess.run([sys.executable, str(HOOKS.parent / "evals" / "refusals.py"), str(transcript)],
+                                capture_output=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], "1", result.stdout)
+        self.assertNotIn("refused", result.stdout)  # counts, no text of the feedback
 
 
 class JudgeCleanup(Project):
@@ -1190,7 +1335,6 @@ class Series(Project):
         self.assertNotIn("run-closed", log)
         self.assertIn("state: in-progress", (self.work / "specs" / "core" / "s-aaaa1111-logout.md").read_text("utf-8"))
         self.assertIn("state: done", self.spec.read_text("utf-8"))
-        self.assertFalse((self.work / "metrics" / f"{SPEC}.violations.json").exists())  # the handover is no refusal
         metrics = json.loads((self.work / "metrics" / f"{SPEC}.json").read_text("utf-8"))
         self.assertEqual((metrics["outcome"], metrics["points"]["delivered"]), ("delivered", 1))
         self.assertNotIn("refinement", metrics)
@@ -1791,13 +1935,13 @@ class SessionStateRace(Project):
         prompt = d.load_state(paths, SID)
         prompt.update({"mode": "sealed"})
         d.save_state(paths, SID, prompt)
-        start.update({"degraded": True, "read": []})
+        start.update({"stop_requested": True})
         d.save_state(paths, SID, start)
-        self.assertEqual(self.state(), {"version": 2, "mode": "sealed", "spec": "", "degraded": True, "read": []})
+        self.assertEqual(self.state(), {"version": 2, "mode": "sealed", "spec": "", "stop_requested": True})
 
     def test_a_state_that_could_not_be_read_is_never_written_back(self):
         d, paths = self.lib()
-        self.set_state(mode="sealed", read=["a"])
+        self.set_state(mode="sealed", queue=["a"])
         read_json = d.read_json
         try:
             d.read_json = lambda path, wait=0: (None, "unreadable")
@@ -1805,11 +1949,11 @@ class SessionStateRace(Project):
             self.assertTrue(blind.unreadable)
             blind["clock"] = "2026-11-10 12:53"
             d.save_state(paths, SID, blind)  # the file is still closed to this hook: nothing is written
-            self.assertEqual(self.state(), {"version": 2, "mode": "sealed", "spec": "", "degraded": False, "read": ["a"]})
+            self.assertEqual(self.state(), {"version": 2, "mode": "sealed", "spec": "", "queue": ["a"]})
         finally:
             d.read_json = read_json
         d.save_state(paths, SID, blind)  # readable again: only what the hook changed goes in
-        self.assertEqual((self.state()["mode"], self.state()["read"], self.state()["clock"]),
+        self.assertEqual((self.state()["mode"], self.state()["queue"], self.state()["clock"]),
                          ("sealed", ["a"], "2026-11-10 12:53"))
 
     def test_a_file_held_open_by_another_process_is_read_after_a_wait(self):

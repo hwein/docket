@@ -19,8 +19,8 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import command_line as prompt_command
-from docket_lib import (RUN_MODES, Paths, load_state, log_event, logged_series, mark_run, read_input, run_line,
-                        save_state, say, series_line, strip_harness_blocks, take_handoff, work_dir_line)
+from docket_lib import (RUN_MODES, Paths, load_state, log_event, logged_series, mark_run, marked, read_input,
+                        run_line, save_state, say, series_line, strip_harness_blocks, take_handoff, work_dir_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
 COMMANDS = ("concept", "spec", "implement", "init", "stop", "status", "register")
@@ -48,7 +48,7 @@ def main():
     if not os.path.isfile(paths.config):
         # Not set up: nothing is marked, locked or logged, and no work dir is created.
         if name and name != "init":
-            print("[docket] " + say(paths, "not_set_up", work=paths.work))
+            print(marked(paths, "line", say(paths, "not_set_up", work=paths.work)))
         return 0
 
     lines = [work_dir_line(paths)] if name else []

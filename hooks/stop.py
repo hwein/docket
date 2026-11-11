@@ -25,7 +25,7 @@ import time
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (RUN_MODES, Paths, acceptance_problems, agent_returns, check_commands, claim_lock,
-                        commit_records, frontmatter, load_state, log_event, notice, open_predecessors, point_counts,
+                        commit_records, frontmatter, load_state, log_event, marked, notice, open_predecessors, point_counts,
                         points_summary, project_head, quoted, read_input, read_text, records_commands, refuse,
                         release_lock, repo_facts, run_line, save_state, say, set_spec_state, spec_title, terminal_base,
                         terminal_section, transcript_blocks, untouched_since, waiting, work_dir_dirty, write_metrics)
@@ -62,7 +62,8 @@ def run_stop(paths, session_id, state, hook_input):
         if second:
             return halt(paths, session_id, state, "; ".join(problems))
         mark_refused(paths, session_id, state)
-        return refuse("[docket gate] " + say(paths, "gate", title=title, spec=spec_id, problems="; ".join(problems)))
+        return refuse(marked(paths, "gate", say(paths, "gate", title=title, spec=spec_id,
+                                                problems="; ".join(problems))))
     docket = paths.docket_file(spec_id)
     if docket:
         counts = point_counts(read_text(docket))
@@ -72,7 +73,7 @@ def run_stop(paths, session_id, state, hook_input):
     if second:
         return halt(paths, session_id, state, statement)
     mark_refused(paths, session_id, state)
-    return notice("[docket state] " + statement)
+    return notice(marked(paths, "state", statement))
 
 
 def mark_refused(paths, session_id, state):
@@ -88,7 +89,7 @@ def halt(paths, session_id, state, why):
     log_event(paths, session_id, spec_id, "stop-forced", why[:120])
     line = say(paths, "halted", title=spec_title(paths, spec_id) or spec_id, points=points_summary(paths, spec_id),
                specs=", ".join([spec_id] + list(state.get("queue") or [])))
-    print(json.dumps({"systemMessage": "[docket] " + line}, ensure_ascii=True))
+    print(json.dumps({"systemMessage": marked(paths, "line", line)}, ensure_ascii=True))
     return 0
 
 
@@ -158,7 +159,7 @@ def end_spec(paths, session_id, state, kind, transcript):
             save_state(paths, session_id, state)
             log_event(paths, session_id, following, "sealed", "from queue")
             set_spec_state(paths, following, "in-progress")
-            return notice(run_line(paths, state, mark="[docket state]"))
+            return notice(run_line(paths, state, mark="state"))
     if queue:
         log_event(paths, session_id, spec_id, "queue-dropped", ", ".join(queue))
     state["skipped"] = skipped
@@ -185,7 +186,7 @@ def end_series(paths, session_id, state, last):
     commands = records_commands(paths) if work_dir_dirty(paths) else None
     if commands:
         text += say(paths, "series_records", add=commands[0], commit=commands[1])
-    return notice("[docket state] " + text)
+    return notice(marked(paths, "state", text))
 
 
 def unstarted_reason(paths, spec_id, skipped, stopped, last):

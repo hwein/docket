@@ -17,9 +17,10 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (RUN_MODES, SPEC_ID, Paths, _save_json, is_judge, judge_record_path, load_settings, load_state,
-                        log_event, log_lines, logged_series, point_counts, prune_leftovers, read_input, run_line,
-                        save_settings, say, series_line, session_live, settings_files, work_dir_line)
+from docket_lib import (RUN_MODES, SPEC_ID, Paths, _save_json, is_judge, judge_record_path, load_judge_record,
+                        load_settings, load_state, log_event, log_lines, logged_series, marked, point_counts,
+                        prune_leftovers, read_input, run_line, save_settings, say, series_line, session_live,
+                        settings_files, work_dir_line)
 
 TERMINAL_EVENTS = ("delivered", "blocked", "dissent")
 # SHA-256 of the judge entry (JSON, sorted keys) in every version of templates/judge-hook.json up to 0.5.11: an
@@ -53,7 +54,7 @@ def main():
     spec_id = state.get("spec", "")
     if mode in RUN_MODES and source in ("resume", "compact"):
         log_event(paths, session_id, spec_id, "resumed", f"source={source}")
-    lines = ["[docket] " + say(paths, "session_state", mode=mode, spec=f", {spec_id}" if spec_id else ""),
+    lines = [marked(paths, "line", say(paths, "session_state", mode=mode, spec=f", {spec_id}" if spec_id else "")),
              work_dir_line(paths)] + lines
     if mode in RUN_MODES:
         lines.append(run_line(paths, state))
@@ -65,14 +66,14 @@ def main():
             in_series.update(series["ids"])
         open_runs = [spec for spec in interrupted_runs(paths) if spec not in in_series]
         if open_runs:
-            lines.append("[docket] " + say(paths, "runs_open", ids=", ".join(open_runs)))
+            lines.append(marked(paths, "line", say(paths, "runs_open", ids=", ".join(open_runs))))
         stopped = stopped_runs(paths)
         if stopped:
-            lines.append("[docket] " + say(paths, "runs_stopped", items=", ".join(
-                say(paths, "run_stopped_item", spec=s, n=n) for s, n in stopped)))
+            lines.append(marked(paths, "line", say(paths, "runs_stopped", items=", ".join(
+                say(paths, "run_stopped_item", spec=s, n=n) for s, n in stopped))))
     last = log_lines(paths)[-1:]
     if last:
-        lines.append("[docket] " + say(paths, "last_log", line=last[0]))
+        lines.append(marked(paths, "line", say(paths, "last_log", line=last[0])))
     print("\n".join(lines))
     return 0
 
@@ -122,13 +123,7 @@ def remove_judge(paths):
         changes.append((path, settings, raw))
         sources.append(name)
     suspended = judge_record_path(paths)
-    record = None
-    if os.path.isfile(suspended):
-        try:
-            with open(suspended, encoding="utf-8-sig") as handle:
-                record = json.load(handle)
-        except (OSError, ValueError):
-            record = None  # unreadable now: it stays for the next start
+    record = load_judge_record(paths)  # None when absent or unreadable now: an unreadable one stays for the next start
     if isinstance(record, dict):
         for entry in record.get("entries") or []:
             if isinstance(entry, dict) and entry.get("hook"):
@@ -159,8 +154,8 @@ def remove_judge(paths):
             os.remove(suspended)
         except OSError:
             pass
-    return ["[docket] " + say(paths, "judge_removed", files=", ".join(sources),
-                              record=".claude/docket/" + REMOVED_RECORD)]
+    return [marked(paths, "line", say(paths, "judge_removed", files=", ".join(sources),
+                                      record=".claude/docket/" + REMOVED_RECORD))]
 
 
 def interrupted_runs(paths):
