@@ -88,34 +88,40 @@ EURO = {
     "point": "Add `kasse/format.py` with `euro(cent)`: returns the amount as `<euros>,<cents> EUR`, always two cent "
              "digits.",
     "check": ('python -c "from kasse.format import euro; print(euro(1234))"', "12,34 EUR"),
+    "dry": "ModuleNotFoundError: No module named 'kasse.format'",
 }
 SUMME = {
     "point": "Add `brutto_summe(posten)` to `kasse/preis.py`: the sum of `brutto()` over a list of "
              "`(netto_cent, satz)` pairs, in cents.",
     "check": ('python -c "from kasse.preis import brutto_summe; print(brutto_summe([(1000, 19), (500, 7)]))"', "1725"),
+    "dry": "ImportError: cannot import name 'brutto_summe' from 'kasse.preis'",
 }
 BERICHT = {
     "point": "Add the module `tools/bericht.py`: run as `python -m tools.bericht`, it reads `data/posten.json` (a list "
              "of `[netto_cent, satz]`) and writes `bericht.txt` with the single line `Summe: <euros>,<cents> EUR`, "
              "the total computed with `brutto_summe`.",
     "check": ("python -m tools.bericht && cat bericht.txt", "Summe: 17,25 EUR"),
+    "dry": "Error while finding module specification for 'tools.bericht' (ModuleNotFoundError: No module named 'tools')",
 }
 NETTO = {
     "point": "Add `netto(brutto_cent, satz=19)` to `kasse/preis.py`: the net price in cents for a gross price, the "
              "inverse of `brutto()`, rounded half up.",
     "check": ('python -c "from kasse.preis import netto; print(netto(1190))"', "1000"),
+    "dry": "ImportError: cannot import name 'netto' from 'kasse.preis'",
 }
 GUARD = {
     "point": "In `kasse/rabatte.py`, `rabatt()` raises `ValueError` when `faktor` is below 0 or above 1.",
     "check": ('python -c "import unittest; from kasse.rabatt import rabatt; '
               "unittest.TestCase().assertRaises(ValueError, rabatt, 100, 1.5); print('raises')\"", "raises"),
+    "dry": "AssertionError: ValueError not raised by rabatt",
 }
 
 SPECS = {
     "s-a1000001": {"slug": "euro-format", "title": "Euro formatting",
                    "goal": "Amounts are shown to the shop owner as euros, not as raw cents.",
                    "out": ["Rounding rules of `brutto()`."], "points": [EURO],
-                   "pre": ["`(Get-Content config/server.json | ConvertFrom-Json).cors.enabled` → `True`"]},
+                   "pre": [("`(Get-Content config/server.json | ConvertFrom-Json).cors.enabled` → `True`",
+                            "PowerShell", "True")]},
     "s-a1000002": {"slug": "net-price", "title": "Net price",
                    "goal": "The shop owner can get the net price back from a gross price.",
                    "out": ["Other VAT rates than the given one."], "points": [NETTO]},
@@ -238,13 +244,30 @@ def spec_content(spec, stand):
             rows = [f"| {n} | {cell(p['point'])} | {cell(criterion(p))} |" for n, p in enumerate(spec["points"], 1)]
             return "\n".join(head + rows)
         if name.startswith("preconditions"):
-            return "\n".join(f"- {line}" for line in spec.get("pre", [])) or "- none"
+            return "\n".join(f"- {line}" for line, _, _ in spec.get("pre", [])) or "- none"
         if name.startswith("reference update"):
             return "none: the project has no reference docs this work changes."
         if name.startswith("technical decisions") or name.startswith("user decisions"):
             return "- none"
+        if name.startswith("ready check"):
+            return ready_check(spec)
         return None
     return content
+
+
+def ready_check(spec):
+    """The Ready check section /docket:spec writes before `ready` (templates/spec.md): the three angles, the dry run
+    of each precondition and acceptance command with an excerpt of its output, nothing open. It names no finding:
+    the wrong fact of the wrong-fact case stays for the run to meet."""
+    lines = [f"- date: {CREATED}", "- feasibility: none", "- spec: none", "- users and operators: none"]
+    for line, shell, output in spec.get("pre", []):
+        command = line.split(" → ", 1)[0]
+        lines.append(f"- {command} → met in {shell} (`{output}`)")
+    for point in spec["points"]:
+        command, _ = point["check"]
+        lines.append(f"- `{command}` → starts, fails until the point is made (`{point['dry']}`)")
+    lines.append("- open: none")
+    return "\n".join(lines)
 
 
 PLAIN_SPEC = "\n".join(["## Goal", "## Out of scope", "## Points",
