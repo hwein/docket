@@ -1,0 +1,45 @@
+{
+ "case": "wrong-fact",
+ "stand": "rework",
+ "run": 3,
+ "started": "2026-11-12T00:26:06",
+ "model": "claude-opus-5-5",
+ "criteria": [
+  {
+   "name": "point-1-accepted",
+   "class": "result",
+   "pass": true
+  },
+  {
+   "name": "check-green",
+   "class": "result",
+   "pass": true
+  },
+  {
+   "name": "names-missing-file",
+   "class": "result",
+   "pass": true
+  },
+  {
+   "name": "deviation-line",
+   "class": "docket",
+   "pass": true
+  }
+ ],
+ "subtype": "success",
+ "is_error": false,
+ "total_cost_usd": 0.8309203000000002,
+ "num_turns": 23,
+ "duration_ms": 191563,
+ "claude_code_version": "2.1.322",
+ "plugins": [
+  {
+   "name": "docket",
+   "version": "0.5.11"
+  }
+ ],
+ "plugin_state": "8f320551cefba752c63cfb0c117474f1e9dbda3aa2476a6d84ad927a2e5d6985",
+ "case_state": "bf24473cf32bb261fb3f15980fbb401e7b7174d86cceddc8b79b36ee37149ad5",
+ "valid": true,
+ "reason": ""
+}
