@@ -25,7 +25,7 @@ const PANE = {
 const MODES = {
   plugin: 'docket',
   component: 'SessionMode',
-  props: { modes: [] },
+  props: { modes: [] as string[] },
 } as const
 
 const BAND = {
@@ -105,7 +105,7 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
     commands: [] as string[],
     prompts: [] as string[],
     tools: [] as Record<string, unknown>[],
-    modes: [] as string[],
+    status: [] as (string | undefined)[],
     toasts: [] as string[],
     opened: [] as string[],
     store: new Map<string, unknown>(),
@@ -143,13 +143,16 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
 
     return { value: { isPlaced: true } }
   })
+  on('ui.status', (_, e) => {
+    seen.status.push(e.text)
+
+    return { value: undefined }
+  })
   // The engine's drawing of the footer's mode labels, beneath the plugin's hook.
   on('ui.render', { component: 'SessionMode' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
 
-    seen.modes = [...e.props.modes]
-
-    return <Text>{e.props.modes.join(' & ')}</Text>
+    return <Text>{`engine: ${e.props.modes.join(' & ')}`}</Text>
   })
   on('ui.toast', (_, e) => {
     seen.toasts.push(e.text)
@@ -199,29 +202,17 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
   return { seen, clock }
 }
 
-/** The mode labels the footer draws now: the engine's own, none in these tests, and what the plugin added. */
-const footer = async ($: Engine, seen: { modes: string[] }): Promise<string[]> => {
-  seen.modes = []
-
-  const ui = await $.ui.mount({ ...MODES, surface: 'desktop' })
-
-  await ui.unmount()
-
-  return seen.modes
-}
-
 const start = async ($: Engine, clock: { settle: () => Promise<void> }) => {
   await $.session.start({ cwd: '/project', surface: 'desktop', isInteractive: true })
   await clock.settle()
 }
 
-test('a docket project opens the pane, names its counts in the footer and lists specs under their concept', async ($, on) => {
+test('a docket project opens the pane, sets the status line and lists specs under their concept', async ($, on) => {
   const { seen, clock } = world(on, overview)
 
   await start($, clock)
   expect(seen.opened).toEqual(['docket'])
-  // The name and the counts are one label of the footer: one text, drawn in one size.
-  expect(await footer($, seen)).toEqual(['docket: 3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded'])
+  expect(seen.status.at(-1)).toBe('3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded')
   expect(seen.argv[0]?.slice(1)).toEqual([
     expect.stringContaining('/hooks/docket_ui.py'),
     'overview',
@@ -578,7 +569,7 @@ test('a run shows with its progress; this session stops by command, another by i
   const { seen, clock } = world(on, () => overview({ runs }))
 
   await start($, clock)
-  expect((await footer($, seen))[0]).toContain('docket: ▶ Login 1/3 · 3 open')
+  expect(seen.status.at(-1)).toContain('▶ Login 1/3 · 3 open')
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
@@ -633,7 +624,7 @@ test('a project without docket gets a band that starts the setup and can be hidd
 
   await start($, clock)
   expect(seen.opened).toEqual([])
-  expect(await footer($, seen)).toEqual([])
+  expect(seen.status.at(-1)).toBeUndefined()
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
@@ -652,4 +643,40 @@ test('a project without docket gets a band that starts the setup and can be hidd
   expect(await ui.find({ key: 'docket-init' })).toBeUndefined()
   expect(seen.store.get('band-hidden')).toEqual(['/project'])
   await ui.unmount()
+})
+
+test('the desktop app gets the name and the counts as one label of the footer, the terminal keeps the status line', async ($, on) => {
+  const { seen, clock } = world(on, overview)
+  const line = '3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded'
+  const label = `docket ${line}`
+
+  await start($, clock)
+  expect(seen.status.at(-1)).toBe(line)
+
+  // The terminal draws one size everywhere: its footer stays the engine's, and the status line stays.
+  let ui = await $.ui.mount({ ...MODES, surface: 'terminal' })
+
+  expect((await ui.find({ type: 'Text' }))?.text).toBe('engine: ')
+  await ui.unmount()
+  expect(seen.status.at(-1)).toBe(line)
+
+  // The desktop app draws a status line's name smaller than its text. Once it asks for the footer's label, the
+  // plugin draws the name and the counts there as one text, and the status line is taken back.
+  ui = await $.ui.mount({ ...MODES, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text' }))?.text).toBe(label)
+  await ui.unmount()
+  expect(seen.status.at(-1)).toBeUndefined()
+
+  // A mode of the engine's own stays before it.
+  ui = await $.ui.mount({ ...MODES, props: { modes: ['focus'] }, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text' }))?.text).toBe(`focus & ${label}`)
+  await ui.unmount()
+
+  // A later read does not set the status line again.
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  await pane.press({ key: 'refresh' })
+  await clock.settle()
+  await pane.unmount()
+  expect(seen.status.at(-1)).toBeUndefined()
 })

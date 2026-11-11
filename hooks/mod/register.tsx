@@ -38,6 +38,9 @@ const bodies = new Map<string, string | undefined>()
 let isBandHidden = false
 let isReading = false
 let isAskedAgain = false
+// True once a desktop surface has asked for the footer's label: the counts stand there, and the status line is
+// taken back. Until then, and on every other surface, the status line carries them.
+let isLabelDrawn = false
 let timer: { cancel: () => void } | undefined
 let lastRead = 0
 // The session root the last read was made for; undefined before the first.
@@ -157,6 +160,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
       S.error = `${problem(reply.error)}${reply.detail ? ` (${reply.detail})` : ''}`
     }
 
+    $.ui.status(S.data && !isLabelDrawn ? statusLine(S.data) : undefined)
     redraw($)
   } catch {
     S.error = problem('failed')
@@ -507,17 +511,28 @@ export const register: Register = on => {
     return drawPane($.ui.resolve(e), S, t(), actions($), await content($))
   })
 
-  // The counts stand among the footer's mode labels, the name and the figures as one text the surface draws in one
-  // size: as a status line (`$.ui.status`) the desktop app drew the plugin's name as a label of its own, smaller
-  // than the text beside it (2026-11-11).
+  // The desktop app draws a plugin's status line as the plugin's name in a smaller size than the text beside it
+  // (Claude 5.1231.2, ion-dist.asar: the name `text-caption`, the line `text-footnote`). The footer's mode label is
+  // one text in one size, so there the name stands before the same line. The app cuts the label at 24 characters'
+  // width and shows the whole of it on hover. The plugin draws it: a rewrite of
+  // `modes` comes back as the engine's own slot, which the app does not draw (probe 2026-11-11, docket 0.5.9 left
+  // the footer empty), and the Code tab never asks for the hint line. The terminal draws one size everywhere and
+  // keeps the status line.
   on('ui.render', { component: 'SessionMode' }, ($, e, next) => {
     const line = S.data ? statusLine(S.data) : undefined
 
-    if (line === undefined) {
+    if (e.surface !== 'desktop' || line === undefined) {
       return next(e)
     }
 
-    return next({ ...e, props: { ...e.props, modes: [...e.props.modes, `docket: ${line}`] } })
+    if (!isLabelDrawn) {
+      isLabelDrawn = true
+      $.ui.status(undefined)
+    }
+
+    const { Text } = $.ui.resolve(e)
+
+    return <Text>{[...e.props.modes, `docket ${line}`].join(' & ')}</Text>
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
