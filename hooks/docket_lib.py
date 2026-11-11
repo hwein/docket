@@ -9,7 +9,6 @@ import json
 import os
 import posixpath
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -212,13 +211,36 @@ SAY = {
                            "eine Nachricht des Laufs rendert der Hook am Ende"),
         "halted": ("{title}: Der Lauf hat angehalten, ohne fertig zu sein. `/docket:implement {specs}` setzt ihn fort, "
                    "jede Nachricht von dir auch."),
-        "sealed_elsewhere": "„{title}“ läuft in einer anderen Sitzung. Dort beenden oder mit `/docket:stop` anhalten.",
-        "queued_in": "„{title}“ wartet in der Reihe einer anderen Sitzung. Die Reihe dort erreicht sie, oder `/docket:stop` dort.",
-        "sealed_on": "Diese Sitzung arbeitet an „{title}“. Erst beenden oder `/docket:stop`.",
-        "forbidden_precondition": ("Die Vorbedingung `{command}` von „{title}“ steht unter forbidden_commands in "
-                                   "DOCKET.md; prüfe sie selbst und nimm sie aus der Spec."),
-        "precondition": ("Vorbedingung von „{title}“ nicht erfüllt: `{command}` sollte {expected} liefern ({got}). "
-                         "Erst das erledigen, dann den Lauf starten."),
+        # The run mark (mark_run) and the state lines of user_prompt.py and session_start.py: facts, no order.
+        "run_line": "Spec {i} von {n} läuft: {title} ({spec}); ihr Docket liegt unter {docket} ({points}).",
+        "run_after": " Danach: {queue}.",
+        "points_summary": "{x} geliefert, {d} abweichend, {o} offen",
+        "no_docket_yet": "noch kein Docket",
+        "docket_unreadable": "Docket nicht lesbar",
+        "no_run": "Kein Lauf markiert: {reason}",
+        "run_unknown": "keine Spec {ids} in diesem Projekt.",
+        "run_no_ready_concept": "keine Spec des Konzepts {concept} ist im Zustand ready.",
+        "run_no_ready": "keine Spec ist im Zustand ready.",
+        "run_no_runnable": "keine ready-Spec hat alle Vorgänger erledigt.",
+        "run_forms": ("/docket:implement nimmt eine Spec-Id (s-xxxxxxxx, mehrere in Reihenfolge), eine Konzept-Id "
+                      "(c-xxxxxxxx: seine ready-Specs), --all (jede ready-Spec) oder nichts (die nächste ready-Spec)."),
+        "run_order": "{pairs} (`follows:` oder `after:` in der Spec).",
+        "run_order_pair": "{spec} braucht zuerst {predecessor}, und das ist nicht erledigt",
+        "run_held": "„{title}“ läuft in einer anderen Sitzung (Sitzung {session}).",
+        "run_queued": "„{title}“ wartet in der Reihe einer anderen Sitzung (Sitzung {session}).",
+        "run_other": "diese Sitzung arbeitet an „{title}“.",
+        "not_set_up": ("Unter {work} gibt es kein DOCKET.md: Das Projekt ist für docket nicht eingerichtet, "
+                       "`/docket:init` richtet es ein; bis dahin beobachten die docket-Hooks nur."),
+        "work_dir": "Arbeitsordner: {work}; DOCKET.md: {config}; user_language: {language}.",
+        "session_state": "Sitzungszustand: {mode}{spec}.",
+        "runs_open": ("Versiegelte Läufe ohne Terminal state: {ids}. `/docket:implement <id>` nimmt einen aus seinem "
+                      "Docket wieder auf."),
+        "runs_stopped": ("Angehaltene Läufe mit offenen Punkten: {items}. `/docket:implement <id>` nimmt einen beim "
+                         "ersten offenen Punkt wieder auf."),
+        "run_stopped_item": "{spec} ({n} offen)",
+        "last_log": "Letzte LOG-Zeile: {line}",
+        "judge_removed": ("Der Judge-Eintrag aus docket 0.5 ist aus {files} entfernt; der entfernte Eintrag steht in "
+                          "{record}."),
         "head_one": "Lauf beendet: {title} ist umgesetzt",
         "head_done": "Lauf beendet: {d} von {n} Specs umgesetzt",
         # "blockiert" liest ein Mensch als "nichts geht mehr": die Meldung sagt, was der Stand ist und wen er braucht.
@@ -312,13 +334,34 @@ SAY = {
                            "run's one message at the end"),
         "halted": ("{title}: the run stopped without being finished. `/docket:implement {specs}` resumes it, and so "
                    "does any message from you."),
-        "sealed_elsewhere": "“{title}” runs in another session. Finish it there or stop it with `/docket:stop`.",
-        "queued_in": "“{title}” waits in another session's series. That series reaches it, or `/docket:stop` there.",
-        "sealed_on": "This session works on “{title}”. Finish it or `/docket:stop` first.",
-        "forbidden_precondition": ("The precondition `{command}` of “{title}” matches forbidden_commands in DOCKET.md; "
-                                   "check it yourself and take it out of the spec."),
-        "precondition": ("Precondition of “{title}” not met: `{command}` should give {expected} ({got}). Settle "
-                         "that first, then start the run."),
+        "run_line": "Spec {i} of {n} is running: {title} ({spec}); its docket is at {docket} ({points}).",
+        "run_after": " After it: {queue}.",
+        "points_summary": "{x} delivered, {d} deviations, {o} open",
+        "no_docket_yet": "no docket yet",
+        "docket_unreadable": "docket unreadable",
+        "no_run": "No run marked: {reason}",
+        "run_unknown": "no spec {ids} in this project.",
+        "run_no_ready_concept": "no spec of concept {concept} is in state ready.",
+        "run_no_ready": "no spec is in state ready.",
+        "run_no_runnable": "no ready spec has all its predecessors done.",
+        "run_forms": ("/docket:implement takes a spec id (s-xxxxxxxx, several in order), a concept id (c-xxxxxxxx: its "
+                      "ready specs), --all (every ready spec) or nothing (the next ready spec)."),
+        "run_order": "{pairs} (`follows:` or `after:` in the spec).",
+        "run_order_pair": "{spec} needs {predecessor} first, which is not done",
+        "run_held": "“{title}” runs in another session (session {session}).",
+        "run_queued": "“{title}” waits in another session's series (session {session}).",
+        "run_other": "this session works on “{title}”.",
+        "not_set_up": ("There is no DOCKET.md at {work}: the project is not set up for docket, and `/docket:init` sets "
+                       "it up; until then the docket hooks only observe."),
+        "work_dir": "Work dir: {work}; DOCKET.md: {config}; user_language: {language}.",
+        "session_state": "Session state: {mode}{spec}.",
+        "runs_open": ("Sealed runs without a terminal state: {ids}. `/docket:implement <id>` resumes one from its "
+                      "docket."),
+        "runs_stopped": ("Runs stopped with open points: {items}. `/docket:implement <id>` resumes one at its first "
+                         "open point."),
+        "run_stopped_item": "{spec} ({n} open)",
+        "last_log": "Last LOG line: {line}",
+        "judge_removed": "The judge entry of docket 0.5 was removed from {files}; the removed entry is in {record}.",
         "head_one": "Run finished: {title} is implemented",
         "head_done": "Run finished: {d} of {n} specs implemented",
         # A person reads "blocked" as "nothing works any more": the message says where the spec stands and whom it needs.
@@ -875,15 +918,38 @@ def settled_display(paths, session_id, wait=3.0):
         time.sleep(0.1)
 
 
+KEPT_RECORDS = ("judge-suspended.json", "judge-removed.json")  # the way back for a judge entry taken out
+
+
 def prune_states(directory, max_age_days=14):
     now = time.time()
     try:
         for name in os.listdir(directory):
             path = posixpath.join(directory, name)
-            if name != "judge-suspended.json" and now - os.path.getmtime(path) > max_age_days * 86400:
+            if name not in KEPT_RECORDS and now - os.path.getmtime(path) > max_age_days * 86400:
                 os.remove(path)
     except OSError:
         pass
+
+
+def prune_leftovers(directory, max_age_minutes=60):
+    """Files of 0.5 that lost their writer and reader (display records, docket snapshots) and temporary files a
+    killed hook left behind, once older than an hour: session_start runs it, so they go also where state is seldom
+    saved."""
+    now = time.time()
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith(("display-", "snap-")) or name.endswith(".tmp")):
+            continue
+        path = posixpath.join(directory, name)
+        try:
+            if os.path.isfile(path) and now - os.path.getmtime(path) > max_age_minutes * 60:
+                os.remove(path)
+        except OSError:
+            pass
 
 
 # --- LOG ---------------------------------------------------------------------
@@ -2811,53 +2877,129 @@ def write_metrics(paths, spec_id, transcript_path, kind):
     _save_json(path, data)
 
 
-# --- user-only preconditions (V12) --------------------------------------------------
-PRECONDITION = re.compile(r"`([^`\n]+)`\s*(?:→|->)\s*(.+?)\s*$")
+# --- the run mark ------------------------------------------------------------------
+# One function with two triggers (REWORK-SPEC 1c.1): the typed `/docket:implement` (user_prompt.py) and the model's
+# Skill call `docket:implement` (pre_tool_use.py). It runs no precondition: the run runs them as its first step per
+# spec, `/docket:spec` in the ready check.
+MARKED = ("sealed", "rewrite")  # the run mark until 1d; then `sealed` alone
 
 
-def preconditions(paths, spec_id):
-    """`command` → expected lines of the spec's `## Preconditions` section: what only the user can provide (a key, a
-    running server), checked before the session seals."""
-    found = []
-    for line in bullets(section_text(read_text(paths.spec_file(spec_id)), "Preconditions")):
-        match = PRECONDITION.search(line)
-        if match and not match.group(1).strip().startswith("<"):  # the template's placeholder is no command
-            found.append((match.group(1).strip(), match.group(2).strip().strip("`").strip()))
-    return found
+def run_specs(paths, rest):
+    """(the specs of an implement call in run order, "") or ([], why none).
+
+    `/docket:implement`            the next ready spec whose predecessors (`follows:`, `after:`) are done
+    `/docket:implement c-xxxxxxxx` every ready spec of that concept, in implementation order
+    `/docket:implement s-a, s-b`   exactly these, in the given order
+    `/docket:implement --all`      every ready spec of the project, in implementation order
+    """
+    rest = (rest or "").strip()
+    ids = list(dict.fromkeys(s.lower() for s in SPEC_ID.findall(rest)))
+    concept = CONCEPT_ID.search(rest)
+    if ids:
+        # A named spec is a spec of this project (docket 2026-11-10: ids pasted from another project sealed a session).
+        unknown = [s for s in ids if not paths.spec_file(s)]
+        if unknown:
+            return [], say(paths, "run_unknown", ids=", ".join(unknown))
+        chosen = ids
+    elif concept:
+        chosen = [s for s, _ in ready_specs(paths, concept.group(0))]
+        if not chosen:
+            return [], say(paths, "run_no_ready_concept", concept=concept.group(0))
+    elif re.search(r"(^|\s)--all\b", rest):
+        chosen = [s for s, _ in ready_specs(paths)]
+        if not chosen:
+            return [], say(paths, "run_no_ready")
+    elif not rest:
+        chosen = [s for s, _ in ready_specs(paths) if not open_predecessors(paths, [s])][:1]
+        if not chosen:
+            return [], say(paths, "run_no_runnable")
+    else:
+        return [], say(paths, "run_forms")
+    missing = open_predecessors(paths, chosen)
+    if missing:
+        pairs = "; ".join(say(paths, "run_order_pair", spec=s, predecessor=p) for s, p in missing)
+        return [], say(paths, "run_order", pairs=pairs)
+    return chosen, ""
 
 
-def precondition_result(paths, command, expected, timeout=20):
-    """(ok, what came back): ok when the command exits 0 and its output contains the expected text (`exit 0` or
-    nothing: the exit code alone). The output goes to a temporary file, not a pipe, so a process the command leaves
-    behind cannot hold the hook; on timeout the whole process tree is killed. What came back names the exit code or
-    that the text was missing, never the output: a precondition may print a key."""
-    import tempfile
-    bash = shutil.which("bash")
-    with tempfile.TemporaryFile() as sink:
-        try:
-            process = subprocess.Popen([bash, "-c", command] if bash else command, shell=not bash, cwd=paths.root,
-                                       stdout=sink, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                       start_new_session=os.name != "nt")
-        except (OSError, ValueError) as error:
-            return False, type(error).__name__
-        try:
-            code = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, timeout=10)
-            else:
-                try:
-                    os.killpg(process.pid, 9)
-                except OSError:
-                    process.kill()
-            return False, f"timeout {timeout} s"
-        sink.seek(0)
-        output = sink.read(65536).decode("utf-8", errors="replace")
-    if code != 0:
-        return False, f"exit {code}"
-    if expected.lower() not in ("", "exit 0") and expected not in output:
-        return False, "exit 0, without that text"
-    return True, "exit 0"
+def held_by_live_session(paths, holder, spec_id):
+    """A lock counts only while its session runs on that spec or has it in its queue (session_live); the lock of a
+    crashed or finished session is taken over."""
+    other = load_state(paths, holder)
+    return session_live(paths, holder) and (other.get("spec") == spec_id or spec_id in (other.get("queue") or []))
+
+
+def points_summary(paths, spec_id):
+    docket = paths.docket_file(spec_id)
+    if not docket:
+        return say(paths, "no_docket_yet")
+    try:
+        with open(docket, encoding="utf-8-sig", errors="ignore") as handle:
+            counts = point_counts(handle.read())
+    except OSError:
+        return say(paths, "docket_unreadable")
+    return say(paths, "points_summary", x=counts["x"], d=counts["~"], o=counts[" "])
+
+
+def run_line(paths, state):
+    """The state line of a marked run: which spec of the series runs, where its docket lies, its points, the rest."""
+    spec_id = state.get("spec", "")
+    i, n = position(state)
+    line = "[docket] " + say(paths, "run_line", i=i, n=n, title=spec_title(paths, spec_id) or spec_id, spec=spec_id,
+                             docket=paths.docket_file(spec_id) or paths.dockets, points=points_summary(paths, spec_id))
+    if state.get("queue"):
+        line += say(paths, "run_after", queue=", ".join(state["queue"]))
+    return line
+
+
+def work_dir_line(paths):
+    """Where this project's docket files are: the work dir, DOCKET.md and the language of the messages."""
+    return "[docket] " + say(paths, "work_dir", work=paths.work, config=paths.config,
+                             language=config_values(paths).get("user_language", "") or "-")
+
+
+def mark_run(paths, session_id, rest, state=None):
+    """Marks the run of an implement call. (marked, state line): marked when this call set the run mark; the line is
+    the run line, or "no run marked" with the reason.
+
+    A session already marked on the same first spec stays as it is (no LOG line). Nothing is marked for an unknown
+    spec, no ready spec, a predecessor not done, a spec another live session holds or has queued, or another spec at
+    work in this session; no tool is held afterwards. Otherwise: the lock of the first spec, the run mark and the
+    series in the state, LOG `sealed` and `queued`, the spec's state in-progress."""
+    state = state if state is not None else load_state(paths, session_id)
+    no_run = lambda reason: (False, "[docket] " + say(paths, "no_run", reason=reason))
+    found, reason = run_specs(paths, rest)
+    if reason:
+        return no_run(reason)
+    spec_id, queue = found[0], found[1:]
+    title = lambda spec: spec_title(paths, spec) or spec
+    if state.get("mode") in MARKED and state.get("spec") == spec_id:
+        return False, run_line(paths, state)
+    if state.get("mode") in RUN_MODES and state.get("spec") and state.get("spec") != spec_id:
+        return no_run(say(paths, "run_other", title=title(state["spec"])))
+    for candidate in found:
+        holder = lock_holder(paths, candidate)
+        if holder and holder != session_id and held_by_live_session(paths, holder, candidate):
+            return no_run(say(paths, "run_held", title=title(candidate), session=holder[:8]))
+        other = queued_elsewhere(paths, candidate, session_id)
+        if other:
+            return no_run(say(paths, "run_queued", title=title(candidate), session=other[:8]))
+    # Only the spec at work is locked, exclusively; the ones waiting are named in this session's queue, which
+    # other sessions respect while this one runs (V13: a lock on a spec never started outlived a crashed series).
+    holder = claim_lock(paths, spec_id, session_id)
+    if holder:
+        return no_run(say(paths, "run_held", title=title(spec_id), session=holder[:8]))
+    # sealed_head: the project's commit when the spec was marked; a spec that ends BLOCKED with the project still
+    # there lets the series go on (stop.end_spec).
+    state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False, "queue": queue, "series": found,
+                  "outcomes": {}, "refused": False, "closing": None, "halted": False,
+                  "terminal_base": terminal_base(paths, spec_id), "sealed_head": project_head(paths)})
+    save_state(paths, session_id, state)
+    log_event(paths, session_id, spec_id, "sealed")
+    if queue:
+        log_event(paths, session_id, spec_id, "queued", ", ".join(queue))
+    set_spec_state(paths, spec_id, "in-progress")
+    return True, run_line(paths, state)
 
 
 # --- series in the LOG (V13) --------------------------------------------------------

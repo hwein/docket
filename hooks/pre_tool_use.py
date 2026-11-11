@@ -8,6 +8,10 @@ Four rules, each read from DOCKET.md at every call, each for the orchestrator an
   outside a run it goes to the user as a permission dialog (permissionDecision `ask`, LOG `ask`, then `grant` from
   post_tool_use when it ran).
 Every refusal and the dialog's text begin with `[docket rule: <key>]` and name the key, its value and DOCKET.md.
+
+The model's Skill call `docket:implement` is the second trigger of the run mark (docket_lib.mark_run, the first is the
+typed command in user_prompt): a side effect, never a refusal. The call goes on (exit 0), and the state line, the run
+line or why no run was marked, goes to the model as additionalContext.
 """
 import json
 import os
@@ -16,7 +20,8 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import Paths, absolute, config_values, load_state, log_event, read_input, refuse, say, under
+from docket_lib import (Paths, absolute, config_values, load_state, log_event, mark_run, read_input, refuse, say,
+                        under)
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
@@ -31,11 +36,20 @@ def main():
     hook_input = read_input()
     tool = hook_input.get("tool_name")
     tool_input = hook_input.get("tool_input") if isinstance(hook_input.get("tool_input"), dict) else {}
-    if tool not in WRITE_TOOLS and tool not in SHELL_TOOLS:
+    if tool not in WRITE_TOOLS and tool not in SHELL_TOOLS and tool != "Skill":
         return 0
     paths = Paths(hook_input)
     if not os.path.isfile(paths.config):
         return 0
+
+    if tool == "Skill":
+        if tool_input.get("skill") != "docket:implement":
+            return 0
+        args = tool_input.get("args")
+        _, line = mark_run(paths, hook_input.get("session_id"), args if isinstance(args, str) else "")
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": line}}))
+        return 0
+
     config = config_values(paths)
 
     if tool in SHELL_TOOLS:

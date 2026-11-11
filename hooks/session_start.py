@@ -1,30 +1,29 @@
 """SessionStart hook (startup, resume, clear, compact).
 
-Marks the session degraded: required reading has not been observed. Prints the
-reminder as additional context: state, spec, the docket's point count, the last LOG line.
-In a project without DOCKET.md it prints nothing: the hooks only observe there.
-The degraded flag lifts in pre_tool_use once every required file has been read with Read.
-A docket that was sealed but never reached a terminal state is named, so the next
-/implement resumes it instead of starting over; an interrupted series is named with its titles and the state of
-each spec (V13). A judge a crashed run left suspended is put back (V5).
+State lines for the session as additional context, in a project with DOCKET.md: the session's state, the work dir
+with DOCKET.md and user_language, the run line of a marked run (spec i of n, its docket, its points), else the
+interrupted series, the runs without a terminal state and the runs stopped with open points, and the last LOG line.
+A marked run that goes on after resume or compact gets the LOG line `resumed`.
+
+At every start, also in a project without DOCKET.md: the judge entry of docket 0.5 leaves the project's settings
+(remove_judge), and files of 0.5 nobody reads any more go (docket_lib.prune_leftovers).
 """
 import hashlib
 import json
 import os
 import posixpath
-import re
 import sys
+import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, load_judge_record, load_state, log_event, log_lines,
-                        logged_series, point_counts, position, read_input, resume_judge, save_state, series_line,
-                        session_live, violations_line, write_atomically)
+from docket_lib import (MARKED, SPEC_ID, Paths, _save_json, is_judge, judge_record_path, load_settings, load_state,
+                        log_event, log_lines, logged_series, point_counts, prune_leftovers, read_input, run_line,
+                        save_settings, say, series_line, session_live, settings_files, work_dir_line)
 
 TERMINAL_EVENTS = ("delivered", "blocked", "dissent")
-PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# SHA-256 of the judge entry (JSON, sorted keys) in every version of templates/judge-hook.json. A change to the
-# template appends its hash here (test_the_template_judge_is_a_known_version).
+# SHA-256 of the judge entry (JSON, sorted keys) in every version of templates/judge-hook.json up to 0.5.11: an
+# unchanged copy is known by its digest, a changed one by the mark in its prompt (docket_lib.is_judge).
 JUDGE_VERSIONS = (
     "5319c732aade46e8a8ce727da0274ca1e9fcae1967933bee4cd0d25b1715552e",  # 87691e5
     "66e52126396b9438efb7e6c803836f1bee02fd254a0b81e569039b520e5d9001",  # 7cd023d
@@ -35,57 +34,29 @@ JUDGE_VERSIONS = (
     "f14e0d464e7013031488bbbc9221448b13f33c1590225e65108c948ca6be44b0",  # 0.2.9: a blocker names every step of the user
     "1837459e90f76e13c1fb9c5102498c8c104a1fc714a991ae6b07c4334dce35a0",  # 0.5.1: a /docket: command is no manual task
 )
+REMOVED_RECORD = "judge-removed.json"
 
 
 def main():
     hook_input = read_input()
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
+    lines = remove_judge(paths)
+    prune_leftovers(paths.state_dir)
+    if not os.path.isfile(paths.config):
+        if lines:
+            print("\n".join(lines))
+        return 0  # project not set up: user_prompt names /docket:init when a docket command is typed
     state = load_state(paths, session_id)
-    required = paths.required_reading()
-    state["degraded"] = True
-    state["read"] = []
-    save_state(paths, session_id, state)
     source = hook_input.get("source", "startup")
     mode = state.get("mode", "none")
     spec_id = state.get("spec", "")
-    if mode in ("sealed", "rewrite") and source in ("resume", "compact"):
+    if mode in MARKED and source in ("resume", "compact"):
         log_event(paths, session_id, spec_id, "resumed", f"source={source}")
-    record = load_judge_record(paths)
-    if record and not any(s == session_id or session_live(paths, s) for s in record.get("sessions") or []):
-        if resume_judge(paths, session_id, force=True):
-            log_event(paths, session_id, "", "judge-resumed", "no run holds it any more")
-    if mode == "none" and not os.path.isfile(paths.config):
-        return 0  # project not set up: nothing to say; user_prompt names /docket:init when a docket command is typed
-    lines = [f"[docket] session state: {mode}" + (f", spec {spec_id}" if spec_id else "") + "."]
-    if os.path.isfile(paths.config):
-        lines += sync_copies(paths, session_id)
-        lines.append("[docket] Required reading before any other action, each file completely with Read: "
-                     + ", ".join(required) + ". Until then writes, shell commands and agents are refused.")
-        if mode in RUN_MODES:
-            lines.append("[docket] In a sealed run you write no text and no stamp: a turn that waits for agents ends "
-                         "without text, a spec ends in its docket's Terminal state section, and the run's one message "
-                         "is the closing message the hook renders at its end.")
-        else:
-            lines.append("[docket] Rule of every session here: each message ends with the line `stamp: YYYY-MM-DD HH:MM`, "
-                         "the time of the latest `[docket] clock:` line the hooks give with every prompt and tool result, "
-                         "or fetched from the clock in the same turn; the Stop hook refuses the message otherwise. "
-                         "When it sends you back, do exactly what it asks: the stamp line alone, correction lines, or after a judge "
-                         "verdict an empty answer; "
-                         "repeat a message only when the hook says it was held back and never shown. " + REFUSAL_RULE)
-    if mode in ("sealed", "rewrite"):
-        i, n = position(state)
-        lines.append(f"[docket] A sealed implementation of {spec_id} is in progress"
-                     + (f" (spec {i} of {n} of the series)" if n > 1 else "") + f": {points_summary(paths, spec_id)}. "
-                     f"Continue from the docket at {paths.docket_file(spec_id) or paths.dockets} "
-                     f"and the last lines of {paths.log}."
-                     + (f" Queued after it: {', '.join(state['queue'])}." if state.get("queue") else ""))
-        feedback = violations_line(paths, spec_id)
-        if feedback:
-            lines.append(feedback)
-    elif mode == "closing":
-        lines.append("[docket] The run is over; its closing message waits to be sent verbatim from "
-                     + str((state.get("closing") or {}).get("file", "")) + ".")
+    lines = ["[docket] " + say(paths, "session_state", mode=mode, spec=f", {spec_id}" if spec_id else ""),
+             work_dir_line(paths)] + lines
+    if mode in MARKED:
+        lines.append(run_line(paths, state))
     else:
         in_series = set()
         for series in logged_series(paths):
@@ -94,76 +65,102 @@ def main():
             in_series.update(series["ids"])
         open_runs = [spec for spec in interrupted_runs(paths) if spec not in in_series]
         if open_runs:
-            lines.append("[docket] Sealed runs without a terminal state: " + ", ".join(open_runs)
-                         + ". `/implement <id>` resumes one from its docket.")
+            lines.append("[docket] " + say(paths, "runs_open", ids=", ".join(open_runs)))
         stopped = stopped_runs(paths)
         if stopped:
-            lines.append("[docket] Runs stopped with open points: " + ", ".join(f"{s} ({n} open)" for s, n in stopped)
-                         + ". `/implement <id>` resumes one at its first open point.")
-    last = log_lines(paths)[-1:] if os.path.isfile(paths.config) else []
+            lines.append("[docket] " + say(paths, "runs_stopped", items=", ".join(
+                say(paths, "run_stopped_item", spec=s, n=n) for s, n in stopped)))
+    last = log_lines(paths)[-1:]
     if last:
-        lines.append("[docket] Last LOG line: " + last[0])
+        lines.append("[docket] " + say(paths, "last_log", line=last[0]))
     print("\n".join(lines))
     return 0
-
-
-def sync_copies(paths, session_id):
-    """/docket:init writes one thing into the project's settings: the judge hook (opt-in). A plugin update reaches
-    it here, at every session start, so no project runs an old judge and nobody has to run init again
-    (2026-11-06: the judge in luradb-web-client was five template versions behind). docket adds no code file."""
-    notes = []
-    if sync_judge(paths):
-        log_event(paths, session_id, "", "judge-updated", "from templates/judge-hook.json")
-        notes.append("[docket] The judge in .claude/settings.json now follows the plugin's version.")
-    return notes
 
 
 def judge_digest(entry):
     return hashlib.sha256(json.dumps(entry, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def sync_judge(paths):
-    """The project's judge entry becomes the template's while it is an unchanged copy of an earlier template; a
-    judge the project changed (model, timeout, prompt) stays, and so does a project without one (opt-in)."""
-    settings_path = posixpath.join(paths.root, ".claude", "settings.json")
-    try:
-        with open(posixpath.join(PLUGIN, "templates", "judge-hook.json"), encoding="utf-8") as handle:
-            template = json.load(handle)["hooks"]["Stop"][0]["hooks"][0]
-        with open(settings_path, "rb") as handle:
-            raw = handle.read().decode("utf-8")
-        settings = json.loads(raw.lstrip("﻿"))
-    except (OSError, ValueError, KeyError, IndexError, TypeError, UnicodeDecodeError):
-        return False
-    hooks = settings.get("hooks") if isinstance(settings, dict) else None
-    stop = hooks.get("Stop") if isinstance(hooks, dict) else None
-    changed = False
-    for group in stop if isinstance(stop, list) else []:
-        entries = group.get("hooks") if isinstance(group, dict) else None
-        for index, hook in enumerate(entries if isinstance(entries, list) else []):
-            if (isinstance(hook, dict) and hook != template and judge_digest(hook) in JUDGE_VERSIONS):
-                entries[index] = dict(template)
-                changed = True
-    if changed:
-        text = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+def docket_judge(hook):
+    return isinstance(hook, dict) and (is_judge(hook) or judge_digest(hook) in JUDGE_VERSIONS)
+
+
+def remove_judge(paths):
+    """0.6 has no judge (REWORK-SPEC 1c.6). Every Stop hook entry of docket's judge leaves .claude/settings.json and
+    .claude/settings.local.json, a changed copy and a file git tracks included; a group left without hooks and an
+    empty Stop go with it, everything else stays (BOM and line ends too). The entries of a judge-suspended.json go the
+    same way, and that file is deleted. The record first: every removed entry, with its file, is appended to
+    .claude/docket/judge-removed.json before a settings file changes. Returns the state line, once: a second start finds
+    nothing and says nothing."""
+    removed, changes, sources = [], [], []
+    for path in settings_files(paths):
+        if not os.path.isfile(path):
+            continue
+        settings, raw = load_settings(path)
+        hooks = settings.get("hooks") if isinstance(settings, dict) else None
+        stop = hooks.get("Stop") if isinstance(hooks, dict) else None
+        if not isinstance(stop, list):
+            continue
+        kept, found = [], []
+        for group in stop:
+            members = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(members, list) or not any(docket_judge(hook) for hook in members):
+                kept.append(group)
+                continue
+            found += [hook for hook in members if docket_judge(hook)]
+            rest = [hook for hook in members if not docket_judge(hook)]
+            if rest:
+                kept.append(dict(group, hooks=rest))
+        if not found:
+            continue
+        if kept:
+            hooks["Stop"] = kept
+        else:
+            del hooks["Stop"]
+        name = ".claude/" + posixpath.basename(path)
+        removed += [{"file": name, "hook": hook} for hook in found]
+        changes.append((path, settings, raw))
+        sources.append(name)
+    suspended = judge_record_path(paths)
+    record = None
+    if os.path.isfile(suspended):
         try:
-            write_atomically(settings_path, text.replace("\n", "\r\n") if "\r\n" in raw else text,
-                             bom=raw.startswith("﻿"))
+            with open(suspended, encoding="utf-8-sig") as handle:
+                record = json.load(handle)
+        except (OSError, ValueError):
+            record = None  # unreadable now: it stays for the next start
+    if isinstance(record, dict):
+        for entry in record.get("entries") or []:
+            if isinstance(entry, dict) and entry.get("hook"):
+                removed.append({"file": str(entry.get("file") or ""), "hook": entry["hook"],
+                                "from": ".claude/docket/judge-suspended.json"})
+        sources.append(".claude/docket/judge-suspended.json")
+    if not sources:
+        return []
+    target = posixpath.join(paths.state_dir, REMOVED_RECORD)
+    if removed:
+        entries = []
+        if os.path.isfile(target):
+            try:
+                with open(target, encoding="utf-8-sig") as handle:
+                    entries = json.load(handle).get("entries") or []
+            except (OSError, ValueError, AttributeError):
+                return []  # a record that cannot be read is never written over: nothing is removed
+        when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        if not _save_json(target, {"entries": list(entries) + [dict(entry, removed=when) for entry in removed]}):
+            return []
+    for path, settings, raw in changes:
+        try:
+            save_settings(path, settings, raw)
         except OSError:
-            return False
-    return changed
-
-
-def points_summary(paths, spec_id):
-    docket = paths.docket_file(spec_id)
-    if not docket:
-        return "no docket yet"
-    try:
-        with open(docket, encoding="utf-8-sig", errors="ignore") as handle:
-            body = handle.read()
-    except OSError:
-        return "docket unreadable"
-    counts = point_counts(body)
-    return f"{counts['x']} delivered, {counts['~']} deviations, {counts[' ']} open"
+            pass
+    if isinstance(record, dict):
+        try:
+            os.remove(suspended)
+        except OSError:
+            pass
+    return ["[docket] " + say(paths, "judge_removed", files=", ".join(sources),
+                              record=".claude/docket/" + REMOVED_RECORD)]
 
 
 def interrupted_runs(paths):
