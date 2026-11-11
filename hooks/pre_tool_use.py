@@ -8,13 +8,10 @@ Four rules, each read from DOCKET.md at every call, each for the orchestrator an
   outside a run it goes to the user as a permission dialog (permissionDecision `ask`, LOG `ask`, then `grant` from
   post_tool_use when it ran).
 Every refusal and the dialog's text begin with `[docket rule: <key>]` and name the key, its value and DOCKET.md.
-Until the docket check of post_tool_use goes, the hook also keeps a snapshot of the run's docket before it is written.
 """
 import json
 import os
-import posixpath
 import re
-import shutil
 import sys
 
 import os as _os, sys as _sys
@@ -67,8 +64,6 @@ def main():
     forbidden = forbidden_path(path, patterns, paths)
     if forbidden:
         return refuse(say(paths, "rule_forbidden_paths", path=forbidden, value=patterns, config=paths.config))
-    if under(path, paths.dockets):
-        snapshot(path, paths, hook_input.get("session_id"))
     return 0
 
 
@@ -143,21 +138,6 @@ def forbidden_path(path, patterns, paths):
         if fnmatch.fnmatch(relative.lower(), pattern.lower()) or fnmatch.fnmatch(relative.lower(), pattern.lower().rstrip("/") + "/*"):
             return relative
     return ""
-
-
-def snapshot(path, paths, session_id):
-    """The run's docket as it is before a write, for the docket check of post_tool_use (goes with it in 1b)."""
-    if not os.path.isfile(path):
-        return
-    state = load_state(paths, session_id)
-    spec_id = state.get("spec", "")
-    if state.get("mode") not in RUN_MARK or not spec_id or not posixpath.basename(path).lower().startswith(spec_id.lower()):
-        return
-    try:
-        os.makedirs(paths.state_dir, exist_ok=True)
-        shutil.copyfile(path, posixpath.join(paths.state_dir, f"snap-{spec_id}.md"))
-    except OSError:
-        pass
 
 
 if __name__ == "__main__":

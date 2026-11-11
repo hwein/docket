@@ -389,50 +389,6 @@ class ModeSwitch(Project):
         self.assertIn("Required reading still open", out)
 
 
-class AppendOnly(Project):
-    def post(self, path):
-        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
-                                             "tool_input": {"file_path": str(path)}}, self.p)
-
-    def test_filling_placeholders_and_inserting_lines_passes(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("# Docket\n\n## Refinement\n\n- \n\n## Evidence\n\n- \n", "utf-8")
-        self.tool("Edit", file_path=str(self.docket))
-        self.docket.write_text("# Docket\n\n## Refinement\n\n- feasibility: ok\n- spec: ok\n\n## Evidence\n\n- point 1: cat → hello\n", "utf-8")
-        self.assertEqual(self.post(self.docket)[0], 0)
-
-    def test_append_passes_rewrite_fails(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("# Docket\n- [ ] point 1\n", "utf-8")
-        self.tool("Edit", file_path=str(self.docket))  # takes the snapshot
-        self.docket.write_text("# Docket\n- [x] point 1\n- deviation: none\n", "utf-8")
-        self.assertEqual(self.post(self.docket)[0], 0)
-        self.tool("Edit", file_path=str(self.docket))
-        self.docket.write_text("# Docket\n- [x] point 1 (changed wording)\n", "utf-8")
-        code, err, _ = self.post(self.docket)
-        self.assertEqual(code, 2)
-        self.assertIn("append-only", err)
-        self.assertIn("docket-rewritten", self.log())
-
-
-class SubagentReports(Project):
-    def report(self, text):
-        return run_hook("subagent_stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": text,
-                                             "stop_hook_active": False}, self.p)
-
-    def test_short_report_with_unverified_line_passes(self):
-        self.assertEqual(self.report("Done: tests 12 passed (cargo test).\nUnverified: none")[0], 0)
-
-    def test_missing_unverified_line_refused(self):
-        code, err, _ = self.report("Done: tests passed.")
-        self.assertEqual(code, 2)
-        self.assertIn("Unverified", err)
-
-    def test_long_report_refused(self):
-        text = "\n".join(f"line {i}" for i in range(50)) + "\nUnverified: none"
-        self.assertEqual(self.report(text)[0], 2)
-
-
 class SealedStop(Project):
     """0.3.0: a spec ends in its docket, the run in one message the hook renders (luradb-web-client 2026-11-06:
     four receipts of up to 2,500 characters, 76 bare stamps, no message about the series as a whole)."""
@@ -644,133 +600,58 @@ class HumanStop(Project):
         self.assertIn("stamp:", out)
 
 
-class DisplayGate(Project):
-    """message_display.py holds a broken message back before the user sees it; stop.py asks for it again."""
-
-    HIDDEN = "​"
-
-    def display(self, delta, final=True, message_id="m1", index=0):
-        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "hook_event_name": "MessageDisplay",
-                                                         "turn_id": "t1", "message_id": message_id, "index": index,
-                                                         "final": final, "delta": delta}, self.p)
-        self.assertEqual(code, 0, err)
-        return json.loads(out)["hookSpecificOutput"]["displayContent"] if out.strip() else None
-
-    def record(self):
-        path = self.root / ".claude" / "docket" / f"display-{SID}.json"
-        return json.loads(path.read_text("utf-8")) if path.exists() else {}
-
-    def test_in_a_run_the_answer_to_the_users_message_is_shown_once(self):
-        self.prompt(f"/implement {SPEC}")
-        self.assertNotEqual(self.display("Reading the spec.", message_id="m0"), "Reading the spec.")  # a run's own text
-        self.prompt("how far are you?")
-        self.assertNotEqual(self.display("[docket] noted", message_id="m1"), "[docket] noted")
-        self.assertTrue(self.state()["answer_due"])  # an acknowledgement is no answer: it is still due
-        answer = "Two of five points are built; the third is with the tests."
-        self.assertEqual(self.display(answer, message_id="m2"), answer)
-        self.assertFalse(self.state()["answer_due"])
-        self.assertNotEqual(self.display("Next point.", message_id="m3"), "Next point.")
-
-    def test_clean_message_is_shown_whole(self):
-        self.set_state(mode="concept")
-        text = f"The default stays at 512 (config_reference.md).\n{hstamp()}"
-        self.assertEqual(self.display(text), text)
-        self.assertEqual(self.stop(text)[0], 0)
-
-    def test_broken_message_is_held_back_and_written_again_once(self):
-        self.set_state(mode="init")
-        broken = f"It probably works.\n{hstamp()}"
-        self.assertEqual(self.display(broken), self.HIDDEN)
-        code, err, _ = self.stop(broken)
-        self.assertEqual(code, 2)
-        self.assertIn("held back and never shown", err)
-        self.assertIn("in full", err)
-        self.assertNotIn("already read", err)
-        self.assertTrue(self.record()["retry"])
-        # The answer to the refusal is shown even when it still breaks a rule, and the second pass lets it through.
-        self.assertIsNone(self.display(f"It probably works, again.\n{hstamp()}", message_id="m2"))
-        self.assertEqual(self.stop(f"It probably works, again.\n{hstamp()}", active=True)[0], 0)
-        self.assertFalse(self.record()["retry"])
-        self.assertEqual(self.record()["hidden"], [])
-
-    def test_held_back_message_is_asked_for_even_on_a_second_pass(self):
-        # A second pass (stop_hook_active) changes nothing: the user still has seen nothing.
-        self.set_state(mode="concept")
-        broken = f"Fixed in a1b2c3d4e.\n{hstamp()}"
-        self.assertEqual(self.display(broken), self.HIDDEN)
-        code, err, _ = self.stop(broken, active=True)
-        self.assertEqual(code, 2)
-        self.assertIn("held back", err)
-
-    def test_message_without_stamp_is_shown_and_corrected_by_lines(self):
-        # Text between tool calls has no stamp and no Stop sees it: it is never held back.
-        self.set_state(mode="concept")
-        broken = "It probably works."
-        self.assertEqual(self.display(broken), broken)
-        code, err, _ = self.stop(broken)
-        self.assertEqual(code, 2)
-        self.assertIn("already read", err)
-        self.assertIn("[docket] Korrektur:", err)
-        self.assertNotIn("Write it again", err)
-        self.assertIsNone(self.display(f"[docket] Korrektur: It works (tests 3 passed).\n{hstamp()}", message_id="m2"))
-
-    def test_shown_message_with_a_broken_rule_gets_correction_lines(self):
-        # Without the gate (a client that ignores MessageDisplay) the message is on the screen.
-        self.set_state(mode="spec")
-        code, err, _ = self.stop(f"Keep the default? Or change it?\n{hstamp()}")
-        self.assertEqual(code, 2)
-        self.assertIn("do not repeat or rewrite it", err)
-        self.assertNotIn("held back", err)
-
-    def test_missing_stamp_alone_never_holds_back(self):
-        self.set_state(mode="concept")
-        text = f"The default stays at 512 (config_reference.md).\n{hstamp(-40)}"
-        self.assertEqual(self.display(text), text)
-        code, err, _ = self.stop(text)
-        self.assertIn("stamp line alone", err)
-        self.assertTrue(self.record()["retry"])
-
-    def test_batches_are_held_until_the_last_one(self):
-        self.set_state(mode="concept")
-        self.assertEqual(self.display("The default stays at 512\n", final=False), self.HIDDEN)
-        self.assertIn("m1", self.record()["pending"])
-        last = f"(config_reference.md).\n{hstamp()}"
-        self.assertEqual(self.display(last, index=1), "The default stays at 512\n" + last)
-        self.assertEqual(self.record()["pending"], {})
-
-    def test_mode_none_is_not_gated(self):
-        self.assertIsNone(self.display(f"It probably works.\n{hstamp()}"))
-
-    def test_project_without_docket_md_is_not_gated(self):
-        (self.work / "DOCKET.md").unlink()
-        self.set_state(mode="concept")
-        self.assertIsNone(self.display(f"It probably works.\n{hstamp()}"))
-
-    def test_a_new_prompt_settles_the_record(self):
-        self.set_state(mode="concept")
-        self.display(f"It probably works.\n{hstamp()}")
-        self.assertEqual(len(self.record()["hidden"]), 1)
-        self.prompt("how are the tests?")
-        self.assertEqual(self.record(), {"hidden": [], "pending": {}, "retry": False})
-
-    def test_broken_input_fails_open(self):
-        code, _, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "../x"}, self.p)
-        self.assertEqual((code, out.strip()), (0, ""))
-
-
 class PointEvents(Project):
-    def post(self, path):
-        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
-                                             "tool_input": {"file_path": str(path)}}, self.p)
+    """1b.3: in a session with the run mark, the marks of a docket the LOG does not know yet become LOG lines."""
+
+    def post(self, path, **extra):
+        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Edit", "tool_input": {"file_path": str(path)}}
+        payload.update(extra)
+        return run_hook("post_tool_use.py", payload, self.p)
+
+    def events(self, spec_id=SPEC):
+        """(event, note) of the spec's LOG lines point-delivered and deviation."""
+        lines = [line.split() for line in self.log().splitlines()]
+        return [(fields[2], fields[-1]) for fields in lines
+                if len(fields) > 3 and fields[1] == spec_id and fields[2] in ("point-delivered", "deviation")]
 
     def test_flips_are_logged(self):
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("| 1 | a | `x` | [ ] |\n| 2 | b | `y` | [ ] |\n", "utf-8")
-        self.tool("Edit", file_path=str(self.docket))
+        self.assertEqual(self.post(self.docket), (0, "", ""))
+        self.assertEqual(self.events(), [])
         self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [~] |\n- deviation: b differs\n", "utf-8")
-        self.assertEqual(self.post(self.docket)[0], 0)
-        self.assertIn("point-delivered", self.log())
-        self.assertIn("deviation", self.log())
+        self.assertEqual(self.post(self.docket), (0, "", ""))
+        self.assertEqual(self.events(), [("point-delivered", "count=1"), ("deviation", "count=1")])
+
+    def test_a_second_write_without_a_new_mark_logs_nothing(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [ ] |\n", "utf-8")
+        self.post(self.docket)
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [ ] |\n- evidence: `x` → ok\n", "utf-8")
+        self.post(self.docket)
+        self.assertEqual(self.events(), [("point-delivered", "count=1")])
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [x] |\n- evidence: `x` → ok\n", "utf-8")
+        self.post(self.docket)
+        self.assertEqual(self.events(), [("point-delivered", "count=1"), ("point-delivered", "count=1")])
+
+    def test_a_point_of_an_earlier_session_with_its_log_line_logs_nothing(self):
+        (self.work / "LOG.md").write_text(
+            f"2026-11-10T10:00:00Z  {SPEC:<11} {'point-delivered':<18} session=earlier1  count=1\n", "utf-8")
+        self.docket.write_text("| 1 | a | `x` | [x] |\n| 2 | b | `y` | [ ] |\n", "utf-8")
+        self.set_state(mode="sealed", spec=SPEC)
+        self.post(self.docket)
+        self.assertEqual(self.events(), [("point-delivered", "count=1")])
+
+    def test_the_spec_comes_from_the_file_name_and_only_a_run_logs(self):
+        other = self.work / "dockets" / "core" / "s-89abcdef.md"
+        other.write_text("| 1 | a | `x` | [x] |\n", "utf-8")
+        self.set_state(mode="none", spec="")
+        self.post(other)
+        self.assertEqual(self.events("s-89abcdef"), [])
+        self.set_state(mode="sealed", spec=SPEC)
+        self.post(other)
+        self.assertEqual(self.events("s-89abcdef"), [("point-delivered", "count=1")])
+        self.assertEqual(self.events(), [])
 
 
 class ReadyGate(Project):
@@ -793,32 +674,13 @@ class ReadyGate(Project):
         self.post(self.spec)
         self.assertEqual(self.log().count(" ready "), 1)
 
-    def test_angle_brackets_in_goal_prose_are_not_placeholders(self):
-        self.set_state(mode="spec")
-        text = self.spec_text("`python greet.py World` → `hello, World`", "yes (2026-11-05)", "| README.md | Files |")
-        self.spec.write_text(text.replace("Users can log in.", "greet.py prints `hello, <name>` for the given <name>."), "utf-8")
-        code, err, _ = self.post(self.spec)
-        self.assertEqual(code, 0, err)
-
-    def test_template_goal_demotes(self):
-        self.set_state(mode="spec")
-        text = self.spec_text("`cargo test` → `3 passed`", "yes (2026-11-05)", "| docs/auth.md | login section |")
-        for goal in ("", "One paragraph: what users or operators get, and why now."):
-            self.spec.write_text(text.replace("Users can log in.", goal), "utf-8")
-            code, err, _ = self.post(self.spec)
-            self.assertEqual(code, 2, goal)
-            self.assertIn("template text", err)
-            self.set_state(mode="spec")
-
-    def test_gaps_demote_to_draft(self):
+    def test_a_spec_with_gaps_stays_ready(self):
+        # 1b.2: no check and no demotion; the ready check lives in /docket:spec.
         self.set_state(mode="spec")
         self.spec.write_text(self.spec_text("works", "", ""), "utf-8")
-        code, err, _ = self.post(self.spec)
-        self.assertEqual(code, 2)
-        for fragment in ("criterion", "user decision open", "Reference update"):
-            self.assertIn(fragment, err)
-        self.assertIn("state: draft", self.spec.read_text("utf-8"))
-        self.assertNotIn(" ready ", self.log())
+        self.assertEqual(self.post(self.spec), (0, "", ""))
+        self.assertIn("state: ready", self.spec.read_text("utf-8"))
+        self.assertEqual(self.log().count(" ready "), 1)
 
 
 class SpecState(Project):
@@ -929,7 +791,7 @@ class Provenance(Project):
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("- [x] point 1: see src/auth.rs:40 and src/gone.rs:1\n", "utf-8")
         code, err, _ = self.stop_t(f"DOCKET DELIVERED {SPEC}\nok\nNothing to do.\n{stamp()}")
-        self.assertEqual(code, 0, err)  # checked when the line was written (CitationsAtWrite), never again
+        self.assertEqual(code, 0, err)  # a cited location is not checked at the end
 
     def test_reference_update_must_be_accounted_for(self):
         self.write_transcript([("assistant", {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}})])
@@ -1062,11 +924,10 @@ class ProjectRules(Project):
 
 class JudgeLog(Project):
     """The judge runs at Stop, after the user read the message: its rejection goes to Claude, which answers
-    `[docket] noted`; the gate hides that answer, stop.py lets it through and counts the verdict."""
+    `[docket] noted`; stop.py lets it through and counts the verdict."""
 
     PROMPT = "[You judge the final message of an assistant before a human reads it. Hook input JSON: $ARGUMENTS ...]"
     TAIL = " The user has read your message and will not see your answer to this; answer with exactly the line `[docket] noted`."
-    HIDDEN = "​"
 
     def setUp(self):
         super().setUp()
@@ -1089,35 +950,9 @@ class JudgeLog(Project):
         return {"type": "assistant", "timestamp": "2026-11-05T21:58:44Z",
                 "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
 
-    def display(self, delta):
-        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "m9",
-                                                         "index": 0, "final": True, "delta": delta,
-                                                         "transcript_path": str(self.path)}, self.p)
-        self.assertEqual(code, 0, err)
-        return json.loads(out)["hookSpecificOutput"]["displayContent"] if out.strip() else None
-
     def stop_with(self, message, active=False):
         return run_hook("stop.py", {"session_id": SID, "cwd": self.p, "last_assistant_message": message,
                                     "stop_hook_active": active, "transcript_path": str(self.path)}, self.p)
-
-    def test_acknowledgement_is_hidden_passed_and_the_verdict_counted_once(self):
-        self.set_state(mode="concept")
-        reason = ('no-source "The transfer set is now the five" | promise "I will report the result when it" | '
-                  'no-source "The check is still running"')
-        self.add({"type": "user", "timestamp": "2026-11-05T21:57:00Z", "message": {"role": "user", "content": "go on"}},
-                 self.said(f"The transfer set is now the five specs.\n{hstamp()}"),
-                 self.feedback(reason), self.summary("2026-11-05T21:58:53Z", reason))
-        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
-        code, err, _ = self.stop_with("[docket] noted", active=True)
-        self.assertEqual(code, 0, err)
-        counts = json.loads((self.work / "metrics" / "session.violations.json").read_text("utf-8"))
-        self.assertEqual(counts, {"judge-no-source": 2, "judge-promise": 1})
-        self.assertEqual(self.log().count(" judge "), 1)
-        self.assertNotIn("noted", self.log().split(" judge ")[1])  # the request to acknowledge is not logged
-        self.assertNotIn("stop-forced", self.log())
-        # Stops after it read only what is new.
-        self.stop_with(f"Next answer.\n{hstamp()}")
-        self.assertEqual(self.log().count(" judge "), 1)
 
     def test_empty_answer_after_a_verdict_passes_and_the_verdict_is_counted(self):
         # Experiment 10d: after the verdict Claude records no message; the second Stop carries no
@@ -1133,31 +968,6 @@ class JudgeLog(Project):
         counts = json.loads((self.work / "metrics" / "session.violations.json").read_text("utf-8"))
         self.assertEqual(counts, {"judge-promise": 1})
         self.assertEqual(self.log().count(" judge "), 1)
-
-    def test_acknowledgement_is_hidden_in_every_mode_of_a_set_up_project(self):
-        self.set_state(mode="none")
-        self.add(self.feedback('self "Sorry for the delay"'))
-        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
-        self.assertEqual(self.stop_with("[docket] noted", active=True)[0], 0)
-        (self.work / "DOCKET.md").unlink()
-        self.assertIsNone(self.display("[docket] noted"))
-
-    def test_answer_to_a_held_back_message_is_shown(self):
-        self.set_state(mode="concept")
-        self.add(self.feedback('promise "I will"', extra="[docket] Your last message was held back and never shown "
-                                                         "to the user: no hedge words. Write it again in full.\n"))
-        message = f"It works.\n{hstamp()}"
-        self.assertEqual(self.display(message), message)
-
-    def test_messages_after_a_user_turn_or_a_tool_call_are_judged_as_usual(self):
-        self.set_state(mode="concept")
-        self.add(self.feedback('promise "I will"'),
-                 {"type": "user", "message": {"role": "user", "content": "und jetzt?"}})
-        message = f"It works.\n{hstamp()}"
-        self.assertEqual(self.display(message), message)
-        self.add(self.feedback('promise "I will"'),
-                 {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "x"}]}})
-        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
 
     def test_acknowledgement_does_not_end_a_sealed_run(self):
         self.set_state(mode="sealed", spec=SPEC)
@@ -1435,20 +1245,6 @@ class LegacyConcept(Project):
         self.assertEqual(code, 2)
         self.assertIn("ids", err)
 
-    def test_a_rewrite_the_gate_asked_for_is_shown_when_the_judge_feedback_is_a_separate_entry(self):
-        self.set_state(mode="concept")
-        judge = JudgeLog.PROMPT + ': no-source "Alle fünf Specs tragen"' + JudgeLog.TAIL
-        self.add(self.said(f"Alle fünf Specs tragen.\n{hstamp()}"),
-                 self.user("Stop hook feedback:\n[docket] Your last message was held back and never shown to the user: "
-                           "no spec or concept ids. Write it again in full."),
-                 self.user("Stop hook feedback:\n" + judge))
-        message = f"Alle fünf Specs tragen (Konzept, Abschnitt Korrekturen).\n{hstamp()}"
-        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "m7", "index": 0,
-                                                         "final": True, "delta": message,
-                                                         "transcript_path": str(self.path)}, self.p)
-        self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(out)["hookSpecificOutput"]["displayContent"], message)
-
 
 class RepeatedBlocker(Project):
     """M4: a blocker is said once. On 2026-11-05 the same blocker stood in seven messages in a row and the user
@@ -1496,41 +1292,6 @@ class RepeatedBlocker(Project):
         self.turn("alles pushen", f"Blocker: the push needs your click.\n{hstamp()}")
         self.turn("ok", f"Pushed (git push).\n{hstamp()}")
         self.assertEqual(self.stop_t(f"Blocker: the push needs your click.\n{hstamp()}")[0], 0)
-
-
-class Clock(Project):
-    """M7: the hooks hand the time to the model with every prompt and tool result; the stamp needs no tool call
-    (25 of 174 calls fetched the time on 2026-11-05)."""
-
-    def post(self):
-        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
-                                             "tool_input": {"file_path": f"{self.p}/README.md"}}, self.p)
-
-    def test_prompt_and_tool_results_carry_the_clock(self):
-        self.set_state(mode="concept")
-        _, _, out = self.prompt("how are the tests?")
-        clock = self.state()["clock"]
-        self.assertRegex(clock, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
-        self.assertIn(f"[docket] clock: {clock}", out)
-        code, err, out = self.post()
-        self.assertEqual(code, 0, err)
-        self.assertIn("[docket] clock: ", json.loads(out)["hookSpecificOutput"]["additionalContext"])
-        self.assertEqual(json.loads(out)["hookSpecificOutput"]["hookEventName"], "PostToolUse")
-
-    def test_stamp_equal_to_the_given_clock_passes_after_a_long_turn(self):
-        when = datetime.now() - timedelta(minutes=40)
-        self.set_state(mode="concept", clock=f"{when:%Y-%m-%d %H:%M}")
-        code, err, _ = self.stop(f"The default stays at 512 (config_reference.md).\nstamp: {when:%Y-%m-%d %H:%M}")
-        self.assertEqual(code, 0, err)
-        code, err, _ = self.stop(f"The default stays at 512 (config_reference.md).\n{hstamp(-30)}")
-        self.assertEqual(code, 2)
-        self.assertIn("minutes off", err)
-        self.assertIn("clock", err)
-
-    def test_no_clock_without_docket_md(self):
-        (self.work / "DOCKET.md").unlink()
-        code, _, out = self.post()
-        self.assertEqual((code, out.strip()), (0, ""))
 
 
 class CopySync(Project):
@@ -1605,207 +1366,6 @@ class CopySync(Project):
         self.start()
         self.assertEqual((self.root / ".claude" / "settings.json").read_text("utf-8"), before)
         self.assertNotIn("judge-updated", self.log())
-
-
-class SealedGate(Project):
-    """0.3.0: a run shows the series' status line live, only when it carries news, and at its end the one closing
-    message. luradb-web-client 2026-11-06: 105 status lines, 30 equal to the one before, 51 new only in the minute."""
-
-    HIDDEN = DisplayGate.HIDDEN
-    display = DisplayGate.display
-    record = DisplayGate.record
-
-    def setUp(self):
-        super().setUp()
-        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login per Token\nstate: in-progress\n---\n# Login per Token\n", "utf-8")
-        (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
-            "---\nid: s-aaaa1111\ntitle: Logout\nstate: ready\n---\n", "utf-8")
-        self.set_state(mode="sealed", spec=SPEC, series=[SPEC, "s-aaaa1111"], queue=["s-aaaa1111"],
-                       clock="2026-11-06 10:00")
-        self.docket.write_text("| 1 | login | `cargo test` | [x] |\n| 2 | logout | `cargo test` | [~] |\n"
-                               "| 3 | refresh | `cargo test` | [ ] |\n", "utf-8")
-
-    def german_config(self):
-        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
-
-    def test_a_text_is_replaced_by_the_series_status_line_without_clock(self):
-        shown = self.display("Three refiners running. Meanwhile checking loadEnv myself.")
-        self.assertEqual(shown, "[docket] Spec 1 of 2 · Login per Token: 1 of 3 points delivered, 1 deviating")
-        self.assertEqual(self.record()["hidden"], [])
-
-    def test_the_same_status_line_is_shown_once(self):
-        self.assertIn("1 of 3", self.display("one", message_id="m1"))
-        self.assertEqual(self.display("two", message_id="m2"), self.HIDDEN)
-        self.docket.write_text(self.docket.read_text("utf-8").replace("| [ ] |", "| [x] |"), "utf-8")
-        self.assertIn("2 of 3", self.display("three", message_id="m3"))
-        self.assertEqual(self.display("four", message_id="m4"), self.HIDDEN)
-
-    def test_status_line_in_german_before_the_docket_exists(self):
-        self.docket.unlink()
-        self.german_config()
-        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
-        self.assertEqual(self.display("Reading the required files first."),
-                         "[docket] Login per Token: wird vorab aus drei Blickwinkeln geprüft")
-        self.set_state(mode="sealed", spec=SPEC, series=[SPEC, "s-aaaa1111"])
-        self.assertEqual(self.display("again", message_id="m2"),
-                         "[docket] Spec 1 von 2 · Login per Token: wird vorab aus drei Blickwinkeln geprüft")
-
-    def closing_state(self):
-        rendered = ("Run finished: “Login per Token” is implemented.\n- Login per Token: 1 of 1 points delivered.\n"
-                    f"Nothing open, nothing to do.\n{hstamp()}\n")
-        path = self.root / ".claude" / "docket" / f"closing-{SID}.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(rendered, "utf-8")
-        self.set_state(mode="closing", spec=SPEC, series=[SPEC], closing={"file": str(path), "attempts": 0})
-        return rendered
-
-    def test_closing_shows_only_the_rendered_message_and_closes_the_run(self):
-        rendered = self.closing_state()
-        self.assertEqual(self.display("Reading the closing file."), self.HIDDEN)
-        self.assertEqual(self.display(rendered, message_id="m2"), rendered)
-        code, err, _ = self.run_stop(rendered)
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.state()["mode"], "closed")
-        self.assertIn("run-closed", self.log())
-
-    def test_a_wrong_closing_message_is_asked_for_again_and_the_third_try_shows_the_rendered_one(self):
-        rendered = self.closing_state()
-        wrong = f"DOCKET DELIVERED {SPEC}\nAll good."
-        self.assertEqual(self.display(wrong), self.HIDDEN)
-        code, err, _ = self.run_stop(wrong)
-        self.assertEqual(code, 2)
-        self.assertIn("does not match", err)
-        self.assertIn("line 1 should read `Run finished", err)
-        self.assertEqual(self.display(wrong, message_id="m2"), self.HIDDEN)
-        self.assertEqual(self.run_stop(wrong, active=True)[0], 2)
-        self.assertEqual(self.display(wrong, message_id="m3"), rendered.rstrip())
-        code, err, _ = self.run_stop(wrong, active=True)
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.state()["mode"], "closed")
-        self.assertIn("stop-forced", self.log())
-
-    def test_terminal_lines_are_the_users_words(self):
-        self.german_config()
-        self.docket.write_text("| 1 | login | `cargo test` | [x] |\n", "utf-8")
-        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
-        self.end_spec(result="The token login works now and all three tests are green on the branch.")
-        code, err, _ = self.run_stop()
-        self.assertEqual(code, 2)
-        self.assertIn("not in Deutsch", err)
-        self.end_spec(result=f"Der Login mit Token funktioniert, siehe {SPEC}.")
-        code, err, _ = self.run_stop()
-        self.assertEqual(code, 2)
-        self.assertIn("no spec or concept ids", err)
-        self.end_spec(result="Der Login mit Token funktioniert, drei Tests sind grün.",
-                      lines=["decision: Soll der Logout auch kommen? Empfehlung: ja"])
-        code, err, _ = self.run_stop()
-        self.assertEqual(code, 2)
-        self.assertIn("has no `why:`, `outside:`", err)  # a question is no proposal
-        self.end_spec(result="Der Login mit Token funktioniert, drei Tests sind grün.",
-                      lines=["decision: Auch den Logout umsetzen lassen | why: Eine Sitzung endet sonst nie"])
-        code, err, _ = self.run_stop()
-        self.assertEqual(code, 2)
-        self.assertIn("has no `outside:`", err)  # what kept the run from doing it itself
-        self.end_spec(result="Der Login mit Token funktioniert, drei Tests sind grün.",
-                      lines=["decision: Auch den Logout umsetzen lassen | why: Eine Sitzung endet sonst nie | "
-                             "outside: Die Spec ordnet nur den Login an, und ein Logout ändert, was Nutzer sehen"])
-        code, err, _ = self.run_stop()
-        self.assertEqual(code, 2)
-        self.assertEqual(self.state()["mode"], "closing")
-        text = self.closing()
-        self.assertTrue(text.startswith("Lauf beendet: „Login per Token“ ist umgesetzt."), text)
-        self.assertIn("**Für dich zu tun:** nichts.\n\n**Vorschläge für später, außerhalb des Auftrags (1):**\n"
-                      "1. Auch den Logout umsetzen lassen – Eine Sitzung endet sonst nie.\n\n"
-                      "Eine Spec daraus: `/docket:spec` und die Nummer des Vorschlags.\n", text)
-        self.assertNotIn("Die Spec ordnet nur", text)  # why the run did not do it stays in the docket
-        self.assertNotIn("Geprüft", text)
-
-
-class Language(Project):
-    """0.2.9: DOCKET.md `user_language` is the language of every message to the user; the gate holds another back."""
-
-    def setUp(self):
-        super().setUp()
-        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
-
-    def display(self, delta, message_id="m1"):
-        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": message_id,
-                                                         "index": 0, "final": True, "delta": delta}, self.p)
-        self.assertEqual(code, 0, err)
-        return json.loads(out)["hookSpecificOutput"]["displayContent"] if out.strip() else None
-
-    def test_an_english_message_in_concept_mode_is_held_back_and_a_german_one_shown(self):
-        self.set_state(mode="concept")
-        english = f"The default stays at 512 and the cache is not touched by this change (config_reference.md).\n{hstamp()}"
-        self.assertEqual(self.display(english), DisplayGate.HIDDEN)
-        code, err, _ = self.stop(english)
-        self.assertEqual(code, 2)
-        self.assertIn("not in Deutsch", err)
-        german = f"Der Standard bleibt bei 512 und der Cache wird von dieser Änderung nicht berührt (config_reference.md).\n{hstamp()}"
-        self.prompt("weiter")
-        self.assertEqual(self.display(german, message_id="m2"), german)
-        self.assertEqual(self.stop(german)[0], 0)
-
-    def test_code_and_short_texts_are_not_judged_and_the_prompt_names_the_language(self):
-        self.set_state(mode="concept")
-        code_heavy = f"Der Befehl ist `npm run check && npm test --reporter dot` (package.json).\n{hstamp()}"
-        self.assertEqual(self.stop(code_heavy)[0], 0)
-        self.assertEqual(self.stop(f"Done.\n{hstamp()}")[0], 0)
-        _, _, out = self.prompt("/docket:concept")
-        self.assertIn("written in Deutsch", out)
-        (self.work / "DOCKET.md").write_text("# DOCKET\n", "utf-8")
-        _, _, out = self.prompt("/docket:concept")
-        self.assertNotIn("written in", out)
-
-
-class CitationsAtWrite(Project):
-    """0.2.9: a docket line that cites a `file:line` which does not exist undoes the write (luradb-web-client
-    2026-11-06: refinement lines cited paths relative to concept/, DELIVERED refused them, the correction broke
-    append-only; three DELIVERED attempts)."""
-
-    def post(self, path, tool="Edit"):
-        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": tool,
-                                             "tool_input": {"file_path": str(path)}}, self.p)
-
-    def setUp(self):
-        super().setUp()
-        self.set_state(mode="sealed", spec=SPEC)
-        (self.root / "src").mkdir()
-        (self.root / "src" / "auth.rs").write_text("a\nb\nc\n", "utf-8")
-
-    def test_a_new_line_with_a_missing_location_undoes_the_edit(self):
-        before = "# Docket\n## Refinement\n- feasibility: ok, see src/auth.rs:2\n"
-        self.docket.write_text(before, "utf-8")
-        self.tool("Edit", file_path=str(self.docket))  # snapshot
-        self.docket.write_text(before + "- concept: AGENTS.md:22 says so\n", "utf-8")
-        code, err, _ = self.post(self.docket)
-        self.assertEqual(code, 2)
-        self.assertIn("undone", err)
-        self.assertIn("AGENTS.md:22", err)
-        self.assertIn("relative to the repo root", err)
-        self.assertEqual(self.docket.read_text("utf-8"), before)
-        self.assertIn("docket-undone", self.log())
-        self.tool("Edit", file_path=str(self.docket))
-        self.docket.write_text(before + "- concept: src/auth.rs:3 says so\n", "utf-8")
-        self.assertEqual(self.post(self.docket)[0], 0)
-
-    def test_a_skeleton_with_a_missing_location_is_removed(self):
-        self.docket.write_text("# Docket\n- feasibility: see src/gone.rs:1\n", "utf-8")
-        code, err, _ = self.post(self.docket, tool="Write")
-        self.assertEqual(code, 2)
-        self.assertFalse(self.docket.exists())
-
-    def test_delivered_checks_no_citation(self):
-        # A line once written cannot change, and the code it points at does: no citation is checked at DELIVERED
-        # (luradb-web-client 2026-11-10: a stale citation in the Evidence section ended a pushed spec BLOCKED).
-        self.docket.write_text("## Refinement\n- concept: see docs/old.md:3 → adopted\n## Evidence\n- point 1: `cargo test` → ok, src/auth.rs:2\n"
-                               "| 1 | login | x | [x] |\n", "utf-8")
-        code, err, _ = self.finish(f"DOCKET DELIVERED {SPEC}")
-        self.assertEqual(code, 0, err)
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("## Refinement\n- fine → adopted\n## Evidence\n- point 1: see src/auth.rs:9\n| 1 | login | x | [x] |\n", "utf-8")
-        code, err, _ = self.finish(f"DOCKET DELIVERED {SPEC}")
-        self.assertEqual(code, 0, err)
 
 
 class Series(Project):
@@ -2165,62 +1725,6 @@ class Triage(Project):
         (self.root / "src").mkdir()
         (self.root / "src" / "auth.rs").write_text("a\nb\nc\n", "utf-8")
         self.docket.write_text(self.POINTS, "utf-8")
-        self.path = self.tmp / "triage.jsonl"
-
-    def transcript(self, *steps):
-        """Steps in order: an agent kind, a shell command, or (command, "failed")."""
-        entries = []
-        for n, step in enumerate(steps):
-            command, failed = step if isinstance(step, tuple) else (step, "")
-            agent = command in ("implementer", "diagnoser", "reviewer", "fixer")
-            given = {"subagent_type": f"docket:{command}"} if agent else {"command": command}
-            entries.append({"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "id": f"t{n}", "name": "Agent" if agent else "Bash", "input": given}]}})
-            entries.append({"type": "user", "message": {"content": [
-                {"type": "tool_result", "tool_use_id": f"t{n}", "content": "x", "is_error": bool(failed)}]}})
-        self.path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
-        return str(self.path)
-
-    def triage(self, line):
-        self.docket.write_text(self.POINTS + "\n## Triage\n\n" + line + "\n", "utf-8")
-
-    def write(self, line, *steps):
-        """The orchestrator appends `line` to the docket; the hook answers after the write."""
-        snap = self.root / ".claude" / "docket" / f"snap-{SPEC}.md"
-        before = self.docket.read_text("utf-8")
-        snap.write_text(before, "utf-8")
-        self.docket.write_text(before + "\n## Triage\n\n" + line + "\n", "utf-8")
-        code, err, _ = run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
-                                                     "transcript_path": self.transcript(*steps),
-                                                     "tool_input": {"file_path": str(self.docket)}}, self.p)
-        return code, err, self.docket.read_text("utf-8") != before
-
-    RUNS = ("cargo test refresh", ("cargo test refresh", "failed"), "cargo test refresh")
-
-    def test_observe_is_the_late_exit(self):
-        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", *self.RUNS)
-        self.assertEqual((code, kept), (2, False))  # undone: nobody challenged the first answer
-        self.assertIn("no second diagnoser has returned", err)
-        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", "diagnoser", "cargo test refresh")
-        self.assertEqual((code, kept), (2, False))
-        self.assertIn("1 of three times", err)
-        failed = [("cargo test refresh", "failed")] * 3
-        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", "diagnoser", *failed)
-        self.assertEqual((code, kept), (2, False))
-        self.assertIn("shown three of three is a fault", err)
-        code, err, kept = self.write("- point 2 | observe: a red refresh test in CI", "diagnoser", "diagnoser")
-        self.assertEqual((code, kept), (2, False))
-        self.assertIn("it has no `cause:`", err)
-        code, err, kept = self.write(self.FLAKY, "implementer", "diagnoser", "diagnoser", *self.RUNS)
-        self.assertEqual((code, kept), (0, True), err)
-        self.assertIn("docket-undone", self.log())
-
-    def test_a_fault_no_command_of_a_reasonable_size_shows_still_needs_the_challenge(self):
-        line = ("- point 2 | cause: unknown after src/auth.rs | repro: none, it needs a day of production load | "
-                "impact: one session in thousands | observe: a 401 right after a refresh in the access log")
-        self.assertEqual(self.write(line, "implementer", "diagnoser")[0], 2)
-        self.assertEqual(self.write(line, "implementer", "diagnoser", "diagnoser")[0], 0)
-        self.assertEqual(self.write("- point 2 | cause: src/auth.rs:2 | repro: `x` → 3 of 3 | impact: all | fix")[0], 0)
 
     def test_what_is_observed_reaches_the_user_as_a_line_to_watch(self):
         self.docket.write_text("| 1 | login | `x` | [x] |\n## Triage\n\n" + self.FLAKY.replace("point 2", "point 1") + "\n",
@@ -2508,25 +2012,6 @@ class ReviewFindings(Project):
         self.assertEqual(json.loads(out)["systemMessage"], self.closing().rstrip())
         self.assertEqual(self.state()["mode"], "closed")
 
-    def test_a_judge_verdict_does_not_hide_the_closing_message(self):
-        self.end_spec()
-        self.run_stop()
-        feedback = {"type": "user", "message": {"content": "Stop hook feedback:\n" + JudgeLog.PROMPT + ': promise "x"' + JudgeLog.TAIL}}
-        path = self.entries(self.said("before"), feedback)
-        text = self.closing()
-        code, err, out = run_hook("message_display.py", {"session_id": SID, "cwd": self.p, "message_id": "m1", "index": 0,
-                                                         "final": True, "delta": text, "transcript_path": path}, self.p)
-        self.assertEqual(json.loads(out)["hookSpecificOutput"]["displayContent"], text)
-
-    def test_only_the_conceptor_ends_a_rewrite(self):
-        self.set_state(mode="rewrite", spec=SPEC, series=[SPEC], rewrite=SPEC)
-        stop = lambda kind: run_hook("subagent_stop.py", {"session_id": SID, "cwd": self.p, "agent_type": kind,
-                                                          "last_assistant_message": "done\nUnverified: none"}, self.p)
-        stop("docket:refiner")
-        self.assertEqual(self.state()["mode"], "rewrite")
-        stop("docket:conceptor")
-        self.assertEqual(self.state()["mode"], "sealed")
-
     def test_a_check_counts_only_after_a_background_agent_returned(self):
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
         self.end_spec()
@@ -2540,13 +2025,6 @@ class ReviewFindings(Project):
         self.assertEqual(code, 2)
         self.assertEqual(self.state()["mode"], "closing")
         self.assertIn("Login: 1 of 1 points delivered", self.closing())
-
-    def test_a_host_and_port_is_no_citation(self):
-        self.assertEqual(self.tool("Edit", file_path=str(self.docket))[0], 0)
-        self.docket.write_text(self.docket.read_text("utf-8") + "- the server runs on staging.example.com:8443\n", "utf-8")
-        code, err, _ = run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
-                                                     "tool_input": {"file_path": str(self.docket)}}, self.p)
-        self.assertEqual(code, 0, err)
 
     def test_an_untracked_settings_file_git_would_commit_keeps_its_judge(self):
         template = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))
@@ -2748,10 +2226,11 @@ class SessionStateRace(Project):
               "import docket_lib as d\n"
               "paths = types.SimpleNamespace(state_dir=sys.argv[2], config=sys.argv[5])\n"
               "lost = 0\n"
-              "for _ in range(int(sys.argv[4])):\n"
+              "for n in range(int(sys.argv[4])):\n"
               "    state = d.load_state(paths, sys.argv[3])\n"
               "    lost += state.get('mode') != 'spec'\n"
-              "    d.clock_line(paths, sys.argv[3], state)\n"
+              "    state['refused'] = bool(n % 2)\n"
+              "    d.save_state(paths, sys.argv[3], state)\n"
               "print(lost)\n")
 
     def lib(self):
@@ -2776,19 +2255,21 @@ class SessionStateRace(Project):
         self.assertEqual(self.leftovers(), [])
 
     def test_hooks_of_one_message_keep_the_mode(self):
-        # The hooks as Claude Code starts them: one process per tool call, all in the same moment.
-        self.set_state(mode="spec")
+        # The hooks as Claude Code starts them: one process per tool call, all in the same moment. Each one finds the
+        # refusal marker set and clears it.
         payload = json.dumps({"session_id": SID, "cwd": self.p, "tool_name": "Agent",
                               "tool_input": {"description": "draft"}}).encode("utf-8")
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
         env["CLAUDE_PROJECT_DIR"] = self.p
         for _ in range(3):
+            self.set_state(mode="sealed", spec=SPEC, refused=True)
             hooks = [subprocess.Popen([sys.executable, str(HOOKS / "post_tool_use.py")], stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env) for _ in range(14)]
             for hook in hooks:
                 out = hook.communicate(payload)[0].decode("utf-8")
-                self.assertIn("[docket] clock: ", out)
-            self.assertEqual(self.state()["mode"], "spec")
+                self.assertEqual(out, "")
+            self.assertEqual((self.state()["mode"], self.state()["spec"], self.state()["refused"]),
+                             ("sealed", SPEC, False))
         self.assertEqual(self.leftovers(), [])
 
     def test_a_hook_with_an_older_state_does_not_undo_a_newer_mode(self):
@@ -2851,13 +2332,13 @@ class SessionStateRace(Project):
         self.assertEqual(len(calls), 3)
 
     def test_an_agents_tool_call_writes_nothing_into_the_state(self):
-        self.set_state(mode="spec", clock="2026-11-10 12:00", refused=True)
-        before = (self.root / ".claude" / "docket" / f"state-{SID}.json").read_text("utf-8")
-        code, err, out = run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
-                                                       "agent_id": "a1", "tool_input": {"file_path": "x.md"}}, self.p)
-        self.assertEqual(code, 0, err)
-        self.assertIn("[docket] clock: ", json.loads(out)["hookSpecificOutput"]["additionalContext"])
-        self.assertEqual((self.root / ".claude" / "docket" / f"state-{SID}.json").read_text("utf-8"), before)
+        for mode in ("spec", "sealed"):
+            self.set_state(mode=mode, spec=SPEC, clock="2026-11-10 12:00", refused=True)
+            before = (self.root / ".claude" / "docket" / f"state-{SID}.json").read_text("utf-8")
+            code, err, out = run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                                           "agent_id": "a1", "tool_input": {"file_path": "x.md"}}, self.p)
+            self.assertEqual((code, err, out), (0, "", ""))
+            self.assertEqual((self.root / ".claude" / "docket" / f"state-{SID}.json").read_text("utf-8"), before)
 
     def test_an_agents_tool_call_keeps_a_run_live(self):
         self.set_state(mode="sealed", spec=SPEC)
@@ -2868,103 +2349,34 @@ class SessionStateRace(Project):
         self.assertLess(time.time() - path.stat().st_mtime, 60)
         self.assertEqual(self.state()["mode"], "sealed")
 
+    # 1b.4: the life sign of the orchestrator's own tool calls.
+    def orchestrator_call(self):
+        return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
+                                             "tool_input": {"file_path": "x.md"}}, self.p)
 
-class ForcedAnswers(JudgeLog):
-    """Claude Code Desktop answers a turn that ended without text with "[Your previous response had no visible
-    output…]" and the model has to write something. luradb-web-client 2026-11-10: after six of six judge verdicts
-    that something was `Blocker unverändert` or a bare stamp, on the user's screen, under each answer to a question."""
+    def test_an_orchestrators_tool_call_in_a_run_keeps_it_live_and_says_nothing(self):
+        self.set_state(mode="sealed", spec=SPEC)
+        path = self.root / ".claude" / "docket" / f"state-{SID}.json"
+        before = path.read_text("utf-8")
+        os.utime(path, (time.time() - 7200, time.time() - 7200))
+        self.assertEqual(self.orchestrator_call(), (0, "", ""))
+        self.assertLess(time.time() - path.stat().st_mtime, 60)
+        self.assertEqual(path.read_text("utf-8"), before)
 
-    NUDGE = {"type": "user", "isMeta": True, "message": {"role": "user", "content": (
-        "[Your previous response had no visible output. Please continue and produce a user-visible response.]")}}
-    EMPTY = {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": ""}]}}
+    def test_an_orchestrators_tool_call_in_a_run_clears_the_refusal(self):
+        self.set_state(mode="sealed", spec=SPEC, refused=True)
+        self.assertEqual(self.orchestrator_call(), (0, "", ""))
+        self.assertEqual((self.state()["mode"], self.state()["refused"]), ("sealed", False))
 
-    def judged(self):
-        reason = 'manual-task "Bitte tippe genau das in das Eingabefeld"'
-        self.add(self.said(f"Bitte tippe /docket:spec weiter.\n{hstamp()}"), self.feedback(reason),
-                 self.summary("2026-11-10T12:30:01Z", reason), self.EMPTY, self.NUDGE)
-
-    def test_what_follows_a_verdict_and_the_harness_is_not_shown(self):
-        self.set_state(mode="none")
-        self.judged()
-        for stub in ("[docket] noted", hstamp(), f"Blocker unverändert\n\n{hstamp()}", f"[docket] noted\n{hstamp()}"):
-            self.assertEqual(self.display(stub), self.HIDDEN, stub)
-            self.assertEqual(self.stop_with(stub, active=True)[0], 0, stub)
-
-    def test_a_message_with_content_after_the_harness_is_shown(self):
-        self.set_state(mode="none")
-        self.judged()
-        self.assertIsNone(self.display(f"Der Modus ist wieder da, die Spec ist geschrieben.\n{hstamp()}"))
-        self.set_state(mode="spec")
-        message = f"Der Modus ist wieder da, die Spec ist geschrieben.\n{hstamp()}"
-        self.assertEqual(self.display(message), message)
-
-    def test_the_acknowledgement_is_never_shown(self):
-        # A wait for agents in spec mode: no verdict, the harness asked, the answer is the line alone.
-        self.set_state(mode="spec")
-        self.add(self.said(f"Die Entwürfe laufen.\n{hstamp()}"), self.EMPTY, self.NUDGE)
-        self.assertEqual(self.display("[docket] noted"), self.HIDDEN)
-        self.assertEqual(self.stop_with("[docket] noted")[0], 0)
-        # A bare stamp without a verdict is a message like any other.
-        self.assertEqual(self.display(hstamp()), hstamp())
-
-    def test_the_judge_knows_a_docket_command_and_the_harness(self):
-        prompt = self.template_prompt()
-        self.assertIn("/docket:", prompt.split("Reject the message")[0])
-        self.assertIn("[docket] noted", prompt)
-
-    def template_prompt(self):
-        template = json.loads((HOOKS.parent / "templates" / "judge-hook.json").read_text("utf-8"))
-        return template["hooks"]["Stop"][0]["hooks"][0]["prompt"]
-
-
-class WaitForAgents(Project):
-    """Concept and spec mode: the user gets one message about the agents' work, when the last one is back
-    (luradb-web-client 2026-11-10: 15 agents returned, 15 status lines in a row)."""
-
-    def spawn(self, **extra):
-        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Agent", "tool_input": {"description": "Entwurf"}}
-        payload.update(extra)
-        code, err, out = run_hook("post_tool_use.py", payload, self.p)
-        self.assertEqual(code, 0, err)
-        return json.loads(out)["hookSpecificOutput"]["additionalContext"]
-
-    def test_the_rule_comes_with_the_spawn(self):
-        for mode in ("spec", "concept"):
-            self.set_state(mode=mode)
-            context = self.spawn()
-            self.assertIn("end the turn without any text", context)
-            self.assertIn("[docket] noted", context)
-        self.set_state(mode="none")
-        self.assertNotIn("without any text", self.spawn())
-        self.set_state(mode="spec")
-        self.assertNotIn("without any text", self.spawn(agent_id="a1"))  # an agent's own spawn: not the orchestrator
-
-    def test_a_turn_without_text_passes_the_stop(self):
-        # The turn before ended ten minutes ago with a message a Stop passed; a returning agent's turn ends without
-        # text and is not checked against that message's stamp.
-        self.set_state(mode="spec", clock=f"{datetime.now():%Y-%m-%d %H:%M}")
-        transcript = self.tmp / "transcript.jsonl"
-        entries = [{"type": "assistant", "message": {"role": "assistant", "content": [
-                        {"type": "text", "text": f"Die Entwürfe laufen.\n{hstamp(-10)}"}]}},
-                   {"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-10T12:00:00Z"},
-                   {"type": "assistant", "message": {"role": "assistant", "content": [
-                       {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}}]
-        transcript.write_text("".join(json.dumps(entry) + "\n" for entry in entries), "utf-8")
-        for last in ({}, {"last_assistant_message": ""}):
-            code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "stop_hook_active": False,
-                                                "transcript_path": str(transcript), **last}, self.p)
-            self.assertEqual(code, 0, err)
-            self.assertFalse(self.state()["degraded"])
-
-    def test_a_message_no_stop_has_seen_is_still_checked(self):
-        self.set_state(mode="spec")
-        transcript = self.tmp / "transcript.jsonl"
-        transcript.write_text(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
-            {"type": "text", "text": "Die Spec ist geschrieben."}]}}) + "\n", "utf-8")
-        code, err, _ = run_hook("stop.py", {"session_id": SID, "cwd": self.p, "stop_hook_active": False,
-                                            "transcript_path": str(transcript)}, self.p)
-        self.assertEqual(code, 2)
-        self.assertIn("stamp", err)
+    def test_without_the_run_mark_the_state_file_is_untouched(self):
+        self.set_state(mode="none", refused=True)
+        path = self.root / ".claude" / "docket" / f"state-{SID}.json"
+        before = path.read_text("utf-8")
+        old = time.time() - 7200
+        os.utime(path, (old, old))
+        self.assertEqual(self.orchestrator_call(), (0, "", ""))
+        self.assertEqual(path.read_text("utf-8"), before)
+        self.assertLess(abs(path.stat().st_mtime - old), 2)
 
 
 class NeverInItsOwnWay(Project):
