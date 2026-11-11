@@ -1,0 +1,30 @@
+{
+ "case": "resume",
+ "stand": "none",
+ "run": 2,
+ "started": "2026-11-11T21:58:47",
+ "model": "claude-opus-5-5",
+ "criteria": [
+  {
+   "name": "point-2-accepted",
+   "class": "result",
+   "pass": true
+  },
+  {
+   "name": "point-1-untouched",
+   "class": "result",
+   "pass": true
+  }
+ ],
+ "subtype": "success",
+ "is_error": false,
+ "total_cost_usd": 0.15766940000000002,
+ "num_turns": 6,
+ "duration_ms": 35882,
+ "claude_code_version": "2.1.322",
+ "plugins": [],
+ "plugin_state": "",
+ "case_state": "02ff5025ecadaa18544fdd09073a75392b5c23ebf9828b15e6236bb01bd1ad81",
+ "valid": true,
+ "reason": ""
+}
