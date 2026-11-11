@@ -19,7 +19,7 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import command_line as prompt_command
-from docket_lib import (MARKED, RUN_MODES, Paths, load_state, log_event, logged_series, mark_run, read_input, run_line,
+from docket_lib import (RUN_MODES, Paths, load_state, log_event, logged_series, mark_run, read_input, run_line,
                         save_state, say, series_line, strip_harness_blocks, take_handoff, work_dir_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
@@ -59,7 +59,7 @@ def main():
             state["stop_requested"] = True
             save_state(paths, session_id, state)
             log_event(paths, session_id, state.get("spec", ""), "stop-requested")
-        if state.get("mode") in MARKED:
+        if state.get("mode") in RUN_MODES:
             lines.append(run_line(paths, state))
         if name in ("status", "register"):
             # a series of this session or an interrupted one, with its titles (V13)

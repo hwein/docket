@@ -17,7 +17,7 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (MARKED, SPEC_ID, Paths, _save_json, is_judge, judge_record_path, load_settings, load_state,
+from docket_lib import (RUN_MODES, SPEC_ID, Paths, _save_json, is_judge, judge_record_path, load_settings, load_state,
                         log_event, log_lines, logged_series, point_counts, prune_leftovers, read_input, run_line,
                         save_settings, say, series_line, session_live, settings_files, work_dir_line)
 
@@ -51,11 +51,11 @@ def main():
     source = hook_input.get("source", "startup")
     mode = state.get("mode", "none")
     spec_id = state.get("spec", "")
-    if mode in MARKED and source in ("resume", "compact"):
+    if mode in RUN_MODES and source in ("resume", "compact"):
         log_event(paths, session_id, spec_id, "resumed", f"source={source}")
     lines = ["[docket] " + say(paths, "session_state", mode=mode, spec=f", {spec_id}" if spec_id else ""),
              work_dir_line(paths)] + lines
-    if mode in MARKED:
+    if mode in RUN_MODES:
         lines.append(run_line(paths, state))
     else:
         in_series = set()

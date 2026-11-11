@@ -26,9 +26,11 @@ SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
 SPEC_ID = re.compile(r"\bs-[0-9a-f]{8}\b")
 CONCEPT_ID = re.compile(r"\bc-[0-9a-f]{8}\b")
 # closing: the run is over, the hook has rendered the closing message and waits for it verbatim.
-MODES = ("none", "concept", "spec", "init", "sealed", "rewrite", "closing", "closed")
-RUN_MODES = ("sealed", "rewrite", "closing")
-STATE_VERSION = 1
+# The modes of the session state (REWORK-SPEC 1d.7): `sealed` is the run mark, `none` everything else. A state file of
+# 0.5 with `rewrite`, `closing`, `closed`, `concept`, `spec` or `init` is read as `none` (load_state).
+MODES = ("none", "sealed")
+RUN_MODES = ("sealed",)
+STATE_VERSION = 2
 PLUGIN_ROOT = posixpath.dirname(posixpath.dirname(os.path.abspath(__file__).replace("\\", "/")))
 
 
@@ -192,25 +194,27 @@ SAY = {
         "points": "{x} von {n} Punkten geliefert",
         "deviating": ", {d} abweichend",
         "closing": "der Lauf ist zu Ende, die Abschlussmeldung folgt",
-        "handover": ("Spec {i} von {n} ist versiegelt: {title} ({spec}). Beginne sie bei Schritt 0 des Implement-Befehls; "
-                     "aus der vorigen Spec ist nichts ein Fakt, was du nicht neu liest. Bis zum Ende des Laufs schreibst "
-                     "du keinen Text."),
-        "handover_known": (" Dem Nutzer in diesem Lauf schon vorgeschlagen; schreibe es nicht noch einmal als "
-                           "`decision:`: {items}"),
-        "closing_order": ("Der Lauf ist zu Ende. Lies {path} mit Read und sende den Inhalt als deine einzige Nachricht: "
-                          "wörtlich, ohne Zusatz, ohne Codeblock."),
-        "closing_again": ("Die Nachricht stimmt nicht mit {path} überein ({problem}) und wurde nicht angezeigt. Sende den "
-                          "Inhalt der Datei wörtlich, ohne Zusatz, ohne Codeblock."),
-        "not_finished": ("Der Lauf ist nicht fertig: {problem}. Arbeite weiter. Eine Spec endet nur mit ihrem Abschnitt "
-                         "„Terminal state“ im Docket, danach endet der Turn ohne Text; ein Turn, in dem Agenten laufen, "
-                         "endet ebenfalls ohne Text. `state: BLOCKED` steht nur für das, was der Nutzer am Projekt klären "
-                         "muss, nie für einen Mangel in den Zeilen des Dockets: eine Zeile korrigierst du, indem du sie "
-                         "unten neu schreibst."),
-        "no_terminal": "kein Agent läuft, und der Abschnitt „Terminal state“ des Dockets hat keine Zeile `state:`",
-        "docket_message": ("eine Nachricht `DOCKET …` gibt es nicht mehr: das Ende einer Spec steht in ihrem Docket, die "
-                           "eine Nachricht des Laufs rendert der Hook am Ende"),
-        "halted": ("{title}: Der Lauf hat angehalten, ohne fertig zu sein. `/docket:implement {specs}` setzt ihn fort, "
+        # The Stop hook (REWORK-SPEC 1d): the gate before DELIVERED and the state statements of a run, as facts.
+        "gate": "Das Docket von {title} ({spec}) sagt DELIVERED; {problems}.",
+        "gate_open": "{k} Punkt(e) stehen noch offen `[ ]`",
+        "gate_check_missing": "der Check `{command}` lief in dieser Sitzung nicht",
+        "gate_check_before": "der Check `{command}` lief zuletzt vor der Rückkehr des letzten Agenten",
+        "gate_check_failed": "der Check `{command}` scheiterte in seinem letzten Lauf",
+        "gate_point_missing": "der Akzeptanzbefehl von Punkt {point} (`{command}`) lief in dieser Sitzung nicht",
+        "gate_point_before": ("der Akzeptanzbefehl von Punkt {point} (`{command}`) lief zuletzt vor der Rückkehr des "
+                              "letzten Umsetzers oder Fixers"),
+        "gate_point_failed": "der Akzeptanzbefehl von Punkt {point} (`{command}`) scheiterte in seinem letzten Lauf",
+        "no_terminal": "Das Docket von {title} ({spec}) hat keinen Terminal state; {open} von {total} Punkten sind offen.",
+        "no_docket": "{title} ({spec}) hat noch kein Docket.",
+        "halted": ("{title}: Der Lauf hat angehalten ({points}). `/docket:implement {specs}` setzt ihn fort, "
                    "jede Nachricht von dir auch."),
+        "series_end": "Die Reihe ist zu Ende: {d} geliefert, {b} blockiert, {k} nicht begonnen{rest}.",
+        "series_records": " Die Protokolle sind nicht committet: `{add}`, dann `{commit}`.",
+        "unstarted_waits": "{title} wartet auf {on}",
+        "unstarted_ended": "der Lauf endete bei {on} vor {title}",
+        "unstarted_stopped": "{title} nach /docket:stop",
+        "unstarted_state": "{title} steht im Zustand {state}",
+        "unstarted_held": "{title} hält eine andere Sitzung",
         # The run mark (mark_run) and the state lines of user_prompt.py and session_start.py: facts, no order.
         "run_line": "Spec {i} von {n} läuft: {title} ({spec}); ihr Docket liegt unter {docket} ({points}).",
         "run_after": " Danach: {queue}.",
@@ -318,22 +322,26 @@ SAY = {
         "points": "{x} of {n} points delivered",
         "deviating": ", {d} deviating",
         "closing": "the run is over, the closing message follows",
-        "handover": ("Spec {i} of {n} is sealed: {title} ({spec}). Start it at step 0 of the implement command; nothing of "
-                     "the previous spec is a fact unless you read it again. Until the run ends you write no text."),
-        "handover_known": " Already proposed to the user in this run; do not write it again as a `decision:`: {items}",
-        "closing_order": ("The run is over. Read {path} with Read and send its content as your only message: verbatim, "
-                          "nothing added, no code block."),
-        "closing_again": ("The message does not match {path} ({problem}) and was not shown. Send the file's content "
-                          "verbatim, nothing added, no code block."),
-        "not_finished": ("The run is not finished: {problem}. Go on working. A spec ends only with its docket's "
-                         "`Terminal state` section, then the turn ends without text; a turn while agents run also ends "
-                         "without text. `state: BLOCKED` is only for what the user has to resolve in the project, never "
-                         "for a fault in the docket's own lines: a line is corrected by writing it again below."),
-        "no_terminal": "no agent is running and the docket's `Terminal state` section has no `state:` line",
-        "docket_message": ("there is no `DOCKET …` message any more: a spec ends in its docket, and the hook renders the "
-                           "run's one message at the end"),
-        "halted": ("{title}: the run stopped without being finished. `/docket:implement {specs}` resumes it, and so "
-                   "does any message from you."),
+        "gate": "The docket of {title} ({spec}) says DELIVERED; {problems}.",
+        "gate_open": "{k} point(s) still open `[ ]`",
+        "gate_check_missing": "the check `{command}` did not run in this session",
+        "gate_check_before": "the check `{command}` last ran before the last agent returned",
+        "gate_check_failed": "the check `{command}` failed in its last run",
+        "gate_point_missing": "the acceptance command of point {point} (`{command}`) did not run in this session",
+        "gate_point_before": ("the acceptance command of point {point} (`{command}`) last ran before the last implementer "
+                              "or fixer returned"),
+        "gate_point_failed": "the acceptance command of point {point} (`{command}`) failed in its last run",
+        "no_terminal": "The docket of {title} ({spec}) has no Terminal state; {open} of {total} points are open.",
+        "no_docket": "{title} ({spec}) has no docket yet.",
+        "halted": ("{title}: the run stopped ({points}). `/docket:implement {specs}` resumes it, and so does any "
+                   "message from you."),
+        "series_end": "The series is over: {d} delivered, {b} blocked, {k} not started{rest}.",
+        "series_records": " The records are not committed: `{add}`, then `{commit}`.",
+        "unstarted_waits": "{title} waits for {on}",
+        "unstarted_ended": "the run ended at {on} before {title}",
+        "unstarted_stopped": "{title} after /docket:stop",
+        "unstarted_state": "{title} is in state {state}",
+        "unstarted_held": "{title} is held by another session",
         "run_line": "Spec {i} of {n} is running: {title} ({spec}); its docket is at {docket} ({points}).",
         "run_after": " After it: {queue}.",
         "points_summary": "{x} delivered, {d} deviations, {o} open",
@@ -819,10 +827,11 @@ def load_state(paths, session_id):
         state = State(data)
         state.base = json.loads(json.dumps(data))
         state.setdefault("mode", "none")
-        if state["mode"] not in ("none", "init") and not os.path.isfile(paths.config):
-            # A project that is not set up has no mode but init: a state that says otherwise is read as none, by
-            # every hook, and the file is left as it is (docket 2026-11-10: a session in a repo without DOCKET.md was
-            # sealed on another project's specs and swallowed eight of the user's messages).
+        if state["mode"] != "none" and (state["mode"] not in RUN_MODES or not os.path.isfile(paths.config)):
+            # A mode of 0.5 (rewrite, closing, closed, concept, spec, init) is none, and so is the run mark in a
+            # project that is not set up (docket 2026-11-10: a session in a repo without DOCKET.md was sealed on
+            # another project's specs and swallowed eight of the user's messages). Every hook reads it so; the file
+            # is left as it is until a hook changes the mode.
             state["mode"] = state.base["mode"] = "none"
         return state
     # No file, one that is not a state, or one that could not be opened: the default is this hook's guess, and only
@@ -933,7 +942,8 @@ def prune_states(directory, max_age_days=14):
 
 
 def prune_leftovers(directory, max_age_minutes=60):
-    """Files of 0.5 that lost their writer and reader (display records, docket snapshots) and temporary files a
+    """Files of 0.5 that lost their writer and reader (display records, docket snapshots, rendered closing messages)
+    and temporary files a
     killed hook left behind, once older than an hour: session_start runs it, so they go also where state is seldom
     saved."""
     now = time.time()
@@ -942,7 +952,7 @@ def prune_leftovers(directory, max_age_minutes=60):
     except OSError:
         return
     for name in names:
-        if not (name.startswith(("display-", "snap-")) or name.endswith(".tmp")):
+        if not (name.startswith(("display-", "snap-", "closing-")) or name.endswith(".tmp")):
             continue
         path = posixpath.join(directory, name)
         try:
@@ -2017,7 +2027,8 @@ def observe_problems(line, paths, spec_id, transcript_path):
 
 def point_commands(body, paths):
     """(point, command) for every delivered point `[x]` whose pre-registered acceptance line is
-    `<command> → <expected>`. A line that names a file and what it must contain has no command."""
+    `<command> → <expected>`: only what stands in backticks before the arrow is a command (REWORK-SPEC 1d.2); a
+    criterion in prose, and a file with what it contains, the orchestrator checks itself."""
     match = re.search(r"^##\s+Points\b.*?$(.*?)(?=^##\s|\Z)", body or "", re.MULTILINE | re.DOTALL | re.IGNORECASE)
     found = []
     for line in (match.group(1) if match else (body or "")).splitlines():
@@ -2028,8 +2039,9 @@ def point_commands(body, paths):
         if len(cells) < 4:
             continue
         parts = ARROW.split("|".join(cells[2:-1]).replace("\\|", "|").strip(), 1)
-        command = parts[0].strip().strip("`").strip()
-        if (len(parts) < 2 or not command or command.startswith("<")
+        before = parts[0].strip()
+        command = before.strip("`").strip()
+        if (len(parts) < 2 or not before.startswith("`") or "`" in command or not command or command.startswith("<")
                 or re.match(r"[`\s]*(contains|enthält)\b", parts[1], re.IGNORECASE)
                 or os.path.exists(posixpath.join(paths.root, command))):
             continue
@@ -2051,13 +2063,11 @@ def acceptance_problems(paths, spec_id, body, transcript_path):
     for point, command in point_commands(body, paths):
         runs = [(index, broke) for index, text, broke in shell if command in text]
         if not runs:
-            problems.append(f"the acceptance command of point {point} (`{command}`) never ran in this session; run it yourself")
+            problems.append(say(paths, "gate_point_missing", point=point, command=command))
         elif runs[-1][0] < written:
-            problems.append(f"the acceptance command of point {point} (`{command}`) last ran before the last "
-                            "implementer or fixer returned; run it again yourself")
+            problems.append(say(paths, "gate_point_before", point=point, command=command))
         elif runs[-1][1]:
-            problems.append(f"the acceptance command of point {point} (`{command}`) failed in its last run: the point "
-                            "is not delivered, record it as a review finding `unmet`")
+            problems.append(say(paths, "gate_point_failed", point=point, command=command))
     return problems
 
 
@@ -2844,9 +2854,8 @@ def closing_path(paths, session_id):
 # --- metrics (V6) ------------------------------------------------------------------
 
 def write_metrics(paths, spec_id, transcript_path, kind):
-    """metrics/<spec>.json, written by the hook when the spec ends: points, refinement and review counts, agents by
-    kind since sealing, implementer and reviewer models, inbox notes. The orchestrator no longer spends a fixer on
-    it."""
+    """metrics/<spec>.json, written by the hook when the spec ends: points, review counts, agents by kind since
+    sealing, implementer and reviewer models; no refusal, refinement or judge counts (REWORK-SPEC 1d.1)."""
     body = read_text(paths.docket_file(spec_id))
     sealed = sealed_stamp(paths, spec_id)
     agents, models, reviewers = Counter(), [], []
@@ -2861,17 +2870,15 @@ def write_metrics(paths, spec_id, transcript_path, kind):
     data = {"spec": spec_id, "title": spec_title(paths, spec_id), "outcome": kind, "sealed": sealed,
             "closed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "points": {"delivered": counts["x"], "deviations": counts["~"], "open": counts[" "]},
-            "refinement": {"decided": stats["refinement"], "adopted": stats["adopted"]},
             "review": {"findings": stats["review"], "fixed": stats["fixed"]},
-            "agents": dict(agents), "implementer_models": models, "reviewer_models": reviewers,
-            "inbox_notes": len(inbox_notes(paths, spec_id))}
+            "agents": dict(agents), "implementer_models": models, "reviewer_models": reviewers}
     path = posixpath.join(paths.metrics, f"{spec_id}.json")
     try:
         with open(path, encoding="utf-8") as handle:
             old = json.load(handle)
         if isinstance(old, dict):
             old.update(data)
-            data = old
+            data = {key: value for key, value in old.items() if key not in ("refinement", "inbox_notes")}
     except (OSError, ValueError):
         pass
     _save_json(path, data)
@@ -2881,9 +2888,6 @@ def write_metrics(paths, spec_id, transcript_path, kind):
 # One function with two triggers (REWORK-SPEC 1c.1): the typed `/docket:implement` (user_prompt.py) and the model's
 # Skill call `docket:implement` (pre_tool_use.py). It runs no precondition: the run runs them as its first step per
 # spec, `/docket:spec` in the ready check.
-MARKED = ("sealed", "rewrite")  # the run mark until 1d; then `sealed` alone
-
-
 def run_specs(paths, rest):
     """(the specs of an implement call in run order, "") or ([], why none).
 
@@ -2941,11 +2945,12 @@ def points_summary(paths, spec_id):
     return say(paths, "points_summary", x=counts["x"], d=counts["~"], o=counts[" "])
 
 
-def run_line(paths, state):
-    """The state line of a marked run: which spec of the series runs, where its docket lies, its points, the rest."""
+def run_line(paths, state, mark="[docket]"):
+    """The state line of a marked run: which spec of the series runs, where its docket lies, its points, the rest.
+    `mark`: `[docket state]` where the Stop hook goes on with the next spec of the series."""
     spec_id = state.get("spec", "")
     i, n = position(state)
-    line = "[docket] " + say(paths, "run_line", i=i, n=n, title=spec_title(paths, spec_id) or spec_id, spec=spec_id,
+    line = mark + " " + say(paths, "run_line", i=i, n=n, title=spec_title(paths, spec_id) or spec_id, spec=spec_id,
                              docket=paths.docket_file(spec_id) or paths.dockets, points=points_summary(paths, spec_id))
     if state.get("queue"):
         line += say(paths, "run_after", queue=", ".join(state["queue"]))
@@ -2973,7 +2978,7 @@ def mark_run(paths, session_id, rest, state=None):
         return no_run(reason)
     spec_id, queue = found[0], found[1:]
     title = lambda spec: spec_title(paths, spec) or spec
-    if state.get("mode") in MARKED and state.get("spec") == spec_id:
+    if state.get("mode") in RUN_MODES and state.get("spec") == spec_id:
         return False, run_line(paths, state)
     if state.get("mode") in RUN_MODES and state.get("spec") and state.get("spec") != spec_id:
         return no_run(say(paths, "run_other", title=title(state["spec"])))
@@ -2992,7 +2997,7 @@ def mark_run(paths, session_id, rest, state=None):
     # sealed_head: the project's commit when the spec was marked; a spec that ends BLOCKED with the project still
     # there lets the series go on (stop.end_spec).
     state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False, "queue": queue, "series": found,
-                  "outcomes": {}, "refused": False, "closing": None, "halted": False,
+                  "outcomes": {}, "skipped": {}, "refused": False, "halted": False,
                   "terminal_base": terminal_base(paths, spec_id), "sealed_head": project_head(paths)})
     save_state(paths, session_id, state)
     log_event(paths, session_id, spec_id, "sealed")

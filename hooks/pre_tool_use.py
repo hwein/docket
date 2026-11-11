@@ -20,13 +20,11 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (Paths, absolute, config_values, load_state, log_event, mark_run, read_input, refuse, say,
-                        under)
+from docket_lib import (RUN_MODES, Paths, absolute, config_values, load_state, log_event, mark_run, read_input, refuse,
+                        say, under)
 
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
-# Modes in which the session carries the run mark (rewrite goes in 1d, then the run mark is `sealed` alone).
-RUN_MARK = ("sealed", "rewrite")
 GIT_PUSH = re.compile(r"\bgit\s+push\b([^|;&\n]*)")
 GIT_COMMIT = re.compile(r"\bgit\s+commit\b[^|;&\n]*?(?:-m|--message)[=\s]+(?:\"([^\"]*)\"|'([^']*)'|(\S+))")
 HEREDOC_MESSAGE = re.compile(r"\bgit\s+commit\b[^\n]*<<\s*['\"]?(\w+)['\"]?\)?\s*\n([^\n]*)")
@@ -64,7 +62,7 @@ def main():
             session_id = hook_input.get("session_id")
             state = load_state(paths, session_id)
             values = {"value": forbidden, "config": paths.config}
-            if state.get("mode") in RUN_MARK:
+            if state.get("mode") in RUN_MODES:
                 return refuse(say(paths, "rule_forbidden_commands", **values))
             log_event(paths, session_id, state.get("spec", ""), "ask", " ".join(command.split())[:100])
             return ask(say(paths, "rule_forbidden_commands_ask", **values))

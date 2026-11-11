@@ -168,7 +168,7 @@ def stop(paths, session_id):
     """What `/docket:stop` records for a session: its series ends with the spec at work. The pane uses it for a run
     of another session, which no prompt of this one reaches."""
     state = load_state(paths, session_id)
-    if state.get("mode") not in ("sealed", "rewrite") or not os.path.isfile(
+    if state.get("mode") not in RUN_MODES or not os.path.isfile(
             posixpath.join(paths.state_dir, f"state-{session_id}.json")):
         return {"ok": False, "error": "not-running", "session": session_id}
     state["stop_requested"] = True
