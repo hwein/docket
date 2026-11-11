@@ -157,7 +157,6 @@ const refresh = async ($: EngineInterface): Promise<void> => {
       S.error = `${problem(reply.error)}${reply.detail ? ` (${reply.detail})` : ''}`
     }
 
-    $.ui.status(S.data ? statusLine(S.data) : undefined)
     redraw($)
   } catch {
     S.error = problem('failed')
@@ -506,6 +505,19 @@ export const register: Register = on => {
     S.hasVectors = e.surface !== 'terminal'
 
     return drawPane($.ui.resolve(e), S, t(), actions($), await content($))
+  })
+
+  // The counts stand among the footer's mode labels, the name and the figures as one text the surface draws in one
+  // size: as a status line (`$.ui.status`) the desktop app drew the plugin's name as a label of its own, smaller
+  // than the text beside it (2026-11-11).
+  on('ui.render', { component: 'SessionMode' }, ($, e, next) => {
+    const line = S.data ? statusLine(S.data) : undefined
+
+    if (line === undefined) {
+      return next(e)
+    }
+
+    return next({ ...e, props: { ...e.props, modes: [...e.props.modes, `docket: ${line}`] } })
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

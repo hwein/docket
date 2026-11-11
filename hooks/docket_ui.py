@@ -71,6 +71,16 @@ def superseded_by(paths):
     return found
 
 
+def closed_at(paths):
+    """{spec: the stamp of the LOG line that closed it} (`delivered`, `superseded`); the last line counts."""
+    found = {}
+    for line in log_lines(paths):
+        parts = line.split()
+        if len(parts) > 2 and parts[2] in ("delivered", "superseded"):
+            found[parts[1].lower()] = parts[0]
+    return found
+
+
 def runs(paths, session_id):
     """Every session that runs a spec right now: this one first."""
     found = []
@@ -95,6 +105,7 @@ def overview(paths, session_id):
     records = spec_records(paths)
     by_id = {r["id"]: r for r in records}
     replaced = superseded_by(paths)
+    closed = closed_at(paths)
     # Where a spec stands in implementation order: a selection of several runs as a series in that order.
     order = {r["id"]: index for index, r in enumerate(in_order(records))}
     live = runs(paths, session_id)
@@ -107,6 +118,8 @@ def overview(paths, session_id):
         specs.append({
             "id": spec_id, "title": record["title"] or spec_id, "topic": record["topic"], "state": record["state"],
             "concept": record["concept"] or "", "follows": record["follows"], "created": record["created"],
+            # The pane lists the finished specs by it, the one closed last first.
+            "closed": closed.get(spec_id, "") if record["state"] in ("done", "superseded") else "",
             "path": record["path"], "docket": paths.docket_file(spec_id) or "", "order": order[spec_id],
             "points": None if counts is None else {"done": counts["x"], "deviating": counts["~"], "open": counts[" "]},
             "result": {"kind": terminal["kind"], "text": terminal["result"] or terminal["reason"]} if terminal["kind"] else None,

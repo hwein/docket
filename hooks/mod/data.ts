@@ -12,6 +12,7 @@ export type Spec = {
   concept: string
   follows: string[]
   created: string
+  closed: string
   path: string
   docket: string
   order: number

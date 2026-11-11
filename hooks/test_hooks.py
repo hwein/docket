@@ -3147,6 +3147,8 @@ class PaneData(Project):
         (self.work / "dockets" / "core" / "s-cccc3333.md").write_text(
             "## Points\n| 1 | a | `a` | [x] |\n| 2 | b | `b` | [~] |\n\n## Terminal state\n\n- state: DELIVERED\n"
             "- result: Signup works.\n", "utf-8")
+        with open(self.work / "LOG.md", "a", encoding="utf-8", newline="\n") as log:
+            log.write("2026-11-06T11:30:00Z  s-cccc3333  delivered          session=abcd1234  spec closed\n")
         code, data = self.ui("overview")
         self.assertEqual(code, 0, data)
         self.assertTrue(data["initialized"])
@@ -3169,6 +3171,9 @@ class PaneData(Project):
         self.assertEqual(specs["s-bbbb2222"]["decisions"], 1)
         self.assertEqual(specs["s-cccc3333"]["result"], {"kind": "delivered", "text": "Signup works."})
         self.assertEqual(specs["s-cccc3333"]["points"], {"done": 1, "deviating": 1, "open": 0})
+        # When a finished spec was closed, from its LOG line: the pane lists the one closed last first.
+        self.assertEqual(specs["s-cccc3333"]["closed"], "2026-11-06T11:30:00Z")
+        self.assertEqual(specs[SPEC]["closed"], "")
         self.assertTrue(specs[SPEC]["path"].endswith(f"{SPEC}-login.md"))
         self.assertEqual([(c["id"], c["title"], c["state"], c["decisions"]) for c in data["concepts"]],
                          [("c-11112222", "Accounts", "agreed", 1)])

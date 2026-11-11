@@ -54,7 +54,6 @@ export type Actions = {
 export type BandActions = { init: () => void; hide: () => void }
 
 export const STATES = ['draft', 'ready', 'in-progress', 'done', 'superseded'] as const
-const ORDER = ['in-progress', 'ready', 'draft', 'done', 'superseded']
 const FINISHED = ['done', 'superseded']
 const GLYPH: Record<string, string> = {
   draft: '○',
@@ -83,12 +82,11 @@ const stateText = (t: Words, state: string): string => `${GLYPH[state] ?? '·'} 
 
 const isOpen = (spec: Spec): boolean => !FINISHED.includes(spec.state)
 
-const byState = (specs: readonly Spec[]): Spec[] =>
-  [...specs].sort((a, b) => {
-    const order = ORDER.indexOf(a.state) - ORDER.indexOf(b.state)
+/** When a finished spec was closed: the stamp of its LOG line, or the day it was written where the LOG has none. */
+const closedAt = (spec: Spec): string => spec.closed || spec.created
 
-    return order !== 0 ? order : a.created.localeCompare(b.created) || a.id.localeCompare(b.id)
-  })
+const newestFirst = (specs: readonly Spec[]): Spec[] =>
+  [...specs].sort((a, b) => closedAt(b).localeCompare(closedAt(a)) || a.id.localeCompare(b.id))
 
 /**
  * Every open spec's position in the recommended order of implementation, from 1. It counts over the whole project,
@@ -102,10 +100,10 @@ export const ranks = (data: Overview): Map<string, number> =>
       .map((spec, index): [string, number] => [spec.id, index + 1]),
   )
 
-/** A group's rows: the open specs by their position, then the finished ones by state and age. */
+/** A group's rows: the open specs by their position, then the finished ones, the one closed last first. */
 const listed = (specs: readonly Spec[], rank: ReadonlyMap<string, number>): Spec[] => [
   ...specs.filter(isOpen).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0)),
-  ...byState(specs.filter(spec => !isOpen(spec))),
+  ...newestFirst(specs.filter(spec => !isOpen(spec))),
 ]
 
 /**

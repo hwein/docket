@@ -22,6 +22,12 @@ const PANE = {
   },
 } as const
 
+const MODES = {
+  plugin: 'docket',
+  component: 'SessionMode',
+  props: { modes: [] },
+} as const
+
 const BAND = {
   plugin: 'docket',
   component: 'AbovePrompt',
@@ -44,6 +50,7 @@ const spec = (id: string, title: string, state: string, more: Record<string, unk
   concept: '',
   follows: [],
   created: '2026-11-01',
+  closed: '',
   path: `/work/specs/core/${id}.md`,
   docket: '',
   order: 0,
@@ -98,7 +105,7 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
     commands: [] as string[],
     prompts: [] as string[],
     tools: [] as Record<string, unknown>[],
-    status: [] as (string | undefined)[],
+    modes: [] as string[],
     toasts: [] as string[],
     opened: [] as string[],
     store: new Map<string, unknown>(),
@@ -136,10 +143,13 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
 
     return { value: { isPlaced: true } }
   })
-  on('ui.status', (_, e) => {
-    seen.status.push(e.text)
+  // The engine's drawing of the footer's mode labels, beneath the plugin's hook.
+  on('ui.render', { component: 'SessionMode' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
 
-    return { value: undefined }
+    seen.modes = [...e.props.modes]
+
+    return <Text>{e.props.modes.join(' & ')}</Text>
   })
   on('ui.toast', (_, e) => {
     seen.toasts.push(e.text)
@@ -189,17 +199,29 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
   return { seen, clock }
 }
 
+/** The mode labels the footer draws now: the engine's own, none in these tests, and what the plugin added. */
+const footer = async ($: Engine, seen: { modes: string[] }): Promise<string[]> => {
+  seen.modes = []
+
+  const ui = await $.ui.mount({ ...MODES, surface: 'desktop' })
+
+  await ui.unmount()
+
+  return seen.modes
+}
+
 const start = async ($: Engine, clock: { settle: () => Promise<void> }) => {
   await $.session.start({ cwd: '/project', surface: 'desktop', isInteractive: true })
   await clock.settle()
 }
 
-test('a docket project opens the pane, sets the status line and lists specs under their concept', async ($, on) => {
+test('a docket project opens the pane, names its counts in the footer and lists specs under their concept', async ($, on) => {
   const { seen, clock } = world(on, overview)
 
   await start($, clock)
   expect(seen.opened).toEqual(['docket'])
-  expect(seen.status.at(-1)).toBe('3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded')
+  // The name and the counts are one label of the footer: one text, drawn in one size.
+  expect(await footer($, seen)).toEqual(['docket: 3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded'])
   expect(seen.argv[0]?.slice(1)).toEqual([
     expect.stringContaining('/hooks/docket_ui.py'),
     'overview',
@@ -263,8 +285,21 @@ test('an open spec carries its position in the order of implementation, counted 
         spec('s-0123abcd', 'Login', 'draft', { concept: 'c-11112222', created: '2026-11-03', order: 3 }),
         spec('s-eeee5555', 'Tariff', 'in-progress', { concept: 'c-33334444', created: '2026-11-04', order: 5 }),
         spec('s-dddd4444', 'Invoice', 'ready', { concept: 'c-33334444', created: '2026-11-02', order: 2 }),
-        spec('s-ffff6666', 'Guest', 'superseded', { concept: 'c-11112222', created: '2026-10-25', order: 1 }),
-        spec('s-cccc3333', 'Signup', 'done', { concept: 'c-11112222', created: '2026-10-20', order: 0 }),
+        // Written first and closed last: it leads the finished rows.
+        spec('s-ffff6666', 'Guest', 'superseded', {
+          concept: 'c-11112222',
+          created: '2026-10-19',
+          closed: '2026-11-09T08:00:00Z',
+          order: 1,
+        }),
+        spec('s-cccc3333', 'Signup', 'done', {
+          concept: 'c-11112222',
+          created: '2026-10-20',
+          closed: '2026-11-07T16:00:00Z',
+          order: 0,
+        }),
+        // No line of the LOG closed it: the day it was written stands for that.
+        spec('s-9999eeee', 'Reset', 'done', { concept: 'c-11112222', created: '2026-10-22', order: 6 }),
       ],
     }),
   )
@@ -275,17 +310,19 @@ test('an open spec carries its position in the order of implementation, counted 
     const ui = await $.ui.mount({ ...PANE, surface })
     const rows = (await ui.findAll({ type: 'Button' })).filter(found => found.key?.startsWith('spec-'))
 
-    // Open specs by position, the finished ones after them; a finished spec counts for no position.
+    // Open specs by position, the finished ones after them, the one closed last first; a finished spec counts for
+    // no position.
     expect(rows.map(row => row.key)).toEqual([
       'spec-s-0123abcd',
       'spec-s-aaaa1111',
-      'spec-s-cccc3333',
       'spec-s-ffff6666',
+      'spec-s-cccc3333',
+      'spec-s-9999eeee',
       'spec-s-dddd4444',
       'spec-s-eeee5555',
     ])
     // One count over both concepts; a finished spec has a blank of a position's width.
-    expect(rows.map(lead)).toEqual(['2. ', '3. ', '\u2007\u2008 ', '\u2007\u2008 ', '1. ', '4. '])
+    expect(rows.map(lead)).toEqual(['2. ', '3. ', '\u2007\u2008 ', '\u2007\u2008 ', '\u2007\u2008 ', '1. ', '4. '])
     await ui.unmount()
   }
 })
@@ -541,7 +578,7 @@ test('a run shows with its progress; this session stops by command, another by i
   const { seen, clock } = world(on, () => overview({ runs }))
 
   await start($, clock)
-  expect(seen.status.at(-1)).toContain('▶ Login 1/3 · 3 open')
+  expect((await footer($, seen))[0]).toContain('docket: ▶ Login 1/3 · 3 open')
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
@@ -588,7 +625,7 @@ test('a project without docket gets a band that starts the setup and can be hidd
   const { seen, clock } = world(on, () => ({ ok: true, initialized: false, root: '/project', work: '/w' }))
 
   // Once the band is hidden the plugin leaves the row to the engine: this hook stands for its drawing.
-  on('ui.render', ($, e) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
 
     return <Text>engine</Text>
@@ -596,7 +633,7 @@ test('a project without docket gets a band that starts the setup and can be hidd
 
   await start($, clock)
   expect(seen.opened).toEqual([])
-  expect(seen.status.at(-1)).toBeUndefined()
+  expect(await footer($, seen)).toEqual([])
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
