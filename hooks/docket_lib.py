@@ -196,8 +196,8 @@ SAY = {
         "handover": ("Spec {i} von {n} ist versiegelt: {title} ({spec}). Beginne sie bei Schritt 0 des Implement-Befehls; "
                      "aus der vorigen Spec ist nichts ein Fakt, was du nicht neu liest. Bis zum Ende des Laufs schreibst "
                      "du keinen Text."),
-        "handover_known": (" Dem Nutzer in diesem Lauf schon empfohlen; schreibe es nicht noch einmal als `decision:`: "
-                           "{items}"),
+        "handover_known": (" Dem Nutzer in diesem Lauf schon vorgeschlagen; schreibe es nicht noch einmal als "
+                           "`decision:`: {items}"),
         "closing_order": ("Der Lauf ist zu Ende. Lies {path} mit Read und sende den Inhalt als deine einzige Nachricht: "
                           "wörtlich, ohne Zusatz, ohne Codeblock."),
         "closing_again": ("Die Nachricht stimmt nicht mit {path} überein ({problem}) und wurde nicht angezeigt. Sende den "
@@ -242,8 +242,8 @@ SAY = {
         "spec_after_end": "{title}: nicht begonnen, weil der Lauf bei {on} endete",
         "spec_after_stop": "{title}: nicht begonnen, weil du den Lauf beendet hast",
         "reason": "Grund",
-        "nothing": "Nichts offen, nichts zu tun.",
-        "must": "Du musst",
+        "nothing": "nichts",
+        "must": "Für dich zu tun",
         "must_for": "Für {title}:",
         "must_then": "Danach:",
         "and": "und",
@@ -251,10 +251,16 @@ SAY = {
         "resume_start": "{titles} umsetzen lassen",
         "resume": "{what}: `/docket:implement {specs}`",
         "commit_records": "Die Protokolle committen: `{add}`, dann `{commit}`",
-        "decision": "Empfehlung",
-        "decision_for": "Empfehlung zu {title}",
+        # "Empfehlung: Ich rate dir …" read as a fault of the delivery (luradb-web-client 2026-11-11: four of them in
+        # prose, each with a command): a proposal is work after the run, named as that and taken up by its number.
+        "repaired": "Außerdem behoben, außerhalb des Auftrags ({k})",
+        "proposals": "Vorschläge für später, außerhalb des Auftrags ({k})",
+        "proposals_how": "Eine Spec daraus: `/docket:spec` und die Nummer des Vorschlags.",
+        "proposal_order": ("Vorschlag {n} des letzten Laufs, aus „{title}“: {what}. Warum: {why}. Warum der Lauf es "
+                           "nicht selbst erledigt hat: {outside}. Das ist der Auftrag dieser Spec."),
+        "proposal_unknown": "Der letzte Lauf hat keinen Vorschlag {n}.",
         "dissent_line": "Dissens",
-        "watch": "Zu beobachten",
+        "watch": "Zu beobachten ({k})",
         "note": "Deine Nachricht von {time}",
         "notes_answer": "Zu deinen Nachrichten",
         "note_unhandled": "Deine Nachricht von {time} ist noch nicht bearbeitet",
@@ -262,9 +268,6 @@ SAY = {
         "deviates": "„{point}“ weicht von der Spec ab",
         "dirty": "der Arbeitsbaum hat uncommittete Änderungen",
         "log": "Protokolle: `{path}`",
-        "log_holds": "darin {items}: frag hier danach",
-        "log_open": "{k} offene Punkte",
-        "log_open_one": "1 offener Punkt",
         "delivered": "geliefert",
         "blocked": "angehalten",
         "dissent": "Dissens",
@@ -283,7 +286,7 @@ SAY = {
         "closing": "the run is over, the closing message follows",
         "handover": ("Spec {i} of {n} is sealed: {title} ({spec}). Start it at step 0 of the implement command; nothing of "
                      "the previous spec is a fact unless you read it again. Until the run ends you write no text."),
-        "handover_known": " Already advised to the user in this run; do not write it again as a `decision:`: {items}",
+        "handover_known": " Already proposed to the user in this run; do not write it again as a `decision:`: {items}",
         "closing_order": ("The run is over. Read {path} with Read and send its content as your only message: verbatim, "
                           "nothing added, no code block."),
         "closing_again": ("The message does not match {path} ({problem}) and was not shown. Send the file's content "
@@ -327,8 +330,8 @@ SAY = {
         "spec_after_end": "{title}: not started, because the run ended at {on}",
         "spec_after_stop": "{title}: not started, because you ended the run",
         "reason": "Reason",
-        "nothing": "Nothing open, nothing to do.",
-        "must": "You must",
+        "nothing": "nothing",
+        "must": "For you to do",
         "must_for": "For {title}:",
         "must_then": "Then:",
         "and": "and",
@@ -336,10 +339,14 @@ SAY = {
         "resume_start": "have {titles} implemented",
         "resume": "{what}: `/docket:implement {specs}`",
         "commit_records": "Commit the records: `{add}`, then `{commit}`",
-        "decision": "Advice",
-        "decision_for": "Advice on {title}",
+        "repaired": "Also repaired, outside the order ({k})",
+        "proposals": "Proposals for later, outside the order ({k})",
+        "proposals_how": "A spec from one: `/docket:spec` and the proposal's number.",
+        "proposal_order": ("Proposal {n} of the last run, from “{title}”: {what}. Why: {why}. Why the run did not do "
+                           "it itself: {outside}. This is the order of this spec."),
+        "proposal_unknown": "The last run has no proposal {n}.",
         "dissent_line": "Dissent",
-        "watch": "To watch",
+        "watch": "To watch ({k})",
         "note": "Your message of {time}",
         "notes_answer": "On your messages",
         "note_unhandled": "Your message of {time} is not handled yet",
@@ -347,9 +354,6 @@ SAY = {
         "deviates": "“{point}” deviates from the spec",
         "dirty": "the working tree has uncommitted changes",
         "log": "Records: `{path}`",
-        "log_holds": "holding {items}: ask here for them",
-        "log_open": "{k} open points",
-        "log_open_one": "1 open point",
         "delivered": "delivered",
         "blocked": "stopped",
         "dissent": "dissent",
@@ -1567,7 +1571,8 @@ def bullets(block):
 # --- end of a spec: the docket's Terminal state section (V3) ---------------------
 # The orchestrator ends a spec by writing lines into its docket, not by a message: `state:` DELIVERED / BLOCKED /
 # DISSENT, `result:` one sentence, `open:` and `user:` and `decision:` as many as there are, `dissent:` for DISSENT.
-TERMINAL_LINE = re.compile(r"^[`*]*(state|result|open|watch|user|decision|dissent)[`*]*\s*:[`*]*\s*(.*?)\s*$", re.IGNORECASE)
+TERMINAL_LINE = re.compile(r"^[`*]*(state|result|open|watch|user|decision|repaired|dissent)[`*]*\s*:[`*]*\s*(.*?)\s*$",
+                           re.IGNORECASE)
 TERMINAL_STATE = re.compile(r"^[`*]*(DELIVERED|BLOCKED|DISSENT)[`*]*(?!\w)[\s.:;,\-–—(]*(.*?)[\s.)]*$", re.IGNORECASE)
 # "none", "keine Schritte nötig", "nothing to do": a line that says there is nothing (experiment 12: "Du musst: keine
 # Schritte nötig" stood twice in the closing message).
@@ -1593,7 +1598,7 @@ def terminal_blocks(paths, spec_id):
             if state:
                 blocks.append({"kind": state.group(1).lower(), "reason": (state.group(2) or "").strip().strip("`"),
                                "result": "", "open": [], "watch": [], "user": [], "decision": [],
-                               "dissent": []})
+                               "repaired": [], "dissent": []})
             continue
         if not blocks or not value:
             continue
@@ -1612,7 +1617,7 @@ def terminal_section(paths, spec_id, skip=0):
     if blocks:
         return blocks[-1]
     return {"kind": "", "reason": "", "result": "", "open": [], "watch": [], "user": [], "decision": [],
-            "dissent": []}
+            "repaired": [], "dissent": []}
 
 
 def terminal_base(paths, spec_id):
@@ -1689,20 +1694,37 @@ def observed(line):
 WATCH_PARTS = ("seen", "suspected", "impact", "signal")
 
 
-def watch_parts(value):
-    """A `watch:` line as the user gets it, the whole case in one piece so that a spec can be cut from it:
-    `<what it is about> | seen: … | suspected: … | impact: … | signal: …`. A pipe inside a part stays in that part."""
+DECISION_PARTS = ("why", "outside")
+
+
+def line_parts(value, names):
+    """A Terminal state line of several parts, `<subject> | <name>: … | <name>: …`. A pipe inside a part stays in
+    that part."""
     cells = [cell.strip() for cell in value.split("|")]
-    parts = dict.fromkeys(("subject",) + WATCH_PARTS, "")
+    parts = dict.fromkeys(("subject",) + tuple(names), "")
     parts["subject"], last = cells[0], "subject"
     for cell in cells[1:]:
-        match = re.match(r"[`*]*(" + "|".join(WATCH_PARTS) + r")[`*]*\s*:\s*(.*)$", cell, re.IGNORECASE | re.DOTALL)
+        match = re.match(r"[`*]*(" + "|".join(names) + r")[`*]*\s*:\s*(.*)$", cell, re.IGNORECASE | re.DOTALL)
         if match:
             last = match.group(1).lower()
             parts[last] = match.group(2).strip()
         else:
             parts[last] += " | " + cell
     return parts
+
+
+def watch_parts(value):
+    """A `watch:` line as the user gets it, the whole case in one piece so that a spec can be cut from it:
+    `<what it is about> | seen: … | suspected: … | impact: … | signal: …`."""
+    return line_parts(value, WATCH_PARTS)
+
+
+def decision_parts(value):
+    """A `decision:` line, a proposal for work after the run: `<what to do, and where> | why: <what the user gains or
+    risks> | outside: <why the run could not do it itself>`. The message shows the first two. The third is what
+    keeps a run from handing back what it could have done itself (luradb-web-client 2026-11-11: four pieces of
+    advice, two of them a line in a file the run had just written and a fault it had measured itself)."""
+    return line_parts(value, DECISION_PARTS)
 
 
 def review_lines(body):
@@ -2417,7 +2439,8 @@ def spec_facts(paths, spec_id):
 # What the closing message shows of a Terminal state is never cut: a line longer than this is refused when the
 # block is written (stop.py), where the orchestrator can still shorten it. luradb-web-client 2026-11-10: six lines
 # of the closing message ended in "…", among them the one instruction the user had to follow.
-TERMINAL_LIMITS = {"result": 200, "reason": 300, "user": 300, "decision": 400, "watch": 120}
+TERMINAL_LIMITS = {"result": 200, "reason": 300, "user": 300, "decision": 100, "why": 200, "repaired": 160,
+                   "watch": 120}
 
 
 def _sentence(text):
@@ -2508,12 +2531,57 @@ def resumable(paths, facts, outcomes):
     return chosen
 
 
+def run_proposals(paths, facts):
+    """The proposals of a run in the order of its specs, each once: what to do, why, why the run did not do it,
+    and the title of the spec it came from. A `decision:` line in the form of 0.5.10 and before (one sentence)
+    stands as what to do."""
+    proposals = []
+    for f in facts:
+        for item in f["decision"]:
+            parts = decision_parts(item)
+            what = _sentence(parts["subject"])
+            if what and what.lower() not in {p["what"].lower() for p in proposals}:
+                proposals.append({"what": what, "why": _sentence(parts["why"]), "outside": _sentence(parts["outside"]),
+                                  "title": f["title"]})
+    return proposals
+
+
+def proposals_path(paths):
+    return posixpath.join(paths.state_dir, "proposals.json")
+
+
+def save_proposals(paths, state):
+    """The proposals of the run that just ended, whole, for `/docket:spec <number>`: a finished docket is no
+    reference outside concept mode, so the spec session gets the proposal from here (user_prompt.py)."""
+    facts = [spec_facts(paths, spec_id) for spec_id in series_of(state)]
+    try:
+        os.makedirs(paths.state_dir, exist_ok=True)
+        write_json(proposals_path(paths), {"version": 1, "proposals": run_proposals(paths, facts)})
+    except OSError:
+        pass
+
+
+def proposal(paths, number):
+    """Proposal `number` (from 1) of the last run, or None."""
+    data, _ = read_json(proposals_path(paths))
+    found = data.get("proposals") if isinstance(data, dict) else None
+    if isinstance(found, list) and 1 <= number <= len(found) and isinstance(found[number - 1], dict):
+        return found[number - 1]
+    return None
+
+
 def render_closing(paths, state):
-    """The one message of a run, rendered from the dockets, each spec's outcome and git. One line for the run (what
-    is implemented, pushed, CI), one line per spec by its title with its result and, where it did not start, the
-    reason; then what the user does, as numbered steps; each piece of advice with its reason; each thing to watch by
-    what it is about; what came of the user's messages. What is merely open stays in the dockets and is counted in
-    the last line, with the way to get it.
+    """The one message of a run, rendered from the dockets, each spec's outcome and git, in blocks with a blank line
+    between them: one line for the run (what is implemented, pushed, CI); one line per spec by its title with its
+    result, the points that deviate and, where it did not start, the reason; what the user does, as numbered steps,
+    or that there is nothing to do; what the run repaired outside the order; the proposals for work after the run,
+    numbered, each by what to do and why; each thing to watch by what it is about; what came of the user's
+    messages; where the dockets are. What is merely on record (`open:`) stays in the dockets and is not mentioned.
+
+    luradb-web-client 2026-11-11 (two specs, both delivered): every line after the second spec hung in that spec's
+    list item, four pieces of advice stood as sentences of up to 400 characters, each with the same bare command,
+    one matter stood three times, and the last line counted "15 open points" the user had to ask for: five of them
+    the advice again, three of them notes, five of them things only a question would have brought to light.
 
     luradb-web-client 2026-11-10 (four specs, three of them pushed): 29 lines, twelve of them the same sentence,
     six cut with "…", "CI green" above a red run, a spec whose code was pushed called "blocked", a command of bare
@@ -2574,6 +2642,9 @@ def render_closing(paths, state):
             line = say(paths, key, title=f["title"], x=f["x"], n=f["n"])
             if f["result"]:
                 line += ". " + _sentence(f["result"])
+            # A point that deviates is named, not counted behind a number the user has to ask for.
+            for point in f["deviations"]:
+                line += ". " + say(paths, "deviates", point=_short(point))
             if kind(f) == "blocked" and f["reason"] and f["user"] and not stopped:
                 line += f". {say(paths, 'reason')}: " + _sentence(f["reason"])
         else:
@@ -2614,49 +2685,57 @@ def render_closing(paths, state):
     if commands:
         general.append(say(paths, "commit_records", add=commands[0], commit=commands[1]))
 
-    advice, texts = [], [_sentence(item).lower() for f in facts for item in f["decision"]]
-    for f in facts:
-        for sentence in _unique(f["decision"]):
-            if sentence.lower() in {text.lower() for _, text in advice}:
-                continue
-            named = many and texts.count(sentence.lower()) == 1
-            advice.append((say(paths, "decision_for", title=quoted(paths, f["title"])) if named
-                           else say(paths, "decision"), sentence))
+    proposals = run_proposals(paths, facts)
+    repaired = _unique(item for f in facts for item in f["repaired"])
     dissent = []
     for f in facts:
         if kind(f) == "dissent":
             dissent += [(f["title"] + ": " if many else "") + item
                         for item in _unique(([f["reason"]] if f["reason"] else []) + f["dissent"])]
     watch = _unique(watch_parts(item)["subject"] for f in facts for item in f["watch"])
-    open_items = []
-    for f in facts:
-        open_items += f["open"]
-        open_items += [say(paths, "deviates", point=_short(point)) for point in f["deviations"]
-                       if not any(point.lower() in item.lower() for item in f["open"])]
-    open_items = _unique(open_items)
 
+    bold = lambda label: f"**{label}:**"
+    blocks = [lines[:1], lines[1:]]
     steps = sum(len(found) for _, found in groups) + len(general)
-    if not (steps or advice or dissent or watch or open_items or git.get("dirty") or uncommitted):
-        lines.append(say(paths, "nothing"))
     if steps == 1 and not (many and groups):
-        lines.append(_end(f"{say(paths, 'must')}: {(groups[0][1] if groups else general)[0]}"))
+        blocks.append([_end(f"{bold(say(paths, 'must'))} {(groups[0][1] if groups else general)[0]}")])
     elif steps:
-        lines.append(say(paths, "must") + ":")
-        number = 0
+        # One list; in a series a line between its parts says which spec a step belongs to.
+        blocks.append([bold(say(paths, "must"))])
+        number, block = 0, []
         for title, found in groups:
             if many:
-                lines.append(say(paths, "must_for", title=quoted(paths, title)))
+                blocks += [block, [say(paths, "must_for", title=quoted(paths, title))]]
+                block = []
             for step in found:
                 number += 1
-                lines.append(_end(f"{number}. {step}"))
+                block.append(_end(f"{number}. {step}"))
         if many and groups and general:
-            lines.append(say(paths, "must_then"))
+            blocks += [block, [say(paths, "must_then")]]
+            block = []
         for step in general:
             number += 1
-            lines.append(_end(f"{number}. {step}"))
-    lines += [_end(f"{label}: {sentence}") for label, sentence in advice]
-    lines += [_end(f"{say(paths, 'dissent_line')}: {item}") for item in dissent]
-    lines += [_end(f"{say(paths, 'watch')}: {subject}") for subject in watch]
+            block.append(_end(f"{number}. {step}"))
+        blocks.append(block)
+    elif not (dissent or git.get("dirty")):
+        # Said, not left to be concluded from what is missing.
+        blocks.append([f"{bold(say(paths, 'must'))} {say(paths, 'nothing')}."])
+
+    def listed(key, items):
+        label = bold(say(paths, key, k=len(items)))
+        return [_end(f"{label} {items[0]}")] if len(items) == 1 else [label] + [_end(f"- {item}") for item in items]
+
+    if repaired:
+        blocks.append(listed("repaired", repaired))
+    if proposals:
+        # Numbered also when there is one: the number is what `/docket:spec` takes.
+        blocks.append([bold(say(paths, "proposals", k=len(proposals)))]
+                      + [_end(f"{n}. {p['what']}" + (f" – {p['why']}" if p["why"] else ""))
+                         for n, p in enumerate(proposals, 1)])
+        blocks.append([say(paths, "proposals_how")])
+    blocks += [[_end(f"{say(paths, 'dissent_line')}: {item}")] for item in dissent]
+    if watch:
+        blocks.append(listed("watch", watch))
     for f in facts:
         # The user's messages of this run, each with the Inbox line the orchestrator wrote for it. Where the docket
         # holds fewer lines than there were messages, a line may stand for several: it is shown without a time, and
@@ -2664,23 +2743,19 @@ def render_closing(paths, state):
         notes = f["notes"]
         answers = f["inbox"][-len(notes):] if notes else []
         if notes and len(answers) == len(notes):
-            lines += [_end(say(paths, "note", time=moment) + ": " + _sentence(answer))
-                      for moment, answer in zip(notes, answers)]
+            blocks += [[_end(say(paths, "note", time=moment) + ": " + _sentence(answer))]
+                       for moment, answer in zip(notes, answers)]
         elif answers:
-            lines += [_end(say(paths, "notes_answer") + ": " + sentence) for sentence in _unique(answers)]
+            blocks += [[_end(say(paths, "notes_answer") + ": " + sentence)] for sentence in _unique(answers)]
         elif len(notes) == 1:
-            lines.append(_end(say(paths, "note_unhandled", time=notes[0])))
+            blocks.append([_end(say(paths, "note_unhandled", time=notes[0]))])
         elif notes:
-            lines.append(_end(say(paths, "notes_unhandled", k=len(notes), times=", ".join(notes))))
-    # The dockets carry the rest in full (`open:` in each Terminal state, the `watch:` lines whole): the message
-    # counts what is open and says how to get it; the session answers from the dockets after the run.
-    log = say(paths, "log", path=relative_to_root(paths, paths.dockets) + "/")
-    if open_items:
-        held = say(paths, "log_open_one") if len(open_items) == 1 else say(paths, "log_open", k=len(open_items))
-        log += ", " + say(paths, "log_holds", items=held)
-    lines.append(_end(log) if open_items else log)
-    lines.append("stamp: " + time.strftime("%Y-%m-%d %H:%M"))
-    return "\n".join(lines) + "\n"
+            blocks.append([_end(say(paths, "notes_unhandled", k=len(notes), times=", ".join(notes)))])
+    # The dockets carry the rest in full (the `open:` lines, the `watch:` lines whole, the evidence): the message
+    # says where they are and counts nothing the user would have to ask for.
+    blocks.append([say(paths, "log", path=relative_to_root(paths, paths.dockets) + "/"),
+                   "stamp: " + time.strftime("%Y-%m-%d %H:%M")])
+    return "\n\n".join("\n".join(block) for block in blocks if block) + "\n"
 
 
 def closing_path(paths, session_id):

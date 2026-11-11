@@ -57,9 +57,9 @@ latest commit shows whether they passed.
    during the run is answered at once; `/docket:stop` ends the run cleanly. Nothing asks you anything until the run
    is over, and nothing you type is ever refused: where a command cannot start, you are told why and what to do.
 5. **Read:** one short message for the whole run, in your language: whether the work is pushed and CI is green,
-   one line per spec with what it delivered, then only what you act on: what only you can do and the decision that
-   is due. The dockets hold the evidence, what is open and what to watch; the message counts them. What deviated
-   goes back to step 2.
+   one line per spec with what it delivered, then only what you act on: what only you can do, and the proposals
+   for later, numbered. You get back only what the run could not do itself; what it could repair it repaired,
+   and the message says so. The dockets hold the evidence and the notes. What deviated goes back to step 2.
 
 Several specs can wait as `ready`; several sessions can run on different specs at once, each locked to its own.
 
@@ -90,7 +90,7 @@ flowchart TD
         review -- "none left" --> push
     end
 
-    push --> close["One closing message<br/>delivered · open ·<br/>to watch · decisions due"]
+    push --> close["One closing message<br/>delivered · for you to do ·<br/>proposals · to watch"]
     push -.-> docket[("docket<br/>the evidence,<br/>append-only")]
     close --> back["deviations and things<br/>to watch go back to<br/>/docket:concept"]
     inbox["sealed: it asks nothing,<br/>your messages are answered,<br/>/docket:stop ends it"] -.-> build
@@ -149,8 +149,11 @@ at the next checkpoint.
    spec, neither the orchestrator's docket. Every finding is decided in the docket; a bug, an unmet point or a
    broken rule is fixed or refuted, never deferred. What a fix wrote is reviewed again, three rounds at most.
    What a reviewer suspects but cannot show is examined the same way before anyone fixes it.
-6. The spec ends in its docket: delivered, blocked or in dissent, with its result in one sentence and what is
-   left open. A CI run that turns red is made green in the same run, also when its cause lies outside the order;
+   Then the run settles what is left: a finding not yet fixed, a fault it measured beside the order, a line the
+   delivery made wrong. What it can repair without a decision of yours it repairs, as a commit of its own.
+6. The spec ends in its docket: delivered, blocked or in dissent, with its result in one sentence, what was
+   repaired outside the order, and the proposals for later, each with what kept the run from doing it itself.
+   A CI run that turns red is made green in the same run, also when its cause lies outside the order;
    where that is not possible, the closing message says what the fault is, why it was not repaired and what you
    can do.
 7. The run ends with one message, which the hook writes from the dockets and git, in the language `DOCKET.md`
@@ -168,8 +171,13 @@ are kept in an inbox too, and the closing message says what came of them.
 - docket never stands in its own way. A run ends short of delivered only for what your project lacks or what only
   you can do, never over a line of docket's own records, and you are never left with a problem of the record
   instead of the state of your project.
-- The closing message tells you what is implemented and pushed, the CI state, each spec by its title, what you do
-  as numbered steps, each piece of advice with its reason ("I advise you to …, because …"), and each thing to
+- You get back only what the run could not do. A proposal in the closing message is work after the run, and its
+  docket line says what kept the run from doing it (it changes what the spec orders, it needs your decision, it
+  lies in a forbidden path, three rounds were spent); a review finding the run did not fix reaches you by name.
+  Nothing is counted that you would have to ask for.
+- The closing message is in blocks: what is implemented and pushed and the CI state; each spec by its title;
+  "For you to do", as numbered steps or "nothing"; what the run repaired outside the order; the proposals for
+  later, numbered, each by what to do and why (`/docket:spec 2` makes a spec of the second); each thing to
   watch by what it is about. No line is cut, no sentence stands twice, and an id stands only inside a command
   whose line names the titles.
 - Nothing is pushed before the review of the whole change is decided, finding by finding, and before reviewer
@@ -240,7 +248,7 @@ Tests: `python hooks/test_hooks.py`; the pane: `claude plugin test .`.
 
 ## Status
 
-0.5.10, an early stage of development, already in use in several repositories.
+0.5.11, an early stage of development, already in use in several repositories.
 
 docket tries not to weigh on existing projects: by default the work dir lives outside the repo, and
 `/docket:init` shows every change it would make to the repo as a diff and writes only after your go. Much of

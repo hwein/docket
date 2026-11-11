@@ -27,7 +27,7 @@ from docket_lib import command_line as prompt_command
 from docket_lib import (CONCEPT_ID, REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, claim_lock, clock_line, config_values, display_path,
                         load_state,
                         lock_holder, log_event, logged_series, open_predecessors, precondition_result, project_head,
-                        preconditions, queued_elsewhere, read_input, ready_specs, restore_mode, save_display,
+                        preconditions, proposal, queued_elsewhere, read_input, ready_specs, restore_mode, save_display,
                         save_state, say,
                         series_line, session_live, set_context, set_spec_state, spec_title, strip_harness_blocks,
                         suspend_judge, take_handoff, terminal_base, violations_line)
@@ -50,7 +50,9 @@ REMINDERS = {
                "Nothing you did not fetch yourself is a fact. You write no text during the run, except the answer to "
                "a message the user writes during it, when the hook says so: a turn that waits "
                "for agents ends without text, and a spec ends in its docket's `## Terminal state` section (`state:`, "
-               "`result:`, `open:`, `user:`, `decision:`), then the turn ends without text. The hook then seals the "
+               "`result:`, `repaired:`, `user:`, `decision:`, `watch:`, `open:`), then the turn ends without text. What "
+               "you can settle yourself you settle before that; the user gets back only what the run could not do. "
+               "The hook then seals the "
                "next spec of the series or hands you the run's one message to send verbatim. When the harness asks "
                "what you are doing, answer in at most five words, no stamp."),
     "rewrite": ("Rewrite mode: only the conceptor agent edits the named spec, and it records the rewrite with date "
@@ -169,6 +171,17 @@ def main():
         else:
             state.update({"mode": name, "spec": ""})
             save_state(paths, session_id, state)
+            # `/docket:spec 2`: proposal 2 of the last run's closing message. The spec session gets it whole from
+            # here: a finished docket is no reference outside concept mode.
+            number = re.fullmatch(r"\s*#?(\d{1,2})\.?\s*", rest or "") if name == "spec" else None
+            if number:
+                found = proposal(paths, int(number.group(1)))
+                if found:
+                    feedback = "[docket] " + say(paths, "proposal_order", n=int(number.group(1)), title=found["title"],
+                                                 what=found["what"], why=found["why"] or "-",
+                                                 outside=found["outside"] or "-")
+                else:
+                    feedback = "[docket] " + say(paths, "proposal_unknown", n=int(number.group(1)))
     elif state.get("mode") in ("sealed", "rewrite") and not command_line:
         # The user's word in a run reaches the orchestrator and is answered on the screen; the inbox keeps it for the
         # docket and the closing message. A run that had stopped goes on with it: no state is a dead end.

@@ -119,7 +119,8 @@ def main():
     if mode in RUN_MODES and tool == "AskUserQuestion":
         return refuse("[docket] The spec is sealed: no questions. Take the default, write a 'deviation' line "
                       "into the docket, continue. What only the user can decide goes into the Terminal state "
-                      "(`decision:` or `state: BLOCKED: …`) and reaches the user in the closing message.")
+                      "(`decision: … | why: … | outside: …`, or `state: BLOCKED: …`) and reaches the user in the "
+                      "closing message.")
 
     # The desktop app's next-step box asks too, and no Stop hook sees its question.
     if tool.endswith("__wrap_up"):
@@ -347,9 +348,9 @@ def plan_problem(paths, tool_input):
 
 
 def closing_decision(paths, session_id):
-    """Whether the rendered closing message puts something to the user (its `Empfehlung …:` / `Advice …:` line)."""
+    """Whether the rendered closing message puts something to the user: its block of proposals for later."""
     text = read_text(closing_path(paths, session_id))
-    return bool(re.search(r"^(Empfehlung|Advice)\b[^:\n]*:", text, re.MULTILINE))
+    return bool(re.search(r"^\*\*(Vorschläge für später|Proposals for later)\b[^:\n]*:", text, re.MULTILINE))
 
 
 def ask(reason):

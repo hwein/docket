@@ -39,7 +39,8 @@ from docket_lib import (FILE_LINE, JUDGE_ACK, TERMINAL_LIMITS, Paths, acceptance
                         closing_path, collect_judge, frontmatter,
                         config_values, hook_outputs, language_problem, load_state, log_event, log_lines, log_time,
                         message_text, normalized_lines, notice, observed, point_counts,
-                        review_lines, triage_lines, watch_parts, WATCH_PARTS,
+                        review_lines, triage_lines, watch_parts, WATCH_PARTS, decision_parts, DECISION_PARTS,
+                        review_line, save_proposals,
                         open_predecessors, position, previous_turn_texts, project_head, read_input, read_text,
                         refinement_problem, refuse, repo_facts, untouched_since,
                         release_lock, render_closing, resume_judge, review_problem, save_display, save_state, say,
@@ -244,24 +245,46 @@ def terminal_problems(terminal, spec_id, paths, hook_input):
         problems.append("BLOCKED names what only the user can resolve: `state: BLOCKED: <that>` or a `user:` line")
     if kind == "dissent" and not (terminal["reason"] or terminal["dissent"]):
         problems.append("DISSENT names both positions: `dissent:` lines, one sentence each with its source")
-    if any("/docket:" not in line or not BECAUSE.search(line) for line in terminal["decision"]):
-        problems.append("a `decision:` line is advice to the user with its reason and the command that carries it "
-                        "out, in everyday words: `decision: Ich rate dir, <what, and where in the project> …, weil "
-                        "<what the user gains or risks>. Befehl: /docket:spec` (`I advise you to …, because …`); "
-                        "no term the user would have to look up, the thing itself is named and said what it is")
+    # A run hands back only what it could not do: a proposal says what stood in the way (luradb-web-client
+    # 2026-11-11: four pieces of advice as sentences with a bare command, two of them work the run could have done).
+    for value in terminal["decision"]:
+        parts = decision_parts(value)
+        missing = [key for key in DECISION_PARTS if not parts[key]]
+        if missing or not parts["subject"]:
+            problems.append("a `decision:` line is a proposal for work after the run and says why the run did not do "
+                            "that work itself: `decision: <what to do, and where, a short phrase> | why: <what the "
+                            "user gains or risks> | outside: <what kept the run from doing it: it changes what the "
+                            "spec orders, it needs a decision only the user can take, it lies in a forbidden path, "
+                            "three rounds were spent on it>`, in everyday words and without a command; what the run "
+                            "can settle itself it settles before the spec ends (implement command, step 4); `"
+                            + _cut(value) + "` has no " + ", ".join(f"`{key}:`" for key in missing or ["subject"]))
     # The closing message never cuts a line: what is too long for it is shortened here, by the one who wrote it.
     sized = ([("result", terminal["result"]), ("state: BLOCKED", terminal["reason"])]
              + [("user", value) for value in terminal["user"]]
-             + [("decision", value) for value in terminal["decision"]]
+             + [("repaired", value) for value in terminal["repaired"]]
+             + [("decision", decision_parts(value)["subject"]) for value in terminal["decision"]]
+             + [("why", decision_parts(value)["why"]) for value in terminal["decision"]]
              + [("watch", watch_parts(value)["subject"]) for value in terminal["watch"]])
+    parts_of = {"watch": "the first part of a `watch:` line (what it is about)",
+                "decision": "the first part of a `decision:` line (what to do)",
+                "why": "the `why:` part of a `decision:` line"}
     for name, value in sized:
         limit = TERMINAL_LIMITS["reason" if name.startswith("state") else name]
         if len(" ".join(value.split())) > limit:
-            what = "the first part of a `watch:` line (what it is about)" if name == "watch" else f"a `{name}:` line"
+            what = parts_of.get(name, f"a `{name}:` line")
             problems.append(f"{what} has at most {limit} characters, since the closing message shows it uncut; `"
                             + _cut(value) + f"` has {len(' '.join(value.split()))}: write the block again below, "
                             "that line shorter")
     body = read_text(paths.docket_file(spec_id))
+    # A deferred finding is handed back to the user: it reaches them by name, with what kept the run from fixing it.
+    deferred = [line for line in review_lines(body) if review_line(line)[2]]
+    named = len(terminal["decision"]) + len(terminal["user"])
+    if kind == "delivered" and len(deferred) > named:
+        problems.append(f"the Review section defers {len(deferred)} finding(s) and the Terminal state has {named} "
+                        "`decision:` or `user:` line(s): a finding is fixed or rejected in the run; one the run cannot "
+                        "fix (round three is spent, the fix changes what the spec orders, it needs the user's "
+                        "decision) reaches the user by name, as a `decision:` line with its `outside:` part, never "
+                        "only as an `open:` line")
     if kind == "delivered" and ci_state(body) == "red" and not (terminal["user"] or terminal["decision"]):
         problems.append("the docket's last CI line is red, so the delivery is red: repair what made it red in this "
                         "run, also when the fault lies outside the order (implement command, step 4), push, and "
@@ -281,7 +304,7 @@ def terminal_problems(terminal, spec_id, paths, hook_input):
                             "which case> | signal: <what to look for, and where>`; `" + _cut(value) + "` has no "
                             + ", ".join(f"`{key}:`" for key in missing or ["subject"]))
     prose = "\n".join([terminal["result"], terminal["reason"]] + terminal["open"] + terminal["watch"]
-                      + terminal["user"] + terminal["decision"] + terminal["dissent"])
+                      + terminal["user"] + terminal["decision"] + terminal["repaired"] + terminal["dissent"])
     if HASH_IN_TEXT.search(prose):
         problems.append("no commit hashes in the Terminal state lines: they are read by the user; the hash stays in "
                         "the Evidence section")
@@ -360,6 +383,7 @@ def start_closing(paths, session_id, state):
     log_event(paths, session_id, state.get("spec", ""), "closing")  # first: a work dir of its own is committed
     commit_records(paths)  # DOCKET.md `commit_records`: records inside another repository, before the message counts
     text = render_closing(paths, state)
+    save_proposals(paths, state)  # what `/docket:spec <number>` takes up
     path = closing_path(paths, session_id)
     try:
         os.makedirs(paths.state_dir, exist_ok=True)

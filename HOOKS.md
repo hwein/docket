@@ -19,7 +19,7 @@ Hooks check provenance, form and state, never content. This is the mechanics beh
 ## The end of a spec
 
 A spec ends in its docket, not in a message: the orchestrator writes the `Terminal state` section (`state:`
-DELIVERED, BLOCKED or DISSENT, `result:`, `open:`, `watch:`, `user:`, `decision:`, `dissent:`), in the user's language, without
+DELIVERED, BLOCKED or DISSENT, `result:`, `repaired:`, `user:`, `decision:`, `watch:`, `dissent:`, `open:`), in the user's language, without
 ids or hashes; the last block counts. The Stop hook accepts DELIVERED only if every command of the project's check (as
 many as the project has, listed in `DOCKET.md`) ran after the last agent returned and none failed in its last run;
 the command of every delivered point's acceptance line (`<command> → <expected>`) ran after the last implementer or
@@ -44,35 +44,56 @@ and the next spec never started):
   citation is checked at DELIVERED, a reference doc counts from the spec's first sealing, and of the CI lines the
   last one counts.
 - What the Terminal state lacks in form (a line too long for the closing message, a missing part of a `watch:`
-  line, advice without its reason, an id or a hash, a red CI line without a word about it) is sent back to be
+  line, a proposal without its `why:` or its `outside:`, a deferred review finding no `decision:` or `user:` line
+  stands for, an id or a hash, a red CI line without a word about it) is sent back to be
   written again below. Sent back the third time unchanged, or when the turn ends again right after the refusal,
   the hook lets the spec end as written (LOG `waived`). The evidence of a DELIVERED is never let pass.
 - A red CI run is the run's to make green, also when its cause lies outside the order (implement command, step 4).
 
+## The user gets back only what the run could not do
+
+A run that hands undecided work back contradicts what it is for (luradb-web-client 2026-11-11: two specs
+delivered, and the closing message carried four pieces of advice, one thing to watch and "15 open points: ask
+here for them"; no rule had forbidden the run to settle any of them, and two it had caused or measured itself).
+The rule is in the implement command (step 4, "Settle what is left"); the hooks hold its form:
+
+- A `decision:` line is a proposal for work after the run, in three parts: what to do, `why:`, and `outside:`,
+  what kept the run from doing it itself. A line without `why:` or `outside:` is sent back.
+- A review finding that is `deferred` reaches the user by name: a delivery with more deferred findings than
+  `decision:` and `user:` lines is sent back.
+- What the run repaired outside the order stands in the Terminal state as `repaired:` and in the closing message.
+- An `open:` line is a note for the record. The closing message neither shows nor counts it.
+
 ## The closing message
 
 When the last spec of a run has ended, or the series ended at a BLOCKED or DISSENT spec, or the user stopped the
-run, the hook renders the run's one message from the dockets, the LOG and git:
+run, the hook renders the run's one message from the dockets, the LOG and git, in blocks with a blank line between
+them and a bold label on each block after the specs:
 
 - one line for the run: how many specs are implemented, whether the work is pushed, the CI state of the last spec
   that has one (red stays red, whatever state that spec ended in);
-- one line per spec by its title with its points and result. A spec that needs the user is not called blocked: it
-  is "stopped at x of n points", or, with every point done and its work pushed, "implemented, not closed". A spec
-  that did not start says why (it waits for a predecessor, the run ended at another spec, the user stopped it);
-- what the user does, as numbered steps under the spec they belong to: its `user:` lines, or what it stopped at;
+- one line per spec by its title with its points and result, and each point that deviates by its name. A spec that
+  needs the user is not called blocked: it is "stopped at x of n points", or, with every point done and its work
+  pushed, "implemented, not closed". A spec that did not start says why (it waits for a predecessor, the run ended
+  at another spec, the user stopped it);
+- "For you to do": numbered steps under the spec they belong to: its `user:` lines, or what it stopped at;
   then the specs to take up again, by their titles, with the one command that does it (an id stands nowhere else),
   and, where docket's records lie uncommitted inside another repository, the two commands that commit them
-  (`commit_records: yes` in `DOCKET.md` lets the hook do it; it never pushes);
-- each `decision:` line as advice with its reason, once for the whole run;
-- each `watch:` line by its first part, what it is about;
+  (`commit_records: yes` in `DOCKET.md` lets the hook do it; it never pushes). Where there is no step, the block
+  says "nothing";
+- "Also repaired, outside the order": each `repaired:` line;
+- "Proposals for later, outside the order": each `decision:` line once for the whole run, numbered, by what to do
+  and why, and one line that says how a proposal becomes a spec (`/docket:spec` and its number; the hook keeps the
+  run's proposals whole in `proposals.json` of its state folder and hands the numbered one to the spec session);
+- "To watch": each `watch:` line by its first part, what it is about;
 - what came of the user's messages: each with its Inbox line; messages no line answers are one line with their
   count. A report an agent hands back to the session is no message of the user (`agent-message`);
-- where the dockets are, and how many `open:` lines and deviations they hold: the session answers from the dockets
-  after the run, so the user asks there for them.
+- where the dockets are.
 
 No line is cut: a line too long for the message is refused when the Terminal state is written. No sentence stands
-twice. The orchestrator sends the message verbatim; the display gate shows nothing else, and after three misses it
-shows the rendered text itself. The session is closed afterwards.
+twice. Nothing is counted that the user would have to ask for. The orchestrator sends the message verbatim (blank
+lines and bold markers do not count in the comparison); the display gate shows nothing else, and after three
+misses it shows the rendered text itself. The session is closed afterwards.
 
 ## Project rules
 

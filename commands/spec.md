@@ -1,6 +1,6 @@
 ---
 description: "Spec mode: turn an agreed concept or request into a spec with measurable done criteria, close user decisions, set it to ready."
-argument-hint: "[concept id | spec id | title]"
+argument-hint: "[concept id | spec id | title | number of a proposal]"
 ---
 
 # Spec mode
@@ -16,8 +16,11 @@ spec is `ready`.
 ## Start
 
 1. Required reading is enforced by the hook.
-2. Resolve the argument: a concept id (derive the next spec from it), a spec id in `draft` (continue it), or a
-   title (new spec). Topic from DOCKET.md; if the topic is new, that is one user question.
+2. Resolve the argument: a concept id (derive the next spec from it), a spec id in `draft` (continue it), a
+   title (new spec), or a number: the proposal of that number in the last run's closing message. The hook gives
+   you that proposal whole (`[docket] Proposal <n> of the last run …`: what to do, why, why the run did not do
+   it); it is the order of this spec, and the finished docket it came from is not read. Topic from DOCKET.md; if
+   the topic is new, that is one user question.
 3. Create the id: eight hex digits of SHA-256 over `topic|title|<fetched ISO time>`, prefix `s-`.
    File: `specs/<topic>/s-<id>-<slug>.md` from `${CLAUDE_PLUGIN_ROOT}/templates/spec.md`.
 
