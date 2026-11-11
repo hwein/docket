@@ -1,6 +1,6 @@
 # DOCKET
 
-Project configuration and project decisions for the docket workflow. Required reading for every session.
+Project configuration and project decisions for the docket workflow.
 Framework rules live in the plugin, not here. This file holds only what this project decided.
 
 ## Configuration
@@ -11,7 +11,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | topics | `<topic1>, <topic2>` | folders under specs/ |
 | check | `<first command of the project's check>` `<further commands, as many as the project has>` | <where the project runs them, e.g. the CI workflow> |
 | reference_roots | `<docs/, README.md, ...>` (what IS; specs say what SHOULD) | |
-| model_ladder | fixer: claude-haiku-5-5 · implementer simple: claude-haiku-5-5 · standard: claude-sonnet-5-5 · complex: claude-opus-5-5 (a rework round runs one tier higher) · refiners: claude-sonnet-5-5 · reviewers: the complex model, the standard model for a spec of simple points · conceptor: claude-opus-5-5 · diagnoser: claude-opus-5-5 | |
+| model_ladder | implementer round 1: sonnet · round 2: opus · round 3: fable · fixer (small exact changes): haiku | |
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |
 | user_language | `<language of every message to the user, e.g. "Deutsch" or "English"; not the repo's language; the hooks' own lines follow it>` | question 12 |
 | ci | `<how CI is waited for and read, or "none">` | |
@@ -19,7 +19,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | push_branch | `<regex the pushed branch must match, e.g. "feature/.*" or "main">` | question 1 |
 | commit_regex | `<regex for the first line of a commit message; escape pipes as \|>` | question 2 |
 | forbidden_paths | `<comma-separated globs no agent writes, e.g. "secrets/**, .env">` | question 10 |
-| forbidden_commands | `<regex of shell commands that run only after the user's click in a dialog, e.g. "gh workflow run\|terraform apply">` | question 11 |
+| forbidden_commands | `<regex of shell commands, e.g. "gh workflow run\|terraform apply": outside a run docket asks the user in a dialog; in a run docket does not run the command, and the closing message names it>` | question 11 |
 
 ## Repository behaviour
 
