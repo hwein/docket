@@ -30,7 +30,7 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (JUDGE_ACK, RUN_MODES, Paths, absolute, bullets, clock_line, config_values, frontmatter,
                         load_state, log_event, log_has, missing_citations, observe_problems, observed, read_input,
-                        refuse, set_context, touch_state, under)
+                        refuse, touch_state, under)
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 CRITERION = re.compile(r"(→|->|\bcontains\b|\bexits?\b|\bprints?\b|\bequals?\b|==)", re.IGNORECASE)
@@ -104,7 +104,6 @@ def log_grant(tool_input, paths, session_id):
 def docket_check(path, paths, session_id, transcript_path=None):
     state = load_state(paths, session_id)
     spec_id = state.get("spec", "")
-    set_context(paths, spec_id)
     snap = posixpath.join(paths.state_dir, f"snap-{spec_id}.md")
     try:
         with open(path, encoding="utf-8-sig", errors="ignore") as handle:

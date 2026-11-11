@@ -354,17 +354,8 @@ class ModeSwitch(Project):
         self.spec.write_text(f"---\nid: {SPEC}\nstate: draft\n---\n# Login\n", "utf-8")
         self.prompt("/docket:implement")
         self.assertIn("No ready spec", self.state()["declined"])
-        for name, tool_input in (("Write", {"file_path": f"{self.p}/src/a.py", "content": "x"}),
-                                 ("Agent", {"description": "build it", "prompt": "x"}),
-                                 ("Skill", {"skill": "docket:implement"})):
-            code, err, _ = self.tool(name, **tool_input)
-            self.assertEqual(code, 2, name)
-            self.assertIn("did not take effect", err)
-            self.assertIn("what they can do", err)
-        self.assertEqual(self.tool("Read", file_path=f"{self.p}/src/a.py")[0], 0)
-        self.prompt("then set it to ready")  # the user's next prompt: the turn is free again
+        self.prompt("then set it to ready")  # the user's next prompt clears it
         self.assertNotIn("declined", self.state())
-        self.assertEqual(self.tool("Write", file_path=f"{self.p}/src/a.py", content="x")[0], 0)
 
     def test_harness_notifications_pass_through_when_sealed(self):
         self.prompt(f"/implement {SPEC}")
@@ -396,124 +387,6 @@ class ModeSwitch(Project):
         code, _, out = self.prompt("hello")
         self.assertEqual(code, 0)
         self.assertIn("Required reading still open", out)
-
-
-class WriteRights(Project):
-    def test_frozen_spec_refused_in_spec_mode(self):
-        self.set_state(mode="spec")
-        code, err, _ = self.tool("Edit", file_path=str(self.spec))
-        self.assertEqual(code, 2)
-        self.assertIn("frozen", err)
-
-    def test_draft_spec_writable_in_spec_mode(self):
-        self.set_state(mode="spec")
-        draft = self.work / "specs" / "core" / "s-0000ffff-draft.md"
-        draft.write_text("---\nstate: draft\n---\n", "utf-8")
-        code, err, _ = self.tool("Edit", file_path=str(draft))
-        self.assertEqual(code, 0, err)
-
-    def test_rewrite_opens_only_the_named_spec(self):
-        self.set_state(mode="rewrite", rewrite=SPEC)
-        self.assertEqual(self.tool("Edit", file_path=str(self.spec))[0], 0)
-        other = self.work / "specs" / "core" / "s-0000ffff-other.md"
-        other.write_text("---\nstate: ready\n---\n", "utf-8")
-        self.assertEqual(self.tool("Edit", file_path=str(other))[0], 2)
-
-    def test_sealed_never_writes_specs(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.tool("Write", file_path=str(self.spec))
-        self.assertEqual(code, 2)
-
-    def test_concept_mode_writes_no_specs(self):
-        self.set_state(mode="concept")
-        draft = self.work / "specs" / "core" / "s-0000ffff-draft.md"
-        code, err, _ = self.tool("Write", file_path=str(draft), content="---\nstate: draft\n---\n")
-        self.assertEqual(code, 2)
-        self.assertIn("/docket:spec", err)
-        self.assertIn("end the turn", err)
-        self.assertEqual(self.tool("Write", file_path=str(self.work / "concepts" / "core" / "c-0000ffff.md"), content="x")[0], 0)
-
-    def test_model_may_not_invoke_docket_commands_itself(self):
-        self.prompt("/concept a done command")
-        code, err, _ = self.tool("Skill", skill="docket:spec")
-        self.assertEqual(code, 2)
-        self.assertIn("user", err)
-        self.assertEqual(self.tool("Skill", skill="docket:concept")[0], 0)  # the one the user typed
-        self.assertEqual(self.tool("Skill", skill="anthropic-skills:pdf")[0], 0)
-        self.prompt("/docket:status")
-        self.assertEqual(self.tool("Skill", skill="docket:status")[0], 0)
-        self.assertEqual(self.tool("Skill", skill="docket:stop")[0], 2)
-        self.assertEqual(self.tool("Skill", skill="docket:concept")[0], 2)
-
-    def test_template_state_comment_is_ignored(self):
-        self.set_state(mode="spec")
-        self.spec.write_text(f"---\nid: {SPEC}\nstate: ready          # draft | ready | in-progress\n---\n# Login\n", "utf-8")
-        code, err, _ = self.tool("Edit", file_path=str(self.spec))
-        self.assertEqual(code, 2)
-        self.assertIn("frozen", err)
-
-    def test_docket_only_in_sealed_and_only_own(self):
-        self.set_state(mode="concept")
-        self.assertEqual(self.tool("Write", file_path=str(self.docket))[0], 2)
-        self.set_state(mode="sealed", spec="s-99999999")
-        self.assertEqual(self.tool("Write", file_path=str(self.docket))[0], 2)
-        self.set_state(mode="sealed", spec=SPEC)
-        self.assertEqual(self.tool("Write", file_path=str(self.docket))[0], 0)
-
-    def test_existing_docket_refuses_write_allows_edit(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("# Docket\n- [ ] point 1\n", "utf-8")
-        self.assertEqual(self.tool("Write", file_path=str(self.docket))[0], 2)
-        self.assertEqual(self.tool("Edit", file_path=str(self.docket))[0], 0)
-        self.assertTrue((self.root / ".claude" / "docket" / f"snap-{SPEC}.md").exists())
-
-    def test_log_never_written_by_tools(self):
-        self.set_state(mode="concept")
-        code, err, _ = self.tool("Write", file_path=str(self.work / "LOG.md"))
-        self.assertEqual(code, 2)
-        self.assertIn("hooks only", err)
-
-    def test_ask_user_refused_when_sealed(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.tool("AskUserQuestion", questions=[])
-        self.assertEqual(code, 2)
-        self.assertIn("sealed", err)
-
-    def test_closed_refuses_writes_and_agents(self):
-        self.set_state(mode="closed", spec=SPEC)
-        self.assertEqual(self.tool("Write", file_path=str(self.root / "src" / "x.py"))[0], 2)
-        self.assertEqual(self.tool("Agent", prompt="x")[0], 2)
-        self.assertEqual(self.tool("Read", file_path=str(self.root / "src" / "x.py"))[0], 0)
-
-    def test_degraded_blocks_until_required_reading(self):
-        self.set_state(mode="concept", degraded=True)
-        self.assertEqual(self.tool("Write", file_path=str(self.root / "a.md"))[0], 2)
-        self.assertEqual(self.tool("Bash", command="ls")[0], 2)
-        self.assertEqual(self.tool("Read", file_path=str(self.work / "DOCKET.md"))[0], 0)
-        self.assertFalse(self.state()["degraded"])
-        self.assertEqual(self.tool("Write", file_path=str(self.root / "a.md"))[0], 0)
-
-    def test_done_spec_is_not_a_reference(self):
-        done = self.work / "specs" / "core" / "s-0000aaaa-old.md"
-        done.write_text("---\nstate: done\n---\n", "utf-8")
-        self.set_state(mode="spec")
-        code, err, _ = self.tool("Read", file_path=str(done))
-        self.assertEqual(code, 2)
-        self.assertIn("not a reference", err)
-        self.set_state(mode="concept")
-        self.assertEqual(self.tool("Read", file_path=str(done))[0], 0)
-
-    def test_registered_check_command_is_allowed(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("| 1 | hello | `cat hello.txt` → `hello` | [ ] |\n", "utf-8")
-        self.assertEqual(self.tool("Bash", command="cat hello.txt")[0], 0)
-        self.assertEqual(self.tool("Bash", command="cat other.txt")[0], 2)
-
-    def test_shell_read_redirected(self):
-        self.set_state(mode="spec")
-        self.assertEqual(self.tool("Bash", command="cat README.md")[0], 2)
-        self.assertEqual(self.tool("Bash", command="cat > out.md <<'EOF'\nx\nEOF")[0], 0)
-        self.assertEqual(self.tool("Bash", command="git status")[0], 0)
 
 
 class AppendOnly(Project):
@@ -885,29 +758,6 @@ class DisplayGate(Project):
         self.assertEqual((code, out.strip()), (0, ""))
 
 
-class Rewrite(Project):
-    def test_conceptor_spawn_opens_rewrite_and_return_closes_it(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.tool("Agent", subagent_type="docket:conceptor", model="opus", prompt="rewrite section 3")
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.state()["mode"], "rewrite")
-        self.assertEqual(self.state()["rewrite"], SPEC)
-        self.assertIn("rewrite", self.log())
-        self.assertEqual(self.tool("Edit", file_path=str(self.spec))[0], 0)  # the frozen spec is open now
-        self.assertEqual(self.tool("AskUserQuestion", questions=[])[0], 2)
-        code, _, _ = run_hook("subagent_stop.py", {"session_id": SID, "cwd": self.p, "stop_hook_active": False,
-                                                   "last_assistant_message": "Rewrote section 3.\nUnverified: none"}, self.p)
-        self.assertEqual(code, 0)
-        self.assertEqual(self.state()["mode"], "sealed")
-        self.assertIn("rewrite-done", self.log())
-        self.assertEqual(self.tool("Edit", file_path=str(self.spec))[0], 2)  # frozen again
-
-    def test_other_agents_do_not_open_rewrite(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.tool("Agent", subagent_type="docket:refiner", model="sonnet", prompt="angle")
-        self.assertEqual(self.state()["mode"], "sealed")
-
-
 class PointEvents(Project):
     def post(self, path):
         return run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
@@ -985,16 +835,6 @@ class SpecState(Project):
 
 
 class HookOwnedFiles(Project):
-    def test_state_locks_and_violations_are_hook_owned(self):
-        self.set_state(mode="spec")
-        state_file = self.root / ".claude" / "docket" / f"state-{SID}.json"
-        code, err, _ = self.tool("Write", file_path=str(state_file), content="{}")
-        self.assertEqual(code, 2)
-        self.assertIn("hooks only", err)
-        self.assertEqual(self.tool("Edit", file_path=str(self.work / "locks" / SPEC), old_string="a", new_string="b")[0], 2)
-        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.violations.json"), content="{}")[0], 2)
-        self.set_state(mode="sealed", spec=SPEC)
-        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.json"), content="{}")[0], 2)
 
     def test_save_state_is_atomic_and_leaves_no_temp_files(self):
         self.prompt("/concept")
@@ -1163,32 +1003,6 @@ class ClosingCounts(Project):
         self.assertNotIn("Checked", text)
 
 
-class Refinement(Project):
-    def setUp(self):
-        super().setUp()
-        self.set_state(mode="sealed", spec=SPEC)
-
-    def implementer(self):
-        return self.tool("Agent", subagent_type="docket:implementer", model="sonnet", prompt="point 1")
-
-    def test_no_docket_refuses_first_implementer(self):
-        code, err, _ = self.implementer()
-        self.assertEqual(code, 2)
-        self.assertIn("skeleton", err)
-
-    def test_open_refinement_line_refuses_closed_passes(self):
-        self.docket.write_text("## Refinement\n\n- feasibility: hello.py does not exist\n- spec: fine → rejected: out of scope\n\n## Evidence\n", "utf-8")
-        code, err, _ = self.implementer()
-        self.assertEqual(code, 2)
-        self.assertIn("hello.py does not exist", err)
-        self.docket.write_text("## Refinement\n\n- feasibility: hello.py does not exist → REWRITE by the conceptor\n- spec: fine → rejected\n", "utf-8")
-        self.assertEqual(self.implementer()[0], 0)
-
-    def test_fixer_and_refiner_are_not_gated(self):
-        self.assertEqual(self.tool("Agent", subagent_type="docket:fixer", prompt="skeleton")[0], 0)
-        self.assertEqual(self.tool("Agent", subagent_type="docket:refiner", model="sonnet", prompt="angle")[0], 0)
-
-
 class ProjectRules(Project):
     def setUp(self):
         super().setUp()
@@ -1197,19 +1011,24 @@ class ProjectRules(Project):
             "| commit_regex | `(feat\|fix\|docs)(\\(.*\\))?: ` | |\n| forbidden_paths | `secrets/**, .env` | |\n"
             "| forbidden_commands | `gh workflow run\|terraform apply` | |\n", "utf-8")
         self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("## Review\n\n- code | no findings\n- spec | no findings\n", "utf-8")  # V14
+
+    def assertRule(self, err, key, value):
+        """A refusal begins with its key and names the key's value and DOCKET.md as facts."""
+        self.assertTrue(err.startswith(f"[docket rule: {key}]"), err)
+        self.assertIn(value, err)
+        self.assertIn("DOCKET.md", err)
 
     def test_push_to_other_branch_refused(self):
         code, err, _ = self.tool("Bash", command="git push origin main")
         self.assertEqual(code, 2)
-        self.assertIn("push_branch", err)
+        self.assertRule(err, "push_branch", "feature/.*")
         self.assertEqual(self.tool("Bash", command="git push -u origin feature/login")[0], 0)
         self.assertEqual(self.tool("Bash", command="git push origin HEAD:feature/login")[0], 0)
 
     def test_commit_message_must_match(self):
         code, err, _ = self.tool("Bash", command='git commit -m "login works"')
         self.assertEqual(code, 2)
-        self.assertIn("commit_regex", err)
+        self.assertRule(err, "commit_regex", "(feat|fix|docs)")
         self.assertEqual(self.tool("Bash", command='git commit -m "feat(auth): login"')[0], 0)
         self.assertEqual(self.tool("Bash", command="git commit -m \"$(cat <<'EOF'\nfix: typo\n\nbody\nEOF\n)\"")[0], 0)
         self.assertEqual(self.tool("Bash", command="git commit -m \"$(cat <<'EOF'\nwrong\nEOF\n)\"")[0], 2)
@@ -1217,62 +1036,28 @@ class ProjectRules(Project):
     def test_forbidden_paths_and_commands(self):
         code, err, _ = self.tool("Write", file_path=f"{self.p}/secrets/key.pem", content="x")
         self.assertEqual(code, 2)
-        self.assertIn("forbidden path", err)
+        self.assertRule(err, "forbidden_paths", "secrets/**, .env")
         self.assertEqual(self.tool("Edit", file_path=f"{self.p}/.env", old_string="a", new_string="b")[0], 2)
         self.assertEqual(self.tool("Write", file_path=f"{self.p}/src/main.rs", content="x")[0], 0)
         code, err, _ = self.tool("Bash", command="gh workflow run deploy.yml")
         self.assertEqual(code, 2)
         self.assertIn("forbidden_commands", err)
+        self.assertRule(err, "forbidden_commands", "gh workflow run|terraform apply")
         self.assertEqual(self.tool("Bash", command="gh pr list")[0], 0)
+
+    def test_a_push_rule_goes_before_a_forbidden_command(self):
+        code, err, out = self.tool("Bash", command="git push origin main && terraform apply")
+        self.assertEqual((code, out.strip()), (2, ""))
+        self.assertRule(err, "push_branch", "feature/.*")
+        self.set_state(mode="none")  # outside a run too: a refusal, no dialog
+        code, err, out = self.tool("Bash", command="git push origin main && terraform apply")
+        self.assertEqual((code, out.strip()), (2, ""))
+        self.assertRule(err, "push_branch", "feature/.*")
 
     def test_rules_inactive_without_config(self):
         (self.work / "DOCKET.md").write_text("# DOCKET\n", "utf-8")
         self.assertEqual(self.tool("Bash", command="git push origin main")[0], 0)
         self.assertEqual(self.tool("Bash", command='git commit -m "anything"')[0], 0)
-
-
-class InitApproval(Project):
-    def test_init_writes_only_after_go(self):
-        self.prompt("/docket:init")
-        self.assertEqual(self.state()["mode"], "init")
-        code, err, _ = self.tool("Write", file_path=str(self.work / "DOCKET.md"), content="# DOCKET")
-        self.assertEqual(code, 2)
-        self.assertIn("approved", err)
-        self.assertEqual(self.tool("Write", file_path=f"{self.p}/CONTRIBUTING.md", content="x")[0], 2)
-        self.assertEqual(self.tool("Write", file_path=f"{self.p}/notes.md", content="x")[0], 0)
-        self.prompt("go")
-        self.assertTrue(self.state()["init_approved"])
-        self.assertIn("init-approved", self.log())
-        self.assertEqual(self.tool("Write", file_path=str(self.work / "DOCKET.md"), content="# DOCKET")[0], 0)
-        self.assertEqual(self.tool("Write", file_path=f"{self.p}/CONTRIBUTING.md", content="x")[0], 0)
-
-    def test_other_text_is_not_a_go(self):
-        self.prompt("/docket:init")
-        self.prompt("go on with the audit, I will decide later")
-        self.assertFalse(self.state().get("init_approved"))
-
-
-class Violations(Project):
-    def test_refusals_are_counted_and_fed_back(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.tool("Write", file_path=str(self.work / "LOG.md"), content="x")
-        self.tool("Write", file_path=str(self.work / "LOG.md"), content="x")
-        self.tool("AskUserQuestion", questions=[])
-        counts = json.loads((self.work / "metrics" / f"{SPEC}.violations.json").read_text("utf-8"))
-        self.assertEqual(sum(counts.values()), 3)
-        self.assertEqual(max(counts.values()), 2)
-        self.set_state(mode="none")
-        code, err, out = self.prompt(f"/implement {SPEC}")
-        self.assertEqual(code, 0, err)
-        self.assertIn("Refusals so far", out)
-        self.assertIn("(2)", out)
-        _, _, out = run_hook("session_start.py", {"session_id": SID, "cwd": self.p, "source": "startup"}, self.p)
-        self.assertIn("Refusals so far", out)
-
-    def test_no_file_without_refusals(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.tool("Read", file_path=f"{self.p}/README.md")
-        self.assertFalse((self.work / "metrics").exists())
 
 
 class JudgeLog(Project):
@@ -1500,6 +1285,7 @@ class Grants(Project):
         decision = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(decision["permissionDecision"], "ask")
         self.assertIn("forbidden_commands", decision["permissionDecisionReason"])
+        self.assertTrue(decision["permissionDecisionReason"].startswith("[docket rule: forbidden_commands]"))
         self.assertIn(" ask ", self.log())
         self.assertFalse((self.work / "metrics").exists())  # asking is not a violation
         self.assertEqual(self.post("git -C concept push")[0], 0)
@@ -1514,11 +1300,42 @@ class Grants(Project):
         self.assertEqual(code, 2)
         self.assertIn("forbidden_commands", err)
         self.assertEqual(out.strip(), "")
+        self.assertTrue(err.startswith("[docket rule: forbidden_commands]"), err)
+        self.assertNotIn("BLOCKED", err)
+        self.assertNotIn("A sealed run has no user", err)
 
     def test_forbidden_paths_stay_refused(self):
         (self.work / "DOCKET.md").write_text("| forbidden_paths | `secrets/**` | |\n", "utf-8")
         self.set_state(mode="spec")
         self.assertEqual(self.tool("Write", file_path=f"{self.p}/secrets/key.pem", content="x")[0], 2)
+
+
+class NoRefusalOutsideTheRules(Project):
+    """Grundsatz 1 of the 0.6 rework: with an empty rule set in DOCKET.md, no tool call is refused or put to the
+    user, in a run or outside one."""
+
+    def calls(self):
+        return (("Write", {"file_path": f"{self.p}/src/a.py", "content": "x"}),
+                ("Edit", {"file_path": f"{self.p}/src/a.py", "old_string": "a", "new_string": "b"}),
+                ("Agent", {"subagent_type": "docket:implementer", "description": "docket refiner",
+                           "prompt": "dockets/core/x.md"}),
+                ("AskUserQuestion", {"questions": [{"question": "Which one?"}]}),
+                ("Skill", {"skill": "docket:implement"}),
+                ("Bash", {"command": "cat README.md && git push origin main && git commit -m 'anything'"}),
+                # what 0.5 refused: a spec, a docket, the LOG and the session state written by a tool
+                ("Write", {"file_path": str(self.spec), "content": "x"}),
+                ("Write", {"file_path": str(self.docket), "content": "x"}),
+                ("Edit", {"file_path": str(self.work / "LOG.md"), "old_string": "a", "new_string": "b"}),
+                ("Write", {"file_path": str(self.root / ".claude" / "docket" / f"state-{SID}.json"), "content": "{}"}))
+
+    def test_no_call_is_refused_without_rules(self):
+        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n| check | `pytest` | |\n", "utf-8")
+        for state in ({"mode": "none"}, {"mode": "sealed", "spec": SPEC, "series": [SPEC]}):
+            self.set_state(**state)
+            for name, tool_input in self.calls():
+                code, err, out = self.tool(name, **tool_input)
+                self.assertEqual((code, err), (0, ""), (state["mode"], name, tool_input))
+                self.assertNotIn("permissionDecision", out, (state["mode"], name))
 
 
 class LegacyConcept(Project):
@@ -1571,77 +1388,6 @@ class LegacyConcept(Project):
         _, _, out = self.prompt(f"/docket:implement {SPEC}")
         self.assertIn("Be ambitious", out)
 
-    def test_concept_mode_writes_outside_the_work_dir_only_with_the_users_click(self):
-        self.set_state(mode="concept")
-        for target in (f"{self.p}/legacy/specs/022_testserver.md", f"{self.p}/AGENTS.md", f"{self.p}/.claude/CLAUDE.md"):
-            code, err, out = self.tool("Edit", file_path=target, old_string="a", new_string="b")
-            self.assertEqual(code, 0, err)
-            decision = json.loads(out)["hookSpecificOutput"]
-            self.assertEqual(decision["permissionDecision"], "ask", target)
-            self.assertIn("Concept mode writes concepts", decision["permissionDecisionReason"])
-        self.assertIn(" ask ", self.log())
-        for target in (str(self.work / "concepts" / "core" / "c-0000ffff.md"), str(self.work / "DOCKET.md"),
-                       str(self.tmp / "scratch" / "notes.txt")):
-            code, err, out = self.tool("Write", file_path=target, content="x")
-            self.assertEqual((code, out.strip()), (0, ""), target)
-        self.set_state(mode="spec")
-        self.assertEqual(self.tool("Edit", file_path=f"{self.p}/AGENTS.md", old_string="a", new_string="b")[2].strip(), "")
-        self.set_state(mode="concept")
-        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Read",
-                                      "tool_input": {"file_path": f"{self.p}/AGENTS.md"}}, self.p)
-        self.assertNotIn(" grant ", self.log())  # a Read is no write
-        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
-                                      "tool_input": {"file_path": f"{self.p}/AGENTS.md"}}, self.p)
-        self.assertIn(" grant ", self.log())
-        self.assertIn("write AGENTS.md", self.log())
-        (self.work / "DOCKET.md").unlink()  # a project not set up: docket only observes
-        code, _, out = self.tool("Edit", file_path=f"{self.p}/src/a.py", old_string="a", new_string="b")
-        self.assertEqual((code, out.strip()), (0, ""))
-
-    def test_a_named_blocker_ends_the_turn_until_the_user_answers(self):
-        self.set_state(mode="concept")
-        self.add(self.user("überarbeite die specs"),
-                 self.said(f"- **Blocker:** docket specs only through /docket:spec.\n{hstamp()}"), self.stopped(),
-                 self.user("<task-notification>workflow completed</task-notification>"))
-        for name, tool_input in (("Write", {"file_path": str(self.work / "concepts" / "core" / "c-1.md"), "content": "x"}),
-                                 ("Workflow", {"script": "export const meta = {}"}), ("Agent", {"prompt": "draft"})):
-            code, err, _ = self.tool_t(name, **tool_input)
-            self.assertEqual(code, 2, name)
-            self.assertIn("blocker", err)
-        self.assertEqual(self.tool_t("Read", file_path=str(self.work / "DOCKET.md"))[0], 0)
-        self.add(self.user("ok, dann /docket:spec"))
-        self.assertEqual(self.tool_t("Write", file_path=str(self.work / "concepts" / "core" / "c-1.md"), content="x")[0], 0)
-
-    def test_a_skill_text_or_a_compaction_is_no_answer_and_no_blocker_is_no_blocker(self):
-        self.set_state(mode="concept")
-        concept = str(self.work / "concepts" / "core" / "c-1.md")
-        self.add(self.user("weiter"), self.said(f"1. Blocker: the key is missing.\n{hstamp()}"), self.stopped(),
-                 {"type": "user", "isMeta": True, "message": {"role": "user", "content": "# Simplify\nReview the code"}},
-                 {"type": "user", "isCompactSummary": True, "message": {"role": "user", "content": "Summary of the session"}})
-        self.assertEqual(self.tool_t("Write", file_path=concept, content="x")[0], 2)
-        self.add(self.user("ok"), self.said(f"Blocker: keiner.\n{hstamp()}"), self.stopped())
-        self.assertEqual(self.tool_t("Write", file_path=concept, content="x")[0], 0)
-
-    def test_a_blocker_in_a_text_between_tool_calls_does_not_end_the_turn(self):
-        self.set_state(mode="spec")
-        self.add(self.user("schreib die spec"), self.said("Blocker for the live check: no key yet; writing the rest."))
-        self.assertEqual(self.tool_t("Write", file_path=str(self.work / "specs" / "core" / "s-0000ffff-x.md"),
-                                     content="---\nstate: draft\n---\n")[0], 0)
-
-    def test_no_question_in_the_box_of_a_sealed_or_closed_session(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        for ask in ("Committen?", ""):  # a run shows no box at all until its closing message
-            code, err, _ = self.tool("mcp__ccd_turn__wrap_up", recap="x", ask=ask)
-            self.assertEqual(code, 2, ask)
-            self.assertIn("next-step box", err)
-        self.set_state(mode="closed", spec=SPEC)
-        code, err, _ = self.tool("mcp__ccd_turn__wrap_up", recap="x", ask="Committen?")
-        self.assertEqual(code, 2)
-        self.assertIn("next-step box", err)
-        self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x")[0], 0)
-        self.set_state(mode="concept")
-        self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x", ask="Committen?")[0], 0)
-
     def test_the_box_question_counts_toward_the_one_question(self):
         self.set_state(mode="concept")
         self.add(self.user("weiter"), self.box("Dürfen docket-Läufe den Testserver per REST ansprechen?"))
@@ -1659,7 +1405,7 @@ class LegacyConcept(Project):
 
     def test_a_hook_answer_is_quoted_only_when_a_hook_gave_it(self):
         self.set_state(mode="concept")
-        message = (f"- Warum ein Konzept: Der Hook hat geantwortet: „Specs are written in spec mode only“ "
+        message = (f"- Warum ein Konzept: Der Hook hat geantwortet: „The push did not run“ "
                    f"(pre_tool_use.py).\n{hstamp()}")
         self.add(self.user("was ist das für ein Konzept?"))
         code, err, _ = self.stop_t(message)
@@ -1667,7 +1413,8 @@ class LegacyConcept(Project):
         self.assertIn("no hook said it", err)
         self.add({"type": "user", "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": "t9", "is_error": True,
-             "content": "PreToolUse:Write hook error: [docket] Specs are written in spec mode only: name `/docket:spec`"}]}})
+             "content": "PreToolUse:Bash hook error: [docket rule: push_branch] The push goes to `main`; "
+                        "push_branch in DOCKET.md is `next`. The push did not run."}]}})
         self.assertEqual(self.stop_t(message)[0], 0)
         # A quote from elsewhere, or without a hook in the line, is not checked.
         self.assertEqual(self.stop_t(f"Der Nutzer schrieb „nimm die nächsten fünf Specs“.\n{hstamp()}")[0], 0)
@@ -1858,7 +1605,6 @@ class CopySync(Project):
         self.start()
         self.assertEqual((self.root / ".claude" / "settings.json").read_text("utf-8"), before)
         self.assertNotIn("judge-updated", self.log())
-
 
 
 class SealedGate(Project):
@@ -2298,60 +2044,6 @@ class Series(Project):
                          f"Run finished: “Login” is implemented, 1 commit on `{branch}` not pushed.")
 
 
-class AgentNames(Project):
-    """V8: an agent's description is what the user reads when it finishes. luradb-web-client 2026-11-06: 80
-    completions, 59 names in the plugin's words, none naming its spec."""
-
-    def setUp(self):
-        super().setUp()
-        self.set_state(mode="sealed", spec=SPEC, series=[SPEC, "s-aaaa1111"], queue=["s-aaaa1111"])
-
-    def agent(self, description, **extra):
-        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Agent",
-                   "tool_input": {"subagent_type": "docket:refiner", "model": "sonnet", "description": description,
-                                  "prompt": "x"}}
-        payload.update(extra)
-        return run_hook("pre_tool_use.py", payload, self.p)
-
-    def test_a_series_agent_names_its_place_and_its_task_in_everyday_words(self):
-        code, err, _ = self.agent("Refiner feasibility vs code")
-        self.assertEqual(code, 2)
-        self.assertIn("`Spec 1 of 2: `", err)
-        self.assertEqual(self.agent("Spec 1 of 2: check against the code")[0], 0)
-        self.assertEqual(self.agent("Spec 1 of 2: fixer flips the box")[0], 2)
-        self.assertEqual(self.agent("Refiner feasibility", agent_id="sub-1")[0], 0)  # an agent's own spawn
-        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| user_language | `Deutsch` | |\n", "utf-8")
-        self.assertEqual(self.agent("Spec 1 von 2: Prüfung gegen den Code")[0], 0)
-        self.assertEqual(self.agent("Spec 1 of 2: check against the code")[0], 2)
-
-    def test_a_single_spec_needs_no_place_but_no_plugin_words(self):
-        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
-        self.assertEqual(self.agent("Check against the code")[0], 0)
-        self.assertEqual(self.agent("")[0], 0)
-        self.assertEqual(self.agent("Docket skeleton")[0], 2)
-
-
-class OrchestratorDocket(Project):
-    """V6: the orchestrator keeps the docket, the hook writes the metrics; a fixer changes project files only
-    (luradb-web-client 2026-11-06: 22 of 41 fixer spawns did docket bookkeeping)."""
-
-    def setUp(self):
-        super().setUp()
-        self.set_state(mode="sealed", spec=SPEC)
-
-    def fixer(self, prompt):
-        return self.tool("Agent", subagent_type="docket:fixer", prompt=prompt)
-
-    def test_a_fixer_never_gets_the_docket_or_the_metrics(self):
-        code, err, _ = self.fixer(f"append to {self.work}/dockets/core/{SPEC}.md: point 1 evidence")
-        self.assertEqual(code, 2)
-        self.assertIn("The docket is yours", err)
-        self.assertEqual(self.fixer(f"write metrics/{SPEC}.json")[0], 2)
-        self.assertEqual(self.fixer("CHANGELOG.md: add the line `- login`")[0], 0)
-        self.assertEqual(self.tool("Write", file_path=str(self.docket), content="# Docket\n")[0], 0)
-        self.assertEqual(self.tool("Write", file_path=str(self.work / "metrics" / f"{SPEC}.json"), content="{}")[0], 2)
-
-
 class JudgeSuspension(Project):
     """V5: the judge has no place in a sealed run (ENTSCHEIDUNGEN.md, Stop-Hook). luradb-web-client 2026-11-06: 24
     verdicts on waits of at most three lines, which the judge's own exceptions should have let through."""
@@ -2408,29 +2100,6 @@ class JudgeSuspension(Project):
         self.assertFalse(self.record.exists())
 
 
-class PluginSource(Project):
-    """V10: a run is checked by the hooks, not studied through them (luradb-web-client 2026-11-06: the orchestrator
-    read stop.py to learn what the check accepts)."""
-
-    def test_the_plugin_source_is_not_read_in_a_run(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.tool("Read", file_path=str(HOOKS / "stop.py"))
-        self.assertEqual(code, 2)
-        self.assertIn("plugin's own files", err)
-        self.assertEqual(self.tool("Grep", pattern="refuse", path=str(HOOKS))[0], 2)
-        self.assertEqual(self.tool("Read", file_path=str(HOOKS.parent / "templates" / "delivery-docket.md"))[0], 0)
-        self.set_state(mode="concept")
-        self.assertEqual(self.tool("Read", file_path=str(HOOKS / "stop.py"))[0], 0)
-
-    def test_every_refinement_section_is_checked(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("## Refinement\n- feasibility: fine → adopted\n## Evidence\n- \n"
-                               "## Refinement (second round)\n- spec: the token expires after an hour\n", "utf-8")
-        code, err, _ = self.tool("Agent", subagent_type="docket:implementer", model="sonnet", prompt="point 1")
-        self.assertEqual(code, 2)
-        self.assertIn("the token expires", err)
-
-
 class ReviewGate(Project):
     """V14: one reviewer reads the whole diff before the push; every finding is decided in the docket."""
 
@@ -2438,26 +2107,6 @@ class ReviewGate(Project):
         super().setUp()
         self.set_state(mode="sealed", spec=SPEC)
         self.docket.write_text("| 1 | login | `x` | [x] |\n", "utf-8")
-
-    def test_the_push_waits_for_a_decided_review(self):
-        code, err, _ = self.tool("Bash", command="git push origin next")
-        self.assertEqual(code, 2)
-        self.assertIn("Review", err)
-        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n- code | the expiry test asserts nothing | "
-                               "src/auth_test.rs:12 | test\n", "utf-8")
-        code, err, _ = self.tool("Bash", command="git push origin next")
-        self.assertEqual(code, 2)
-        self.assertIn("without a decision", err)
-        # The docket is append-only: the line is written again below with its decision, the later one counts.
-        self.add("- code | the expiry test asserts nothing | src/auth_test.rs:12 | test | fixed, asserts the 401 now")
-        code, err, _ = self.tool("Bash", command="git push origin next")
-        self.assertEqual(code, 2)
-        self.assertIn("no line of the angle `spec`", err)
-        self.add("- spec | no findings")
-        self.assertEqual(self.tool("Bash", command="git push origin next")[0], 0)
-        code, _, _ = run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Bash", "agent_id": "x",
-                                                  "tool_input": {"command": "git push origin other"}}, self.p)
-        self.assertEqual(code, 0)
 
     def test_delivered_needs_the_review(self):
         self.end_spec(review=False)
@@ -2468,35 +2117,13 @@ class ReviewGate(Project):
     def add(self, *lines):
         self.docket.write_text(self.docket.read_text("utf-8") + "".join(line + "\n" for line in lines), "utf-8")
 
-    def review(self, *lines):
-        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n" + "".join(line + "\n" for line in lines), "utf-8")
-        return self.tool("Bash", command="git push origin next")
-
     def test_a_bug_an_unmet_point_and_a_broken_rule_are_never_deferred(self):
-        for severity in ("bug", "unmet", "rule"):
-            code, err, _ = self.review(f"- code | the token never expires | src/auth.rs:40 | {severity} | deferred",
-                                       "- spec | no findings")
-            self.assertEqual(code, 2, severity)
-            self.assertIn("not deferred into a delivery", err)
-        for severity in ("test", "docs", "scope", "cleanup"):
-            self.assertEqual(self.review(f"- code | a stale comment | src/auth.rs:40 | {severity} | deferred",
-                                         "- spec | no findings")[0], 0, severity)
-        # Fixed after all: the later line of the same finding counts.
-        self.review("- code | the token never expires | src/auth.rs:40 | bug | deferred", "- spec | no findings")
+        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n- code | the token never expires | src/auth.rs:40 | "
+                               "bug | deferred\n- spec | no findings\n", "utf-8")
         self.add("- code | the token never expires | src/auth.rs:40 | bug | fixed, expires after an hour")
-        self.assertEqual(self.tool("Bash", command="git push origin next")[0], 0)
         self.end_spec("BLOCKED: the token never expires", result="Login works, the token stays valid.", review=False)
         self.assertEqual(self.run_stop()[0], 2)
         self.assertEqual(self.state()["outcomes"], {SPEC: "blocked"})
-
-    def test_a_finding_carries_its_severity(self):
-        code, err, _ = self.review("- code | the token never expires | src/auth.rs:40 | rejected: covered by the server",
-                                   "- spec | no findings")
-        self.assertEqual(code, 2)
-        self.assertIn("without a severity", err)
-        self.assertEqual(self.review("- no findings")[0], 2)  # the form of 0.4: one reviewer, no angle
-        self.assertEqual(self.review("- code: no findings", "- **spec** | no findings",
-                                     "- recheck | no findings")[0], 0)
 
     def transcript(self, *agents):
         """Each agent as (kind, returned), in order, then the push is tried."""
@@ -2511,70 +2138,14 @@ class ReviewGate(Project):
         path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
         return str(path)
 
-    def push(self, *agents):
-        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n- code | no findings\n- spec | no findings\n", "utf-8")
-        return run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Bash",
-                                            "transcript_path": self.transcript(*agents),
-                                            "tool_input": {"command": "git push origin next"}}, self.p)
-
-    def test_the_review_is_run_not_written(self):
-        """V15: `no findings` in the docket is no review; a reviewer returned after the last agent that wrote."""
-        code, err, _ = self.push(("implementer", True))
-        self.assertEqual(code, 2)
-        self.assertIn("No reviewer has returned", err)
-        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("reviewer", True))[0], 0)
-        self.assertEqual(self.push(("implementer", True), ("reviewer", "refused"))[0], 2)  # a spawn the hook refused
-        self.assertEqual(self.push(("implementer", True), ("reviewer", False))[0], 2)  # still running
-        self.assertEqual(self.push(("refiner", True))[0], 0)  # nothing written in this session: a resume at the push
-
     def test_a_fix_after_the_review_is_reviewed_again(self):
-        """V15: round two reads what the fix wrote; a reviewer started beside the fixer has not read it."""
-        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("fixer", True))[0], 2)
-        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("fixer", True), ("reviewer", True))[0], 0)
-        self.assertEqual(self.push(("implementer", True), ("reviewer", True), ("fixer", False), ("reviewer", True))[0], 2)
+        """V15: round two reads what the fix wrote."""
         self.end_spec()
         code, err, _ = self.run_stop(transcript_path=self.transcript(("implementer", True), ("reviewer", True),
                                                                      ("implementer", True)), background_tasks=[])
         self.assertEqual(code, 2)
         self.assertIn("No reviewer has returned", err)
         self.assertEqual(self.state()["mode"], "sealed")
-
-    def test_a_reviewer_is_briefed_without_the_docket(self):
-        spawn = lambda prompt: self.tool("Agent", subagent_type="docket:reviewer", model="opus", prompt=prompt)
-        code, err, _ = spawn(f"Angle code. Spec {self.spec}, docket {self.work}/dockets/core/{SPEC}.md, base abc1234.")
-        self.assertEqual(code, 2)
-        self.assertIn("not your account", err)
-        self.assertEqual(spawn(f"Angle code. Spec {self.spec}. Read `git diff abc1234...HEAD`.")[0], 0)
-
-
-class ModelPerSpawn(Project):
-    """V17: the model is the orchestrator's decision per spawn, by tier and role, not an inheritance of its own."""
-
-    def setUp(self):
-        super().setUp()
-        self.set_state(mode="sealed", spec=SPEC)
-        self.docket.write_text("## Refinement\n\n- feasibility: fine → adopted\n", "utf-8")
-
-    def test_every_agent_but_the_fixer_names_its_model(self):
-        for kind in ("implementer", "refiner", "reviewer", "diagnoser"):
-            code, err, _ = self.tool("Agent", subagent_type=f"docket:{kind}", prompt="x")
-            self.assertEqual(code, 2, kind)
-            self.assertIn("has no `model`", err)
-            self.assertEqual(self.tool("Agent", subagent_type=f"docket:{kind}", model="sonnet", prompt="x")[0], 0, kind)
-        self.assertEqual(self.tool("Agent", subagent_type="docket:conceptor", prompt="x")[0], 2)
-        self.assertEqual(self.state()["mode"], "sealed")  # refused before the rewrite opened
-        self.assertEqual(self.tool("Agent", subagent_type="docket:fixer", prompt="CHANGELOG.md: add `- login`")[0], 0)
-        self.set_state(mode="spec")
-        self.assertEqual(self.tool("Agent", subagent_type="docket:conceptor", prompt="draft")[0], 0)  # no run, no rule
-
-    def test_an_agent_may_look_an_error_up_in_a_run(self):
-        for tool, given in (("WebSearch", {"query": "tokio JoinError cancelled"}),
-                            ("WebFetch", {"url": "https://docs.rs/tokio", "prompt": "JoinError"})):
-            code, err, _ = run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": tool,
-                                                        "agent_id": "d1", "tool_input": given}, self.p)
-            self.assertEqual(code, 0, err)
-        tools = (HOOKS.parent / "agents" / "diagnoser.md").read_text("utf-8").split("---")[1]
-        self.assertIn("WebSearch, WebFetch", tools)
 
 
 class Triage(Project):
@@ -2610,49 +2181,8 @@ class Triage(Project):
         self.path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", "utf-8")
         return str(self.path)
 
-    def implementer(self, *steps):
-        return run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Agent",
-                                            "transcript_path": self.transcript(*steps),
-                                            "tool_input": {"subagent_type": "docket:implementer", "model": "opus",
-                                                           "prompt": "point 2"}}, self.p)
-
     def triage(self, line):
         self.docket.write_text(self.POINTS + "\n## Triage\n\n" + line + "\n", "utf-8")
-
-    def test_round_two_waits_for_the_triage_and_round_three_for_a_named_cause(self):
-        self.assertEqual(self.implementer()[0], 0)  # round one
-        code, err, _ = self.implementer("implementer")
-        self.assertEqual(code, 2)
-        self.assertIn("point 2 and the point is still open", err)
-        self.triage("- point 2 | cause: unknown after src/auth.rs | repro: `cargo test refresh` → 3 of 3 | "
-                    "impact: every login after an hour | fix")
-        self.assertEqual(self.implementer("implementer", "diagnoser")[0], 0)  # round two: examined
-        code, err, _ = self.implementer("implementer", "diagnoser", "implementer")
-        self.assertEqual(code, 2)
-        self.assertIn("a third attempt at a symptom is not made", err)
-        self.docket.write_text(self.docket.read_text("utf-8") + "- point 2 | cause: src/auth.rs:2, the expiry is "
-                               "read before it is set | repro: `cargo test refresh` → 3 of 3 | impact: every login | fix\n",
-                               "utf-8")
-        self.assertEqual(self.implementer("implementer", "diagnoser", "implementer", "diagnoser")[0], 0)
-
-    def test_a_closed_point_starts_the_count_again(self):
-        now = datetime.utcnow()
-        stamp = lambda seconds: (now + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        (self.work / "LOG.md").write_text(f"{stamp(-60)}  {SPEC}  sealed             session=test-ses\n"
-                                          f"{stamp(-10)}  {SPEC}  point-delivered    session=test-ses  count=1\n", "utf-8")
-        entry = lambda seconds, block: {"type": block["role"], "timestamp": stamp(seconds).replace("Z", ".000Z"),
-                                        "message": {"content": [block["content"]]}}
-        call = {"role": "assistant", "content": {"type": "tool_use", "id": "a1", "name": "Agent",
-                                                 "input": {"subagent_type": "docket:implementer"}}}
-        back = {"role": "user", "content": {"type": "tool_result", "tool_use_id": "a1", "content": "done"}}
-        self.path.write_text(json.dumps(entry(-40, call)) + "\n" + json.dumps(entry(-30, back)) + "\n", "utf-8")
-        spawn = lambda: run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": "Agent",
-                                                     "transcript_path": str(self.path),
-                                                     "tool_input": {"subagent_type": "docket:implementer",
-                                                                    "model": "sonnet", "prompt": "point 2"}}, self.p)
-        self.assertEqual(spawn()[0], 0)  # point 1's implementer returned before point 1 was flipped
-        self.path.write_text(json.dumps(entry(-5, call)) + "\n" + json.dumps(entry(-2, back)) + "\n", "utf-8")
-        self.assertEqual(spawn()[0], 2)  # this one returned for point 2
 
     def write(self, line, *steps):
         """The orchestrator appends `line` to the docket; the hook answers after the write."""
@@ -2691,24 +2221,6 @@ class Triage(Project):
         self.assertEqual(self.write(line, "implementer", "diagnoser")[0], 2)
         self.assertEqual(self.write(line, "implementer", "diagnoser", "diagnoser")[0], 0)
         self.assertEqual(self.write("- point 2 | cause: src/auth.rs:2 | repro: `x` → 3 of 3 | impact: all | fix")[0], 0)
-
-    def review(self, *lines):
-        self.docket.write_text("| 1 | login | `x` | [x] |\n## Review\n\n" + "".join(line + "\n" for line in lines), "utf-8")
-        return self.tool("Bash", command="git push origin next")
-
-    def test_a_suspect_is_examined_not_deferred_and_only_a_suspect_is_observed(self):
-        suspect = "- code | the refresh may race the logout | src/auth.rs:2 | suspect | "
-        code, err, _ = self.review(suspect + "deferred", "- spec | no findings")
-        self.assertEqual(code, 2)
-        self.assertIn("A suspect is not deferred, it is examined", err)
-        self.assertEqual(self.review(suspect + "cause: unknown after src/auth.rs | repro: `cargo test race` → 0 of 3 | "
-                                     "impact: one logout in thousands | observe: a 401 after logout in the log",
-                                     "- spec | no findings")[0], 0)
-        self.assertEqual(self.review(suspect + "rejected: src/auth.rs:3 takes the lock first", "- spec | no findings")[0], 0)
-        code, err, _ = self.review("- code | the token never expires | src/auth.rs:2 | bug | cause: unknown | "
-                                   "repro: `x` → 1 of 3 | impact: all | observe: a stale token", "- spec | no findings")
-        self.assertEqual(code, 2)
-        self.assertIn("Only a `suspect` is observed", err)
 
     def test_what_is_observed_reaches_the_user_as_a_line_to_watch(self):
         self.docket.write_text("| 1 | login | `x` | [x] |\n## Triage\n\n" + self.FLAKY.replace("point 2", "point 1") + "\n",
@@ -3007,7 +2519,7 @@ class ReviewFindings(Project):
         self.assertEqual(json.loads(out)["hookSpecificOutput"]["displayContent"], text)
 
     def test_only_the_conceptor_ends_a_rewrite(self):
-        self.tool("Agent", subagent_type="docket:conceptor", model="opus", prompt="rewrite")
+        self.set_state(mode="rewrite", spec=SPEC, series=[SPEC], rewrite=SPEC)
         stop = lambda kind: run_hook("subagent_stop.py", {"session_id": SID, "cwd": self.p, "agent_type": kind,
                                                           "last_assistant_message": "done\nUnverified: none"}, self.p)
         stop("docket:refiner")
@@ -3089,26 +2601,6 @@ class ExperimentTwelve(Project):
         self.assertNotIn("lange Zeile", text)  # a note for the record: neither shown nor counted
         self.assertNotIn("open point", text)
 
-    def test_the_fixer_ban_does_not_trip_on_a_path_with_docket_in_it(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        prompt = "In D:/dev/projects/docket/experiments/exp12-series/tests/test_greet.py add the case `--bye`."
-        self.assertEqual(self.tool("Agent", subagent_type="docket:fixer", prompt=prompt)[0], 0)
-
-    def test_the_docket_of_a_finished_spec_is_no_reference(self):
-        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: done\n---\n", "utf-8")
-        self.docket.write_text("| 1 | x | `x` | [x] |\n", "utf-8")
-        self.set_state(mode="sealed", spec="s-aaaa1111")
-        self.assertEqual(self.tool("Read", file_path=str(self.docket))[0], 2)
-
-    def test_the_task_list_speaks_the_users_words(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.tool("mcp__ccd_turn__update_plan", items=[{"content": "Spec 1: Docket-Skelett schreiben",
-                                                                        "status": "in_progress"}])
-        self.assertEqual(code, 2)
-        self.assertIn("task list", err)
-        self.assertEqual(self.tool("mcp__ccd_turn__update_plan", items=[{"content": "Spec 1: Prüfung gegen den Code",
-                                                                          "status": "in_progress"}])[0], 0)
-
     def test_metrics_count_agents_that_started(self):
         self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
         (self.work / "LOG.md").write_text(f"2026-11-06T10:00:00Z  {SPEC}  sealed             session=test-ses\n", "utf-8")
@@ -3130,7 +2622,6 @@ class ExperimentTwelve(Project):
         metrics = json.loads((self.work / "metrics" / f"{SPEC}.json").read_text("utf-8"))
         self.assertEqual(metrics["agents"], {"fixer": 1, "reviewer": 1})
         self.assertEqual(metrics["reviewer_models"], ["opus"])
-
 
 
 class PaneData(Project):
@@ -3359,28 +2850,6 @@ class SessionStateRace(Project):
             del d.open
         self.assertEqual(len(calls), 3)
 
-    def test_required_files_read_in_one_message_are_all_recorded(self):
-        for name in ("CONTRIBUTING.md", "AGENTS.md"):
-            (self.root / name).write_text("# rules\n", "utf-8")
-        files = [str(self.work / "DOCKET.md").replace("\\", "/"), f"{self.p}/CONTRIBUTING.md", f"{self.p}/AGENTS.md"]
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
-        env["CLAUDE_PROJECT_DIR"] = self.p
-        for _ in range(4):
-            self.set_state(mode="spec", degraded=True, read=[])
-            hooks = [(subprocess.Popen([sys.executable, str(HOOKS / "pre_tool_use.py")], stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env),
-                      json.dumps({"session_id": SID, "cwd": self.p, "tool_name": "Read",
-                                  "tool_input": {"file_path": path}}).encode("utf-8")) for path in files]
-            for hook, payload in hooks:
-                hook.stdin.write(payload)
-                hook.stdin.close()
-            for hook, _ in hooks:
-                hook.wait()
-                hook.stdout.close()
-                hook.stderr.close()
-            self.assertEqual(len(self.state()["read"]), 3)
-            self.assertFalse(self.state()["degraded"])
-
     def test_an_agents_tool_call_writes_nothing_into_the_state(self):
         self.set_state(mode="spec", clock="2026-11-10 12:00", refused=True)
         before = (self.root / ".claude" / "docket" / f"state-{SID}.json").read_text("utf-8")
@@ -3398,95 +2867,6 @@ class SessionStateRace(Project):
                                       "tool_input": {"file_path": "x.md"}}, self.p)
         self.assertLess(time.time() - path.stat().st_mtime, 60)
         self.assertEqual(self.state()["mode"], "sealed")
-
-
-class ModeRestore(Project):
-    """The mode the user typed stands in the transcript. A state that says none against it is wrong, and docket puts
-    the mode back instead of refusing the work and sending the user to type the command again."""
-
-    def setUp(self):
-        super().setUp()
-        self.path = self.tmp / "transcript.jsonl"
-        self.new = f"{self.work}/specs/core/s-0a0a0a0a-export.md".replace("\\", "/")
-
-    def typed(self, *commands):
-        with self.path.open("a", encoding="utf-8") as handle:
-            for command in commands:
-                name, _, rest = command.partition(" ")
-                text = (f"<command-message>{name[1:]}</command-message>\n<command-name>{name}</command-name>\n"
-                        f"<command-args>{rest}</command-args>") if name.startswith("/") else command
-                handle.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
-
-    def call(self, tool, **tool_input):
-        return run_hook("pre_tool_use.py", {"session_id": SID, "cwd": self.p, "tool_name": tool,
-                                            "tool_input": tool_input, "transcript_path": str(self.path)}, self.p)
-
-    def test_a_spec_write_puts_the_typed_mode_back(self):
-        self.typed("Hallo", "/docket:spec alle offenen Legacy-Specs übersetzen", "noch eine Spec bitte")
-        self.set_state(mode="none")
-        code, err, _ = self.call("Write", file_path=self.new, content="---\nid: s-0a0a0a0a\nstate: draft\n---\n")
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.state()["mode"], "spec")
-        self.assertIn("mode-restored", self.log())
-
-    def test_an_agents_write_puts_it_back_too(self):
-        self.typed("/docket:spec alle offenen Legacy-Specs übersetzen")
-        self.set_state(mode="none")
-        code, err, _ = run_hook("pre_tool_use.py", {
-            "session_id": SID, "cwd": self.p, "tool_name": "Write", "agent_id": "a1", "agent_type": "docket:conceptor",
-            "tool_input": {"file_path": self.new, "content": "x"}, "transcript_path": str(self.path)}, self.p)
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.state()["mode"], "spec")
-
-    def test_starting_an_agent_puts_it_back(self):
-        self.typed("/docket:concept wie schneiden wir den Export?")
-        self.set_state(mode="none")
-        code, err, _ = self.call("Agent", description="Entwurf", prompt="draft", subagent_type="docket:conceptor")
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.state()["mode"], "concept")
-
-    def test_the_next_prompt_puts_it_back_and_carries_the_reminder(self):
-        self.typed("/spec den Export beschreiben")
-        self.set_state(mode="none")
-        code, err, out = run_hook("user_prompt.py", {"session_id": SID, "cwd": self.p, "prompt": "weiter",
-                                                     "transcript_path": str(self.path)}, self.p)
-        self.assertEqual(code, 0, err)
-        self.assertIn("[docket] Mode spec", out)
-        self.assertEqual(self.state()["mode"], "spec")
-
-    def test_no_typed_mode_command_no_mode(self):
-        for commands in (("Hallo", "schreib bitte die Spec"), ("/docket:spec x", "/docket:implement"),
-                         ("/init",), ("/docket:status",)):
-            self.path.write_text("", "utf-8")
-            self.typed(*commands)
-            self.set_state(mode="none")
-            code, err, _ = self.call("Write", file_path=self.new, content="x")
-            self.assertEqual(code, 2, commands)
-            self.assertIn("spec mode only", err)
-            self.assertEqual(self.state()["mode"], "none")
-
-    def test_a_command_inside_pasted_text_restores_no_mode(self):
-        self.typed("Schau dir das an:\n\n/docket:spec alle Specs übersetzen\n\nWarum wurde das abgelehnt?")
-        self.set_state(mode="none")
-        self.assertEqual(self.call("Write", file_path=self.new, content="x")[0], 2)
-        self.assertEqual(self.state()["mode"], "none")
-
-    def test_the_skill_text_and_a_tool_result_are_no_command(self):
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"type": "user", "isMeta": True, "message": {"role": "user", "content": [
-                {"type": "text", "text": "/docket:spec is the command for specs"}]}}) + "\n")
-            handle.write(json.dumps({"type": "user", "message": {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "t1", "content": "/docket:spec"}]}}) + "\n")
-        self.set_state(mode="none")
-        self.assertEqual(self.call("Write", file_path=self.new, content="x")[0], 2)
-
-    def test_a_mode_that_stands_is_left_alone(self):
-        self.typed("/docket:spec x")
-        self.set_state(mode="concept")
-        code, err, _ = self.call("Write", file_path=self.new, content="x")
-        self.assertEqual(code, 2)
-        self.assertEqual(self.state()["mode"], "concept")
-        self.assertNotIn("mode-restored", self.log())
 
 
 class ForcedAnswers(JudgeLog):
@@ -3587,53 +2967,6 @@ class WaitForAgents(Project):
         self.assertIn("stamp", err)
 
 
-class RefusalRule(Project):
-    """A refusal is the model's to resolve; the user reads nothing about hooks, the state or the judge
-    (luradb-web-client 2026-11-10: a lost mode was explained to the user in the hooks' own words)."""
-
-    RULE = "The user reads nothing about it"
-
-    def write(self, **extra):
-        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Write",
-                   "tool_input": {"file_path": str(self.work / "specs" / "core" / "s-new.md"), "content": "x"}}
-        payload.update(extra)
-        return run_hook("pre_tool_use.py", payload, self.p)
-
-    def test_a_refused_tool_call_of_the_conversation_carries_the_rule(self):
-        for state in ({"mode": "none"}, {"mode": "spec", "degraded": True}, {"mode": "concept", "degraded": True}):
-            self.set_state(**state)
-            code, err, _ = self.write()
-            self.assertEqual(code, 2, state)
-            self.assertIn(self.RULE, err, state)
-            self.assertIn("what they decide or type", err, state)
-
-    def test_a_run_and_an_agent_get_the_refusal_alone(self):
-        self.set_state(mode="sealed", spec=SPEC)
-        code, err, _ = self.tool("Write", file_path=str(self.work / "LOG.md"), content="x")
-        self.assertEqual(code, 2)
-        self.assertNotIn(self.RULE, err)
-        self.set_state(mode="spec", degraded=True)
-        code, err, _ = self.write(agent_id="a1")
-        self.assertEqual(code, 2)
-        self.assertNotIn(self.RULE, err)
-
-    def test_the_refusal_is_counted_under_its_own_words(self):
-        self.set_state(mode="none")
-        self.write()
-        counts = json.loads((self.work / "metrics" / "session.violations.json").read_text("utf-8"))
-        self.assertEqual(list(counts), ["specs-are-written-in-spec"])
-
-    def test_the_rule_comes_with_every_prompt_and_session_start_outside_a_run(self):
-        start = {"session_id": SID, "cwd": self.p, "source": "startup"}
-        for mode in ("none", "spec", "concept"):
-            self.set_state(mode=mode)
-            self.assertIn(self.RULE, self.prompt("Wie weit sind wir?")[2], mode)
-            self.assertIn(self.RULE, run_hook("session_start.py", start, self.p)[2], mode)
-        self.set_state(mode="sealed", spec=SPEC)
-        self.assertNotIn(self.RULE, self.prompt("Wie weit sind wir?")[2])
-        self.assertNotIn(self.RULE, run_hook("session_start.py", start, self.p)[2])
-
-
 class NeverInItsOwnWay(Project):
     """0.5.8. luradb-web-client 2026-11-10: a spec whose code was reviewed and pushed ended BLOCKED over a line of its
     own record (a citation of an earlier session that an earlier spec of the same run had made stale), the series
@@ -3709,15 +3042,6 @@ class NeverInItsOwnWay(Project):
             self.assertEqual(self.state()["mode"], "sealed")
             self.worked()
         self.assertNotIn(" waived ", self.log())
-
-    def test_a_refinement_line_is_closed_by_writing_it_again_below(self):
-        implementer = lambda: self.tool("Agent", subagent_type="docket:implementer", model="sonnet", prompt="point 1")
-        self.docket.write_text("## Refinement\n\n- feasibility: hello.py does not exist\n", "utf-8")
-        code, err, _ = implementer()
-        self.assertEqual(code, 2)
-        self.assertIn("write each line again below", err)
-        self.docket.write_text(self.docket.read_text("utf-8") + "- feasibility: hello.py does not exist → adopted\n", "utf-8")
-        self.assertEqual(implementer()[0], 0)
 
     def test_a_line_too_long_for_the_message_is_sent_back_and_never_cut(self):
         long_result = "Login works " + "and works " * 30
@@ -4128,9 +3452,7 @@ class ReplayOfTheEleventh(Project):
             ""]))
         for gone in ("offene", "frag hier", "Ich rate dir", "Befehl:", "Empfehlung", "Statusnummer", "1024"):
             self.assertNotIn(gone, text)
-        # The message is sent as rendered, and the box of the closing turn may ask about the proposals.
-        self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap=text.splitlines()[0],
-                                   ask="Soll aus Vorschlag 1 eine Spec werden?")[0], 0)
+        # The message is sent as rendered.
         self.assertEqual(self.run_stop(text, active=True)[0], 0)
         self.assertEqual(self.state()["mode"], "closed")
         self.assertIn("Vorschlag 1 des letzten Laufs, aus „Rechte-Bestand anzeigen, Domain-Validierung tragen“: Die "

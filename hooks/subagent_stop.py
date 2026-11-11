@@ -9,7 +9,7 @@ import sys
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import Paths, load_state, log_event, message_text, read_input, refuse, save_state, set_context
+from docket_lib import Paths, load_state, log_event, message_text, read_input, refuse, save_state
 
 MAX_LINES = 40
 
@@ -39,7 +39,6 @@ def end_rewrite(hook_input):
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
     state = load_state(paths, session_id)
-    set_context(paths, state.get("spec", ""))
     kind = str(hook_input.get("agent_type") or "").lower()
     # Only the conceptor's return ends the rewrite; a refiner still running from step 1 does not (review 2026-11-06).
     if state.get("mode") == "rewrite" and (not kind or "conceptor" in kind):

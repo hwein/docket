@@ -29,7 +29,7 @@ from docket_lib import (CONCEPT_ID, REFUSAL_RULE, RUN_MODES, SPEC_ID, Paths, cla
                         lock_holder, log_event, logged_series, open_predecessors, precondition_result, project_head,
                         preconditions, proposal, queued_elsewhere, read_input, ready_specs, restore_mode, save_display,
                         save_state, say,
-                        series_line, session_live, set_context, set_spec_state, spec_title, strip_harness_blocks,
+                        series_line, session_live, set_spec_state, spec_title, strip_harness_blocks,
                         suspend_judge, take_handoff, terminal_base, violations_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
@@ -114,7 +114,6 @@ def main():
     paths = Paths(hook_input)
     session_id = hook_input.get("session_id")
     state = load_state(paths, session_id)
-    set_context(paths, state.get("spec", ""))
     text = strip_harness_blocks(prompt).strip()
     if not text:
         return 0  # only harness notifications (task results, session notes): not user text

@@ -276,6 +276,18 @@ SAY = {
         "not_started": "nicht begonnen",
         "series_interrupted": "Unterbrochene Reihe: {items}. `/docket:implement {specs}` setzt sie fort.",
         "series_running": "Reihe: {items}.",
+        # The project rules of DOCKET.md (pre_tool_use.py): a fact with key, value and file, no instruction.
+        "rule_forbidden_paths": "[docket rule: forbidden_paths] {path} trifft forbidden_paths `{value}` in DOCKET.md "
+                                "({config}); es wurde nichts geschrieben.",
+        "rule_push_branch": "[docket rule: push_branch] Der Push geht auf `{branch}`; push_branch in DOCKET.md ({config}) "
+                            "ist `{value}`. Der Push lief nicht.",
+        "rule_commit_regex": "[docket rule: commit_regex] Die Commit-Nachricht `{message}` passt nicht zu commit_regex "
+                             "`{value}` in DOCKET.md ({config}). Der Commit lief nicht.",
+        "rule_forbidden_commands": "[docket rule: forbidden_commands] Der Befehl steht auf der Liste forbidden_commands "
+                                   "`{value}` in DOCKET.md ({config}) und wurde nicht ausgeführt.",
+        "rule_forbidden_commands_ask": "[docket rule: forbidden_commands] Der Befehl steht auf der Liste "
+                                       "forbidden_commands `{value}` in DOCKET.md ({config}). Hier erlaubt, läuft er "
+                                       "einmal; das LOG hält die Freigabe fest.",
     },
     "en": {
         "position": "spec {i} of {n} · ",
@@ -362,6 +374,17 @@ SAY = {
         "not_started": "not started",
         "series_interrupted": "Interrupted series: {items}. `/docket:implement {specs}` resumes it.",
         "series_running": "Series: {items}.",
+        "rule_forbidden_paths": "[docket rule: forbidden_paths] {path} matches forbidden_paths `{value}` in DOCKET.md "
+                                "({config}); nothing was written.",
+        "rule_push_branch": "[docket rule: push_branch] The push goes to `{branch}`; push_branch in DOCKET.md ({config}) "
+                            "is `{value}`. The push did not run.",
+        "rule_commit_regex": "[docket rule: commit_regex] The commit message `{message}` does not match commit_regex "
+                             "`{value}` in DOCKET.md ({config}). The commit did not run.",
+        "rule_forbidden_commands": "[docket rule: forbidden_commands] The command is on the list forbidden_commands "
+                                   "`{value}` in DOCKET.md ({config}) and was not run.",
+        "rule_forbidden_commands_ask": "[docket rule: forbidden_commands] The command is on the list forbidden_commands "
+                                       "`{value}` in DOCKET.md ({config}). Allowed here, it runs once; the LOG records "
+                                       "the grant.",
     },
 }
 
@@ -1453,23 +1476,12 @@ def transcript_entries(transcript_path, tail=False):
     return entries
 
 
-CONTEXT = {}
 # The user's side of a refusal (luradb-web-client 2026-11-10: a session whose mode was lost told the user about modes,
 # hook texts and the judge, and sent them to type their command again). Said with every prompt and session start of a
-# conversation, and with every refused tool call of one.
+# conversation.
 REFUSAL_RULE = ("A refusal by a hook is yours to resolve. The user reads nothing about it: no hook, no refusal text, "
                 "no session state, no judge. If only the user can clear it, say in one sentence what they decide or "
                 "type.")
-
-
-def set_context(paths, doc_id):
-    """Where refusals are counted: the metrics file of the document the session works on."""
-    CONTEXT.update({"paths": paths, "doc_id": doc_id or ""})
-
-
-def in_conversation(flag=True):
-    """The orchestrator's next message goes to the user (no run, no agent): a refusal ends with REFUSAL_RULE."""
-    CONTEXT["suffix"] = REFUSAL_RULE if flag else ""
 
 
 def rule_key(message):
@@ -1488,8 +1500,8 @@ def violations(paths, doc_id):
 
 
 def record_violation(paths, doc_id, message):
-    """Measurement with feedback: every refusal is counted per rule in metrics/<id>.violations.json
-    and shown again at the next /implement of that spec and at session start."""
+    """The judge's verdicts, counted per rule in metrics/<id>.violations.json and shown again at the next /implement
+    of that spec and at session start (goes with the judge in 1c; a refusal is counted nowhere)."""
     counts = violations(paths, doc_id)
     key = rule_key(message)
     counts[key] = int(counts.get(key, 0)) + 1
@@ -1519,9 +1531,8 @@ def point_counts(body):
 
 
 def refuse(message):
-    print(message + (" " + CONTEXT["suffix"] if CONTEXT.get("suffix") else ""), file=sys.stderr)
-    if CONTEXT.get("paths") is not None:
-        record_violation(CONTEXT["paths"], CONTEXT.get("doc_id", ""), message)
+    """A refusal: exit 2 with the message on stderr, nothing counted, nothing added."""
+    print(message, file=sys.stderr)
     return 2
 
 

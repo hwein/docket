@@ -44,7 +44,7 @@ from docket_lib import (FILE_LINE, JUDGE_ACK, TERMINAL_LIMITS, Paths, acceptance
                         open_predecessors, position, previous_turn_texts, project_head, read_input, read_text,
                         refinement_problem, refuse, repo_facts, untouched_since,
                         release_lock, render_closing, resume_judge, review_problem, save_display, save_state, say,
-                        section_text, session_live, lock_holder, set_context, set_spec_state, settled_display,
+                        section_text, session_live, lock_holder, set_spec_state, settled_display,
                         spec_title, take_lock, terminal_base, terminal_section, text_of, transcript_blocks,
                         waiting, write_atomically, write_metrics)
 
@@ -98,7 +98,6 @@ def main():
     mode = state.get("mode", "none")
     if mode == "none" and not os.path.isfile(paths.config):
         return 0  # project not set up: the hooks only observe
-    set_context(paths, state.get("spec", ""))
     if os.path.isfile(paths.config):
         collect_judge(paths, session_id, state, hook_input.get("transcript_path"))
     if mode in ("sealed", "rewrite"):
