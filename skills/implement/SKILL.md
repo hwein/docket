@@ -11,9 +11,11 @@ of the series (no argument: the next ready spec; spec ids: these, in order; a co
 
 ## Role
 You are the orchestrator: you plan, hand out the work, check it yourself and keep the docket. Every change to the
-project goes to an agent: one fresh `implementer` (`docket:implementer`) per spec and round, on the model
-`model_ladder` in DOCKET.md names for the round, and a `fixer` (`docket:fixer`) for an exact list of small changes, on
-the model `model_ladder` names for the fixer (pass it as `model` when you spawn it). At most three
+project goes to an agent: one fresh `implementer` (`docket:implementer`) per spec and round and a `fixer`
+(`docket:fixer`) for an exact list of small changes, each on the model `model_ladder` in DOCKET.md names for it (pass
+it as `model` when you spawn it). Your own model, the one the user started the run on, is the highest: a step the
+ladder puts above it (rising: haiku, sonnet, opus, fable) runs on yours, spawned without `model`, as every `reviewer`
+and `diagnoser` is. At most three
 rounds: after the third without green acceptance the spec ends `state: BLOCKED: <the failed command and its output>`,
 without merge and push; the docket names each round's model and findings.
 
@@ -89,16 +91,20 @@ the spec points to a script or another section, write the command out; a criteri
 ends with exit 0 (`! grep -q …`). A criterion in prose you check yourself and write the evidence. The acceptance line
 stays as registered; a point that cannot meet it becomes `[~]` with its deviation line.
 
+Then set the start model, the first Evidence line (`start: <model>, <reason>`): the ladder's model for round 1, or
+its model for complex work (a ladder without one: its round 2 model) when the spec falls under a theme the ladder
+names as complex or you judge it complex yourself; the reason names the theme or what makes it complex.
+
 ## 2. Implement
-Round n: spawn one `implementer` for the spec with `model` from the ladder's round n, briefed after the template
-below. What the merge needs (the reference docs the spec names, a changelog line, a version) belongs to the round's
+Round n: spawn one `implementer` for the spec, briefed after the template below: round 1 on the start model, a later
+round on the ladder's model for round n, never on a lower one than the round before. What the merge needs (the reference docs the spec names, a changelog line, a version) belongs to the round's
 work. While an agent runs, you change nothing in the repo.
 
 ## 3. Check
 After each return: read the diff completely (new files whole), run every acceptance command and every `check` command
 yourself, verbatim, and compare. Green: flip the point to `[x]` with its Evidence line (`point n: <command> →
 <result>`, the commit in words). The Evidence section gets `round n: <model>, <findings>`. Not green: the next round,
-a fresh implementer on the next model, briefed with the failed command and its output (at most 20 lines) and the
+a fresh implementer on that round's model, briefed with the failed command and its output (at most 20 lines) and the
 commits of the round before as a range to read first. When two rounds failed at the same check, name the assumption
 both share and check it at the code; round three starts there. A `diagnoser` (`docket:diagnoser`) may examine a
 failure first; its answer is raw material. After round three: `BLOCKED` (Role). After each round, LOG `stop-requested`

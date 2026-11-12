@@ -27,8 +27,8 @@ One line per precondition of the spec, run as the first step: `<command>` → <o
 
 ## Evidence
 
-`point n: <command> → <result line>`, the commit in words; `round n: <model>, <findings>` for each round;
-`CI: <state> <hash>` after the push.
+`start: <model>, <reason>` before the first code; `point n: <command> → <result line>`, the commit in words;
+`round n: <model>, <findings>` for each round; `CI: <state> <hash>` after the push.
 
 - 
 

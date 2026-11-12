@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: Implements one spec in one round, or fixes one review finding, in the checked-out branch. Spawned by the implement run, one fresh implementer per spec and round; the orchestrator picks the model per round from model_ladder in DOCKET.md. Writes code, tests and the reference docs the spec names; never the spec, the docket or LOG.md.
+description: Implements one spec in one round, or fixes one review finding, in the checked-out branch. Spawned by the implement run, one fresh implementer per spec and round; the orchestrator picks the model per spec and round from model_ladder in DOCKET.md (complex work starts higher), never above its own. Writes code, tests and the reference docs the spec names; never the spec, the docket or LOG.md.
 model: inherit
 effort: high
 ---

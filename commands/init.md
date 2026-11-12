@@ -47,8 +47,10 @@ diff changes files the project owns.
    and `forbidden_commands` (regexes and globs docket enforces); a pipe inside a regex is written `\|`.
    Question 12 becomes `user_language`: the language of every message to the user in every mode; docket writes its
    own lines (the state lines, the gate) in it.
-   `model_ladder` is one card with its default first: implementer round 1 sonnet, round 2 opus, round 3 fable; fixer
-   haiku. The answer is the row as the template writes it.
+   `model_ladder` is one card with its default first: fixer haiku; implementer round 1 sonnet, round 2 opus, round 3
+   the orchestrator's model (the one the user starts a run on; no agent runs above it). The themes that need opus
+   from round 1 are a finding where the project names them (with its source), otherwise a card of their own with
+   "none" first. The answer is the row as the template writes it.
    The plugin ships the output style `docket:docket` (result first, one question with a recommendation, titles
    instead of ids, one message when the agents are back); name it once as a choice the user makes in `/config`,
    because a style docket set would override the one the user chose. The diff does not set it.

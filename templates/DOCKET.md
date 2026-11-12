@@ -11,7 +11,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | topics | `<topic1>, <topic2>` | folders under specs/ |
 | check | `<first command of the project's check>` `<further commands, as many as the project has>` | <where the project runs them, e.g. the CI workflow> |
 | reference_roots | `<docs/, README.md, ...>` (what IS; specs say what SHOULD) | |
-| model_ladder | implementer round 1: sonnet · round 2: opus · round 3: fable · fixer (small exact changes): haiku | |
+| model_ladder | fixer (small exact changes): haiku · implementer round 1: sonnet; complex from round 1 with opus: <the themes of this project that need it, or "none"> · round 2: opus · round 3: the orchestrator's model | |
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |
 | user_language | `<language of every message to the user, e.g. "Deutsch" or "English"; not the repo's language; docket's own lines follow it>` | question 12 |
 | ci | `<how CI is waited for and read, or "none">` | |

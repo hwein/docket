@@ -318,7 +318,7 @@ def docket_config(stand):
         if row and row.group(1) not in ("Key",):
             key = row.group(1)
             if key == "model_ladder":
-                out.append(line)
+                out.append(re.sub(r"<[^>]*>", "none", line))  # the template's ladder, no complex themes
             elif key in values:
                 out.append(f"| {key} | {values[key]} | fixture |")
             continue  # a row this fixture does not set is left out, like a key the project does not use

@@ -64,8 +64,8 @@ or an earlier ready spec is asked again.
 Before `state: ready`, the spec is read three times and its commands run once. Its result is the spec's
 `## Ready check` section, in the form of the template.
 
-1. Refiners: spawn three `refiner` agents (`docket:refiner`) together in the background, each in a fresh context
-   with one angle: `feasibility` (the spec against the code), `spec` (the spec against its concept and the reference
+1. Refiners: spawn three `refiner` agents (`docket:refiner`) together in the background, on your own model (no
+   `model`), each in a fresh context with one angle: `feasibility` (the spec against the code), `spec` (the spec against its concept and the reference
    docs DOCKET.md names), and the project's angle, `third_refiner_angle` in DOCKET.md (unset: users and operators).
    Briefing: the angle, the spec path, the concept path. Each finding is one line. While they run, a returning agent
    gets no message: the turn ends without text, and the user gets one message when the last one is back.
