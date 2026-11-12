@@ -1825,6 +1825,40 @@ class ReviewFindings(Project):
         self.assertEqual(code, 2)
         self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
 
+    HAND_BACK = {"type": "user", "message": {"content": 'Another Claude session sent a message:\n<agent-message from="a1">'
+                                                        "\n[Subagent hand-back] Review: no findings.\n</agent-message>"}}
+    CHECK = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b1", "name": "Bash",
+                                                           "input": {"command": "cargo test"}}]}}
+
+    def test_a_repeated_notification_after_the_check_does_not_move_the_agents_return(self):
+        # The agent's report reached the model as a hand-back, the check ran, then the same notification was written
+        # again as a queued_command: the agent returned before the check.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.HAND_BACK, self.CHECK,
+                                                                  self.queued(), self.said()), background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertNotIn("before the last agent returned", err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
+    def test_a_check_before_the_agents_hand_back_is_still_refused(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.CHECK, self.HAND_BACK,
+                                                                  self.queued(), self.said()), background_tasks=[])
+        self.assertEqual(code, 2)
+        self.assertIn("before the last agent returned", err)
+
+    def test_after_a_send_message_the_agents_next_result_is_a_new_return(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        resume = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": "SendMessage",
+                                                                "input": {"to": "a1", "message": "check once more"}}]}}
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.HAND_BACK, self.CHECK, resume,
+                                                                  self.HAND_BACK), background_tasks=[])
+        self.assertEqual(code, 2)
+        self.assertIn("before the last agent returned", err)
+
     def test_the_lock_is_exclusive_and_a_live_holder_keeps_it(self):
         self.set_state(mode="none")
         self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: ready\n---\n# Login\n", "utf-8")

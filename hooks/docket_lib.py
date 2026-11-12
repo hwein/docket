@@ -1264,12 +1264,23 @@ def pending_agents(transcript_path, queued_only=False):
 
 
 AGENT_TASKS = ("subagent", "workflow", "agent")
+AGENT_ID = re.compile(r"\bagentId:\s*([A-Za-z0-9_-]+)")
+HANDED_BACK = re.compile(r"<agent-message\s+from=\"([^\"]+)\">\s*\[Subagent hand-back\]")
 
 
 def agent_returns(transcript_path):
-    """{tool_use_id: line index of its return} for the main line's agents: the tool result of a foreground agent, the
-    notification of a background one (its tool result only says it was launched)."""
-    returns, launched = {}, set()
+    """{tool_use_id: line index of its return} for the main line's agents: the first line at which the agent's result
+    reached the model. That is the tool result of a foreground agent; for a background one (its tool result only says
+    it was launched) the first notification naming its tool_use_id or the first hand-back message from its agentId.
+    A later repeat of the same result does not move the return. A SendMessage to the agent resumes it: its next result
+    is a new return."""
+    returns, launched, returned, agents = {}, set(), set(), {}
+
+    def came_back(tool_id, index):
+        if tool_id not in returned:
+            returns[tool_id] = index
+            returned.add(tool_id)
+
     for index, entry in enumerate(transcript_entries(transcript_path)):
         if entry.get("isSidechain"):
             continue
@@ -1277,8 +1288,12 @@ def agent_returns(transcript_path):
         content = message.get("content") if isinstance(message, dict) else None
         if entry.get("type") == "assistant":
             for block in content if isinstance(content, list) else []:
-                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task"):
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                if block.get("name") in ("Agent", "Task"):
                     returns.setdefault(block.get("id"), -1)
+                elif block.get("name") == "SendMessage":
+                    returned.discard(agents.get(str((block.get("input") or {}).get("to", ""))))
             continue
         texts = []
         if entry.get("type") == "attachment" and isinstance(entry.get("attachment"), dict):
@@ -1293,17 +1308,23 @@ def agent_returns(transcript_path):
                 if block.get("type") == "text":
                     texts.append(block.get("text", ""))
                 elif block.get("type") == "tool_result" and block.get("tool_use_id") in returns:
+                    tool_id = block.get("tool_use_id")
                     inner = block.get("content")
                     inner = inner if isinstance(inner, str) else " ".join(
                         b.get("text", "") for b in inner or [] if isinstance(b, dict))
+                    for agent_id in AGENT_ID.findall(inner or ""):
+                        agents[agent_id] = tool_id
                     if LAUNCHED.match((inner or "").lstrip()):
-                        launched.add(block.get("tool_use_id"))
+                        launched.add(tool_id)
                     else:
-                        returns[block.get("tool_use_id")] = index
+                        came_back(tool_id, index)
         for text in texts:
             for tool_id in NOTIFIED.findall(text):
                 if tool_id in launched:
-                    returns[tool_id] = index
+                    came_back(tool_id, index)
+            for agent_id in HANDED_BACK.findall(text):
+                if agents.get(agent_id) in launched:
+                    came_back(agents[agent_id], index)
     return {k: v for k, v in returns.items() if v >= 0}
 
 
