@@ -83,12 +83,6 @@ The pane beside the chat shows specs, their state and the run at work; its butto
 The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<repo key>/` by default;
 `/docket:init` offers `docket/` inside the repo instead. docket adds no code to your repository.
 
-## Upgrading from 0.5
-
-End running runs first. The first session start removes the judge entry of 0.5 from `.claude/settings*.json`
-(kept in `.claude/docket/judge-removed.json`). Existing specs and dockets stay readable; a series of 0.5 goes on
-with `/docket:implement <id>`.
-
 ## Status
 
 0.6.1, early development. No warranty: use docket only where you can verify the result.
