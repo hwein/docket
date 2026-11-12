@@ -4,16 +4,15 @@ DOCKET.md; every other Stop passes without a word.
 In a run:
 - A Stop while agents run (background_tasks, or an agent whose notification has not reached the model) is a wait and
   passes; its time stays in the state (`waiting`), so the run stays live for other sessions (session_live). Until
-  this run wrote its Terminal state, or while a command of the gate moved to the background after its timeout has no
-  result, a background shell is a wait too (a client that reports no background_tasks waits for agents only); an
-  unchanged DELIVERED of an earlier run counts as written, also at the Stop right after the gate refused it, which
-  halts.
+  this run wrote its Terminal state, a background shell is a wait too (a client that reports no background_tasks waits
+  for agents only); an unchanged DELIVERED of an earlier run counts as written, also at the Stop right after the gate
+  refused it, which halts.
 - The spec's docket has a Terminal state (the last `state:` block of its `## Terminal state` section; an unchanged
   BLOCKED or DISSENT block an earlier run left does not count, a DELIVERED and a block whose `state:` line changed in
   place do). BLOCKED, and DISSENT from a docket of 0.5, close the spec unchecked. DELIVERED passes
   the gate first: no point `[ ]`, and every command of DOCKET.md `check` and the acceptance command of every `[x]`
   point ran after the last agent returned and did not fail; a run in the background counts with the status of its
-  notification (read from the transcript, nothing is run). A gap is the
+  notification and is a gap until then (read from the transcript, nothing is run). A gap is the
   one refusal of this hook: `[docket gate]` with the facts.
 - No Terminal state: the turn goes on once with a `[docket state]` statement (the spec, k of m points open).
 - The second Stop right after either, with no tool call between (`stop_hook_active` and `refused`), passes: LOG
@@ -53,16 +52,14 @@ def run_stop(paths, session_id, state, hook_input):
     transcript = hook_input.get("transcript_path")
     spec_id = state.get("spec", "")
     terminal = terminal_section(paths, spec_id, state)
-    problems, waits = gate_problems(paths, spec_id, transcript) if terminal["kind"] == "delivered" else ([], False)
+    problems = gate_problems(paths, spec_id, transcript) if terminal["kind"] == "delivered" else []
     # stop_hook_active stays true for the rest of a turn any Stop hook once blocked; only this hook's own word makes
     # the next Stop a second pass.
     second = bool(hook_input.get("stop_hook_active")) and bool(state.get("refused"))
     # An earlier run's unchanged DELIVERED counts as written, so a background shell (a dev server) is no wait: a gap
     # of the gate reaches the model as `[docket gate]`, and the Stop right after that refusal halts (Festlegung
-    # „Zweiter Stop nach dem Prüf-Tor“). While a command of the gate moved to the background after its timeout has no
-    # result yet, a background shell is a wait again: Claude Code ends it within ten minutes, its notification starts
-    # the next turn, whose Stop reads the gate with its result. One started in the background is no wait (W1).
-    if waiting(hook_input, transcript, bool(terminal["kind"]) and not waits):
+    # „Zweiter Stop nach dem Prüf-Tor“). A command of the gate still in the background is such a gap too (X2).
+    if waiting(hook_input, transcript, bool(terminal["kind"])):
         state["waiting"] = time.time()
         save_state(paths, session_id, state)
         return 0
@@ -110,12 +107,11 @@ def gate_problems(paths, spec_id, transcript):
     """The gate before DELIVERED (Festlegung „Umfang des Prüf-Tors“): open points, the project's check, the acceptance
     commands of the delivered points (docket_lib.gate_commands). Without a readable transcript only the open points
     count; without `check` in DOCKET.md (a placeholder included) only the acceptance commands and the open points.
-    Returns (problems, waits): waits while a command of the gate moved to the background after its timeout has no
-    result yet."""
+    A command still running in the background without a result is a gap."""
     body = read_text(paths.docket_file(spec_id))
     open_points = point_counts(body)[" "]
-    problems, waits = gate_commands(paths, spec_id, body, transcript)
-    return ([say(paths, "gate_open", k=open_points)] if open_points else []) + problems, waits
+    return ([say(paths, "gate_open", k=open_points)] if open_points else []) + gate_commands(paths, spec_id, body,
+                                                                                            transcript)
 
 
 def end_spec(paths, session_id, state, kind, transcript):

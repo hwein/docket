@@ -67,12 +67,12 @@ next tool call clears `refused`. Without the run mark it writes no state.
 ## Stop
 
 No matcher; acts only in a run. A Stop while agents run, or a background shell before this run wrote its Terminal
-state or while a gate command moved there at its timeout has no result, is a wait; its time stays in the state.
-An earlier run's unchanged DELIVERED counts as written; the Stop right after its gate refusal halts. Then the docket:
+state, is a wait and passes; its time stays in the state, so the run stays live for other sessions. An earlier
+run's unchanged DELIVERED counts as written; the Stop right after its gate refusal halts. Then the docket:
 
 - `state: DELIVERED` passes the gate: no point `[ ]`, and every `check` command of DOCKET.md and the acceptance
   command of every `[x]` point (the part before the arrow in backticks) ran after the last agent returned and did
-  not fail (in the background: by its notification's status), read from the transcript; nothing is run. An agent
+  not fail (in the background: by its notification, a gap until then), from the transcript; nothing is run. An agent
   returns per stop: at the stop's first delivery (tool result, notification, hand-back), or at its later hand-back;
   each form counts once per stop, a text seen since the last SendMessage never; a second delivery of a form, or a
   SendMessage that reached it (its notification names the SendMessage), starts the next stop. A spawn that never

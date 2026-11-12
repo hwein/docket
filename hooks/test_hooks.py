@@ -2075,11 +2075,11 @@ class ReviewFindings(Project):
         self.assertIn("the check `cargo test` failed in its last run", err)
         running = self.entries(self.CHECK, self.BACKGROUND, self.said())
         shell = [{"id": "bx1", "type": "shell", "status": "running", "command": "cargo test"}]
-        self.assertEqual(self.run_stop(transcript_path=running, background_tasks=shell), (0, "", ""))
-        self.assertEqual(self.state()["mode"], "sealed")
-        code, err, _ = self.run_stop(transcript_path=running, background_tasks=[])
-        self.assertEqual(code, 2, err)
-        self.assertIn("the last run of the check `cargo test` runs in the background and has no result yet", err)
+        for tasks in (shell, []):  # a gap, no wait, also while it runs (recheck of 5a8994a, X2)
+            code, err, _ = self.run_stop(transcript_path=running, background_tasks=tasks)
+            self.assertEqual(code, 2, err)
+            self.assertIn("the last run of the check `cargo test` runs in the background and has no result yet", err)
+            self.assertNotIn("waiting", self.state())
         stop = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "s1", "name": "TaskStop",
                                                               "input": {"task_id": "bx1"}}]}}
         code, err, _ = self.run_stop(transcript_path=self.entries(self.CHECK, self.BACKGROUND, stop, self.said()),
@@ -2106,6 +2106,48 @@ class ReviewFindings(Project):
         self.assertEqual(code, 2, err)
         self.assertIn("the last run of the check `cargo test` runs in the background and has no result yet", err)
         self.assertNotIn("waiting", self.state())
+
+    def test_a_check_moved_to_the_background_for_a_message_or_by_the_user_is_a_gap_until_its_result(self):
+        # Recheck of 5a8994a (X2), real formats (docket 5819a77e line 652, luradb 4a04d730 line 1304): a check moved to
+        # the background without a timeout was refused and halted, one moved at its timeout waited, without a limit.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        shell = [{"id": "bx1", "type": "shell", "status": "running", "command": "cargo test"}]
+        forms = [({"backgroundTaskId": "bx1", "backgroundedToDeliverMessage": True}, "Command was moved to the "
+                  "background (ID: bx1) so that a message that arrived while it was running can reach you."),
+                 ({"backgroundTaskId": "bx1", "backgroundedByUser": True},
+                  "Command was manually backgrounded by user with ID: bx1."),
+                 ({"backgroundTaskId": "bx1", "timedOutAfterMs": 120000}, "Command did not complete within its 120s "
+                  "timeout and was moved to the background (ID: bx1).")]
+        for result, text in forms:
+            moved = {"type": "user", "toolUseResult": result, "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "b1", "is_error": False, "content": text}]}}
+            code, err, _ = self.run_stop(transcript_path=self.entries(self.CHECK, moved, self.said()),
+                                         background_tasks=shell)
+            self.assertEqual(code, 2, err)
+            self.assertIn("runs in the background and has no result yet", err)
+            self.assertEqual(self.state()["mode"], "sealed")
+        code, err, _ = self.run_stop(transcript_path=self.entries(
+            self.CHECK, moved, self.said(), self.shell_note("completed", "completed (exit code 0)"), self.said()),
+            background_tasks=[])
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
+    def test_a_queued_notification_of_a_resumed_agent_still_waits(self):
+        # Recheck of 5a8994a (X3): the notification of an agent resumed by SendMessage names the SendMessage call;
+        # queued and not yet seen, it was no wait, and a docket without check closed before the model read the report.
+        self.end_spec()
+        note = {"type": "attachment", "attachment": {"type": "queued_command", "prompt":
+                "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>m1</tool-use-id>\n<status>completed</status>"
+                "\n<result>Review: one finding, not fixed.</result>\n</task-notification>"}}
+        path = self.entries(*self.spawn(), self.queued(), self.said(), self.HAND_BACK, self.RESUME, self.SENT, note)
+        self.assertEqual(self.run_stop(transcript_path=path, background_tasks=[]), (0, "", ""))
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertEqual(self.run_stop(transcript_path=path), (0, "", ""))  # a client without background_tasks
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.queued(), self.said(),
+                                                                  self.HAND_BACK, self.RESUME, self.SENT, note,
+                                                                  self.said()), background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
 
     def test_a_send_message_that_did_not_reach_the_agent_starts_no_stop(self):
         # Recheck of 5b777f6 (W2), real formats: a SendMessage to an unreachable agent and one without the tool started

@@ -1199,12 +1199,11 @@ def point_commands(body, paths):
 # A shell call in the background: its tool result only says so, its outcome comes later in a notification naming its
 # tool_use_id (recheck of 30f4bfa, V4). Its <status> decides: `completed` also for "completed (exit code 1: No
 # matches found)" (grep without a match), `failed` for "failed with exit code N", `killed` for "was stopped" (real
-# notifications, recheck of 5b777f6). A run moved there after its foreground timeout (`timedOutAfterMs`, "did not
-# complete within its 60s timeout") is stopped by Claude Code after ten minutes with a notification; one started with
-# run_in_background ("Command running in background with ID: …") may never end, such as a dev server (W1).
-BACKGROUND_SHELL = re.compile(r"\s*Command\b[^\n]{0,120}?\bbackground\b[^\n]{0,20}?\bID:\s*([A-Za-z0-9_-]+)",
+# notifications, recheck of 5b777f6). Whether a run without a notification yet will end is not known: one started with
+# run_in_background may be a dev server, and the time limit Claude Code may set for a run moved there (at its timeout,
+# to deliver a message, by the user) is not stated in every version (recheck of 5a8994a, X2).
+BACKGROUND_SHELL = re.compile(r"\s*Command\b[^\n]{0,120}?\bbackground(?:ed)?\b[^\n]{0,30}?\bID:\s*([A-Za-z0-9_-]+)",
                               re.IGNORECASE)
-TIMED_OUT = re.compile(r"\s*Command did not complete within\b", re.IGNORECASE)
 STOPPERS = ("TaskStop", "KillShell")
 SHELL_STATUS = re.compile(r"<status>\s*([A-Za-z_-]+)\s*</status>")
 EXIT_CODE = re.compile(r"\bexit code\s+(-?\d+)", re.IGNORECASE)
@@ -1213,8 +1212,8 @@ EXIT_CODE = re.compile(r"\bexit code\s+(-?\d+)", re.IGNORECASE)
 def shell_runs(transcript_path):
     """(line, command, outcome) for the main line's Bash and PowerShell calls, in order. The outcome is "failed" for an
     error result, for a run in the background whose notification has a status other than completed (without a status:
-    whose last exit code is not 0), and for one stopped with TaskStop; "timed-out" for a run moved to the background
-    after its timeout and "running" for one started there, while neither has a notification; else "ok"."""
+    whose last exit code is not 0), and for one stopped with TaskStop; "running" for a run in the background without
+    a notification yet; else "ok"."""
     entries = transcript_entries(transcript_path)
     calls = tool_calls(entries, ("Bash", "PowerShell"))
     ids = {block.get("id") for _, block, _ in calls}
@@ -1230,13 +1229,13 @@ def shell_runs(transcript_path):
                 if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in STOPPERS:
                     given = block.get("input") or {}
                     stopped = tasks.get(str(given.get("task_id") or given.get("shell_id") or ""))
-                    if outcome.get(stopped) in UNFINISHED:
+                    if outcome.get(stopped) == "running":
                         outcome[stopped] = "failed"
             continue
         for text in entry_texts(entry):
             for note in NOTIFICATION.findall(text):
                 for tool_id in NOTIFIED.findall(note):
-                    if outcome.get(tool_id) in UNFINISHED:
+                    if outcome.get(tool_id) == "running":
                         status, codes = SHELL_STATUS.search(note), EXIT_CODE.findall(note)
                         broke = status.group(1).lower() != "completed" if status else bool(codes) and codes[-1] != "0"
                         outcome[tool_id] = "failed" if broke else "ok"
@@ -1246,36 +1245,30 @@ def shell_runs(transcript_path):
         result = entry.get("toolUseResult") if isinstance(entry.get("toolUseResult"), dict) else {}
         for block in message["content"]:
             if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in ids:
-                text = result_text(block)
-                found = BACKGROUND_SHELL.match(text)
+                found = BACKGROUND_SHELL.match(result_text(block))
                 moved = result.get("backgroundTaskId") or (found.group(1) if found else "")
-                timed_out = bool(result.get("timedOutAfterMs")) or bool(TIMED_OUT.match(text))
-                outcome[block.get("tool_use_id")] = ("failed" if block.get("is_error") else "ok" if not moved
-                                                     else "timed-out" if timed_out else "running")
+                outcome[block.get("tool_use_id")] = ("failed" if block.get("is_error") else "running" if moved
+                                                     else "ok")
                 if moved:
                     tasks[str(moved)] = block.get("tool_use_id")
     return [(index, str((block.get("input") or {}).get("command", "")), outcome.get(block.get("id"), "ok"))
             for index, block, _ in calls]
 
 
-UNFINISHED = ("timed-out", "running")
-
-
 def gate_commands(paths, spec_id, body, transcript_path):
     """The commands of the gate (Festlegung „Umfang des Prüf-Tors“): every command of DOCKET.md `check` and, V16, the
     acceptance command of every delivered point ran in this session after the last agent of any kind returned, and
     its last run did not fail and has its result. One call per command or one call for several: what counts is the
-    last call that contains it. Returns (problems, waits): waits when the last run of one of them was moved to the
-    background after its timeout and has no result yet, which Claude Code ends within ten minutes with a
-    notification (stop.py waits for it). A run started in the background without a result is a gap without a wait:
-    it may never end (a dev server; recheck of 5b777f6, W1). Without a readable transcript nothing is checked here."""
+    last call that contains it. A run in the background without a result yet is a gap, never a wait: whether it ends
+    is not known (recheck of 5a8994a, X2); the model can wait for it with a tool call, and its notification starts
+    the next turn. Without a readable transcript nothing is checked here."""
     if not transcript_entries(transcript_path):
-        return [], False
+        return []
     shell = shell_runs(transcript_path)
     last_return = max(agent_returns(transcript_path).values(), default=-1)
     wanted = [("gate_check", {"command": c}) for c in check_commands(paths)]
     wanted += [("gate_point", {"point": p, "command": c}) for p, c in point_commands(body, paths)]
-    problems, waits = [], False
+    problems = []
     for key, fields in wanted:
         runs = [(index, outcome) for index, text, outcome in shell if fields["command"] in text]
         if not runs:
@@ -1283,9 +1276,8 @@ def gate_commands(paths, spec_id, body, transcript_path):
         elif runs[-1][0] < last_return:
             problems.append(say(paths, key + "_before", **fields))
         elif runs[-1][1] != "ok":
-            problems.append(say(paths, key + ("_running" if runs[-1][1] in UNFINISHED else "_failed"), **fields))
-            waits = waits or runs[-1][1] == "timed-out"
-    return problems, waits
+            problems.append(say(paths, key + "_" + runs[-1][1], **fields))
+    return problems
 
 
 def review_stats(body):
@@ -1313,7 +1305,9 @@ def pending_agents(transcript_path, queued_only=False):
     A notification arrives either as a user entry (between turns) or as a queued_command attachment (mid-turn,
     seen by the model with its next assistant entry); a queued one the model has not answered yet still counts as
     waiting, the turn resumes with it (luradb-web-client 2026-11-06: three waits were refused because
-    background_tasks was already empty). `queued_only`: only those, for a client that reports background_tasks."""
+    background_tasks was already empty). An agent resumed by a SendMessage (`resumedAgentId` in its result) counts
+    like a launch: its notification names the SendMessage call (recheck of 5a8994a, X3). `queued_only`: only those,
+    for a client that reports background_tasks."""
     calls, launched, delivered, queued = {}, {}, set(), set()
     for entry in transcript_entries(transcript_path):
         if entry.get("isSidechain"):
@@ -1331,7 +1325,8 @@ def pending_agents(transcript_path, queued_only=False):
             queued = set()
         if entry.get("type") == "assistant" and isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task", "Workflow"):
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in (
+                        "Agent", "Task", "Workflow", "SendMessage"):
                     calls[block.get("id")] = entry.get("timestamp", "")
         elif entry.get("type") == "user":
             if isinstance(content, str):
@@ -1343,10 +1338,11 @@ def pending_agents(transcript_path, queued_only=False):
                 if block.get("type") == "text":
                     delivered.update(NOTIFIED.findall(block.get("text", "")))
                 elif block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
-                    inner = block.get("content")
-                    inner = inner if isinstance(inner, str) else " ".join(
-                        b.get("text", "") for b in inner or [] if isinstance(b, dict))
-                    if LAUNCHED.match((inner or "").lstrip()):
+                    inner = result_text(block)
+                    resumed = (RESUMED.search(inner) or (isinstance(entry.get("toolUseResult"), dict)
+                                                         and entry["toolUseResult"].get("resumedAgentId")))
+                    if LAUNCHED.match((inner or "").lstrip()) or (resumed and not block.get("is_error")
+                                                                  and not NOT_SENT.search(inner)):
                         launched[block.get("tool_use_id")] = calls[block.get("tool_use_id")]
     if queued_only:
         return {tool_id for tool_id in queued if tool_id in launched}
@@ -1457,8 +1453,7 @@ def agent_returns(transcript_path):
 def waiting(hook_input, transcript_path, terminal_written):
     """A Stop that waits for work in the background: no check, no text needed (V4). Claude Code reports that work in
     `background_tasks`; once this run wrote the spec's Terminal state (or an earlier run's unchanged DELIVERED stands
-    there, with or without a gap of the gate) and no command of the gate still runs in the background (stop.py passes
-    `terminal_written` so), only agents count, not a dev server or a
+    there, with or without a gap of the gate, stop.py), only agents count, not a dev server or a
     monitor left running (review 2026-11-06: a background shell turned the spec end into an endless wait). A
     notification queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
     transcript."""
