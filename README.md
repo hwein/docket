@@ -134,8 +134,8 @@ that would run a spec before an undone predecessor starts no run and names the p
 docket starts the next one in the same session. A spec that ends blocked takes only its successors with it: the
 specs that do not wait for it still run. It ends the series only when it left work in the project that is not
 pushed, since the next spec's push would carry it. The closing message names the specs not started by their
-titles, says why each did not start and gives the command that takes them up. `/docket:stop` ends the series at
-the next checkpoint.
+titles, says why each did not start and gives the command that takes them up, `/docket:implement <ids>`.
+`/docket:stop` ends the series at the next checkpoint; the stopped spec is then among those ids.
 
 ## How a run works
 

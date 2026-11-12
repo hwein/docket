@@ -4,8 +4,8 @@ DOCKET.md; every other Stop passes without a word.
 In a run:
 - A Stop while agents run (background_tasks, or an agent whose notification has not reached the model) is a wait and
   passes; its time stays in the state (`waiting`), so the run stays live for other sessions (session_live).
-- The spec's docket has a Terminal state (the last `state:` block of its `## Terminal state` section; blocks an
-  earlier run left are skipped). BLOCKED, and DISSENT from a docket of 0.5, close the spec unchecked. DELIVERED passes
+- The spec's docket has a Terminal state (the last `state:` block of its `## Terminal state` section; an unchanged
+  BLOCKED or DISSENT block an earlier run left does not count, a DELIVERED and a block changed in place do). BLOCKED, and DISSENT from a docket of 0.5, close the spec unchecked. DELIVERED passes
   the gate first: no point `[ ]`, and every command of DOCKET.md `check` and the acceptance command of every `[x]`
   point ran after the last agent returned and did not fail (read from the transcript, nothing is run). A gap is the
   one refusal of this hook: `[docket gate]` with the facts.
@@ -27,7 +27,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (RUN_MODES, Paths, acceptance_problems, agent_returns, check_commands, claim_lock,
                         commit_records, frontmatter, load_state, log_event, marked, notice, open_predecessors, point_counts,
                         points_summary, project_head, quoted, read_input, read_text, records_commands, refuse,
-                        release_lock, repo_facts, run_line, save_state, say, set_spec_state, spec_title, terminal_base,
+                        release_lock, repo_facts, run_line, save_state, say, set_spec_state, spec_title, terminal_mark,
                         terminal_section, transcript_blocks, untouched_since, waiting, work_dir_dirty, write_metrics)
 
 
@@ -46,7 +46,7 @@ def main():
 def run_stop(paths, session_id, state, hook_input):
     transcript = hook_input.get("transcript_path")
     spec_id = state.get("spec", "")
-    terminal = terminal_section(paths, spec_id, skip=int(state.get("terminal_base", 0) or 0))
+    terminal = terminal_section(paths, spec_id, state)
     if waiting(hook_input, transcript, bool(terminal["kind"])):
         state["waiting"] = time.time()
         save_state(paths, session_id, state)
@@ -67,7 +67,9 @@ def run_stop(paths, session_id, state, hook_input):
     docket = paths.docket_file(spec_id)
     if docket:
         counts = point_counts(read_text(docket))
-        statement = say(paths, "no_terminal", title=title, spec=spec_id, open=counts[" "], total=sum(counts.values()))
+        old = terminal_section(paths, spec_id)["kind"]  # an earlier run's block, unchanged in this run
+        statement = say(paths, "no_terminal_old" if old else "no_terminal", title=title, spec=spec_id,
+                        kind=old.upper(), open=counts[" "], total=sum(counts.values()))
     else:
         statement = say(paths, "no_docket", title=title, spec=spec_id)
     if second:
@@ -155,7 +157,7 @@ def end_spec(paths, session_id, state, kind, transcript):
                 skipped[following] = ["held", ""]  # marked elsewhere meanwhile
                 continue
             state.update({"mode": "sealed", "spec": following, "queue": queue, "refused": False, "skipped": skipped,
-                          "terminal_base": terminal_base(paths, following), "sealed_head": project_head(paths)})
+                          "sealed_head": project_head(paths), **terminal_mark(paths, following)})
             save_state(paths, session_id, state)
             log_event(paths, session_id, following, "sealed", "from queue")
             set_spec_state(paths, following, "in-progress")

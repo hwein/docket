@@ -186,6 +186,8 @@ SAY = {
                               "letzten Umsetzers oder Fixers"),
         "gate_point_failed": "der Akzeptanzbefehl von Punkt {point} (`{command}`) scheiterte in seinem letzten Lauf",
         "no_terminal": "Das Docket von {title} ({spec}) hat keinen Terminal state; {open} von {total} Punkten sind offen.",
+        "no_terminal_old": ("Das Docket von {title} ({spec}) hat keinen Terminal state aus diesem Lauf: `state: {kind}` "
+                            "stand dort schon beim Beginn des Laufs; {open} von {total} Punkten sind offen."),
         "no_docket": "{title} ({spec}) hat noch kein Docket.",
         "halted": ("{title}: Der Lauf hat angehalten ({points}). `/docket:implement {specs}` setzt ihn fort, "
                    "jede Nachricht von dir auch."),
@@ -261,6 +263,8 @@ SAY = {
                               "or fixer returned"),
         "gate_point_failed": "the acceptance command of point {point} (`{command}`) failed in its last run",
         "no_terminal": "The docket of {title} ({spec}) has no Terminal state; {open} of {total} points are open.",
+        "no_terminal_old": ("The docket of {title} ({spec}) has no Terminal state from this run: `state: {kind}` stood "
+                            "there when the run began; {open} of {total} points are open."),
         "no_docket": "{title} ({spec}) has no docket yet.",
         "halted": ("{title}: the run stopped ({points}). `/docket:implement {specs}` resumes it, and so does any "
                    "message from you."),
@@ -1048,19 +1052,31 @@ def terminal_blocks(paths, spec_id):
     return blocks
 
 
-def terminal_section(paths, spec_id, skip=0):
-    """The last block counts, from its `state:` line on: the docket is append-only, so a wrong block is corrected by
-    writing it again below. `skip`: blocks an earlier run left (review 2026-11-06: a resumed spec was closed at once
-    from its old BLOCKED block)."""
-    blocks = terminal_blocks(paths, spec_id)[skip:]
-    if blocks:
-        return blocks[-1]
-    return {"kind": "", "reason": "", "result": "", "open": [], "watch": [], "user": [], "decision": [],
-            "repaired": [], "dissent": []}
+def terminal_section(paths, spec_id, state=None):
+    """The last block counts, from its `state:` line on. With `state` (a run, its fields from terminal_mark): a block
+    the docket already held when the run marked the spec counts when it says DELIVERED (the gate then reads it) or
+    when the run changed it in place; an unchanged BLOCKED or DISSENT an earlier run left does not close the resumed
+    spec (review 2026-11-06). A block written below the old ones always counts. Without `terminal_last` (a state of
+    an older version) only a block below the old ones or a DELIVERED counts (review 2026-11-12: a resumed spec whose
+    old block was rewritten in place never closed)."""
+    blocks = terminal_blocks(paths, spec_id)
+    empty = {"kind": "", "reason": "", "result": "", "open": [], "watch": [], "user": [], "decision": [],
+             "repaired": [], "dissent": []}
+    if not blocks:
+        return empty
+    last = blocks[-1]
+    if state is not None and len(blocks) <= int(state.get("terminal_base", 0) or 0) and last["kind"] != "delivered":
+        known = state.get("terminal_last")
+        if known is None or last == known:
+            return empty
+    return last
 
 
-def terminal_base(paths, spec_id):
-    return len(terminal_blocks(paths, spec_id))
+def terminal_mark(paths, spec_id):
+    """The state fields of a run that tell its own Terminal state from an earlier run's: the number of blocks when the
+    run marked the spec and the last of them."""
+    blocks = terminal_blocks(paths, spec_id)
+    return {"terminal_base": len(blocks), "terminal_last": blocks[-1] if blocks else None}
 
 
 REVIEW_ANGLE = re.compile(r"^[`*]*(code|spec|recheck)\b", re.IGNORECASE)
@@ -1072,8 +1088,8 @@ def review_cells(line):
 
 
 def review_lines(body):
-    """The Review lines that count: of two lines with the same angle and finding the later one. The docket is
-    append-only, so a line is corrected by writing it again below."""
+    """The Review lines that count: of two lines with the same angle and finding the later one, so a line is
+    corrected in place or by writing it again below."""
     latest = {}
     for line in bullets(section_text(body, "Review")):
         cells = review_cells(line)
@@ -1653,7 +1669,7 @@ def mark_run(paths, session_id, rest, state=None):
     # there lets the series go on (stop.end_spec).
     state.update({"mode": "sealed", "spec": spec_id, "stop_requested": False, "queue": queue, "series": found,
                   "outcomes": {}, "skipped": {}, "refused": False, "halted": False,
-                  "terminal_base": terminal_base(paths, spec_id), "sealed_head": project_head(paths)})
+                  "sealed_head": project_head(paths), **terminal_mark(paths, spec_id)})
     save_state(paths, session_id, state)
     log_event(paths, session_id, spec_id, "sealed")
     if queue:

@@ -1668,6 +1668,66 @@ class ReviewFindings(Project):
         self.assertEqual(self.run_stop()[0], 2)
         self.assertEqual(self.state()["outcomes"], {SPEC: "delivered"})
 
+    def resume(self, point, terminal):
+        """A docket an earlier run left with one point and a Terminal state, the spec marked again by a typed prompt."""
+        self.set_state(mode="none")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.docket.write_text(f"# Docket\n| 1 | login | `cargo test` | {point} |\n\n## Terminal state\n\n"
+                               f"- state: {terminal}\n", "utf-8")
+        self.prompt(f"/docket:implement {SPEC}")
+        self.assertEqual((self.state()["mode"], self.state()["terminal_base"]), ("sealed", 1))
+
+    def test_a_block_rewritten_in_place_ends_the_resumed_spec(self):
+        # Review 2026-11-12, as replayed: `[ ]` and BLOCKED, marked again, rewritten in place to `[x]` and DELIVERED.
+        # Before the fix the Stop said "has no Terminal state; 0 of 1 points are open", the second Stop halted, and
+        # the spec stayed in progress.
+        self.resume("[ ]", "BLOCKED: three rounds")
+        self.docket.write_text(f"# Docket\n| 1 | login | `cargo test` | [x] |\n\n## Terminal state\n\n"
+                               "- state: DELIVERED\n", "utf-8")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered, 0 blocked"), err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+        self.assertIn("state: done", self.spec.read_text("utf-8"))
+        self.assertIn(" delivered ", self.log())
+        self.assertNotIn("stop-forced", self.log())
+
+    def test_a_blocked_block_changed_in_place_closes_the_resumed_spec_as_blocked(self):
+        self.resume("[ ]", "BLOCKED: three rounds")
+        self.docket.write_text(self.docket.read_text("utf-8").replace("three rounds", "start Docker"), "utf-8")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2, err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "blocked"}))
+
+    def test_a_delivered_block_from_a_halted_run_passes_the_gate_at_the_stop(self):
+        self.resume("[x]", "DELIVERED")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2, err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
+    def test_a_delivered_block_from_a_halted_run_meets_the_gate(self):
+        self.resume("[ ]", "DELIVERED")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket gate] The docket of Login (s-0123abcd) says DELIVERED; 1 point(s) "
+                                       "still open"), err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_an_unchanged_blocked_or_dissent_block_does_not_close_the_resumed_spec(self):
+        for kind in ("BLOCKED: three rounds", "DISSENT"):
+            self.resume("[ ]", kind)
+            code, err, _ = self.run_stop()
+            self.assertEqual(code, 2, err)
+            self.assertEqual(err.strip(), f"[docket state] The docket of Login (s-0123abcd) has no Terminal state from "
+                                          f"this run: `state: {kind.split(':')[0]}` stood there when the run began; "
+                                          "1 of 1 points are open.")
+            self.assertEqual((self.state()["mode"], self.state()["spec"]), ("sealed", SPEC))
+            self.assertNotIn("state: done", self.spec.read_text("utf-8"))
+            self.end_spec()  # a new block below the old one
+            self.docket.write_text(self.docket.read_text("utf-8").replace("[ ]", "[x]"), "utf-8")
+            self.assertEqual(self.run_stop()[0], 2)
+            self.assertEqual(self.state()["outcomes"], {SPEC: "delivered"})
+
     def test_resuming_the_spec_at_work_keeps_the_series(self):
         (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
             "---\nid: s-aaaa1111\ntitle: Logout\nstate: ready\n---\n", "utf-8")

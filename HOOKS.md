@@ -73,7 +73,8 @@ run stays live for other sessions. Then the docket of the spec at work:
   command of every `[x]` point (the part before the arrow in backticks) ran after the last agent returned and did
   not fail, read from the transcript; nothing is run. A gap is refused once, `[docket gate]`, with the facts.
 - `state: BLOCKED: <reason>`, and any other terminal state of a 0.5 docket, closes the spec unchecked.
-- No Terminal state: the turn goes on once with `[docket state]` (the spec, k of m points open).
+- No Terminal state: the turn goes on once with `[docket state]` (the spec, k of m points open). A block the docket
+  held when the run began counts only when it says DELIVERED or the run changed it in place.
 - A second Stop right after either, without a tool call between, passes: LOG `stop-forced`, one line to the user
   with where the run stands and the command that resumes it.
 

@@ -64,9 +64,10 @@ naming the step you are at is fine.
 
 ## 0. Start or resume
 The line `No run marked: <reason>` in the context: the turn ends with that reason to the user. Otherwise read
-DOCKET.md and the project rules it names (CONTRIBUTING.md, AGENTS.md); `git status` clean, branch as DOCKET.md and
+DOCKET.md and the project rules it names (CONTRIBUTING.md, AGENTS.md); `git status` clean outside the work dir and
+`.claude/docket/` (docket has just written the LOG, the spec's state and the lock there), branch as DOCKET.md and
 CONTRIBUTING.md say. A resume (a docket without Terminal state, or with BLOCKED last): read the docket and the last
-LOG lines and go on at the first open point. Where docket, LOG and the spec's `state:` disagree, the docket counts
+LOG lines and go on at the first open point; the run's own `state:` line goes below the old block. Where docket, LOG and the spec's `state:` disagree, the docket counts
 (its last Terminal state block), then the LOG, then the spec; note the contradiction as `[~]`.
 
 Preconditions, the first step of every spec: run each line of the spec's `Preconditions (user only)` in the shell it
@@ -122,13 +123,14 @@ count after the last agent.
 
 ## 6. Series
 After `DELIVERED` the next spec follows. After `BLOCKED` it follows when the spec left the project as it found it or
-everything is pushed and the tree is clean; otherwise the series ends (LOG `queue-dropped`). A spec whose predecessor
+everything is pushed and the tree is clean outside the work dir; otherwise the series ends (LOG `queue-dropped`). A spec whose predecessor
 is open is passed over. docket does this and names the result.
 
 ## 7. Closing message
 After docket's statement at the end of the series (`[docket state] The series is over: …`), write the one message of
-the run from `${CLAUDE_PLUGIN_ROOT}/templates/closing-message.md`, from the dockets. Where the statement names two
-commands for the records, they stand at its end.
+the run from `${CLAUDE_PLUGIN_ROOT}/templates/closing-message.md`, from the dockets. When specs did not start or one
+ended `stopped by user`, the message gives `/docket:implement <their ids>`, the command that takes them up. Where the
+statement names two commands for the records, they stand at its end.
 
 ## Briefings
 Implementer, in the language of the spec:
