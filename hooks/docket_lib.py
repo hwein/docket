@@ -1267,17 +1267,16 @@ NOTIFIED_RESULT = re.compile(r"<result>(.*?)(?:</result>|\Z)", re.DOTALL)
 
 
 def agent_returns(transcript_path):
-    """{tool_use_id: line index of its return} for the main line's agents: the last line at which a new result of the
-    agent reached the model. A result reaches it in up to three forms: the tool result of a foreground agent (a
-    background one's only says it was launched), a hand-back message from its agentId, and a notification naming its
-    tool_use_id. One stop of the agent delivers its result at most once in each form; the return is the stop's first
-    delivery or, when it comes later, its hand-back, the form that carries the report while the other two may only
-    point to it. A tool result or notification after a delivery of the same stop is a second delivery of that result
-    (wrong-fact-2 2026-11-12: the hand-back, the check, then the notification as a queued_command whose result only
-    points to the hand-back). A form the agent already delivered starts its next stop, as does a SendMessage to the
-    agent. A line that
-    repeats a text of the agent already seen (in any form, such as a notification written again as a queued_command)
-    does not move the return, nor does a notification without a result text once the agent returned."""
+    """{tool_use_id: line index of its return} for the main line's agents: the return of the agent's last stop, which
+    is the stop's first delivery or, when it comes later, its hand-back. A result reaches the model in up to three
+    forms: the tool result of a foreground agent (a background one's only says it was launched; an error result is a
+    spawn a hook refused or that failed, no agent), a hand-back message from its agentId, and a notification naming
+    its tool_use_id. One stop delivers its result at most once in each form; the hand-back carries the report while
+    the other two may only point to it (wrong-fact-2 2026-11-12: the hand-back, the check, then the notification as a
+    queued_command whose result only points to the hand-back). A second delivery of a form the stop already delivered
+    starts the agent's next stop, as does a SendMessage to the agent. A line that repeats a text the agent delivered
+    since the last SendMessage to it (in any form, such as a notification written again as a queued_command) does not
+    move the return, nor does a notification without a result text once one of its texts was seen."""
     returns, seen, stops, agents = {}, {}, {}, {}
 
     def came_back(tool_id, index, text, form):
@@ -1307,7 +1306,9 @@ def agent_returns(transcript_path):
                 if block.get("name") in ("Agent", "Task"):
                     returns.setdefault(block.get("id"), -1)
                 elif block.get("name") == "SendMessage":
-                    stops.pop(agents.get(str((block.get("input") or {}).get("to", ""))), None)
+                    resumed = agents.get(str((block.get("input") or {}).get("to", "")))
+                    stops.pop(resumed, None)
+                    seen.pop(resumed, None)
             continue
         texts = []
         if entry.get("type") == "attachment" and isinstance(entry.get("attachment"), dict):
@@ -1321,7 +1322,8 @@ def agent_returns(transcript_path):
                     continue
                 if block.get("type") == "text":
                     texts.append(block.get("text", ""))
-                elif block.get("type") == "tool_result" and block.get("tool_use_id") in returns:
+                elif (block.get("type") == "tool_result" and block.get("tool_use_id") in returns
+                      and not block.get("is_error")):  # a spawn a hook refused or that failed is no agent
                     tool_id = block.get("tool_use_id")
                     inner = block.get("content")
                     inner = inner if isinstance(inner, str) else " ".join(
@@ -1344,10 +1346,10 @@ def agent_returns(transcript_path):
 
 def waiting(hook_input, transcript_path, terminal_written):
     """A Stop that waits for work in the background: no check, no text needed (V4). Claude Code reports that work in
-    `background_tasks`; once this run wrote the spec's Terminal state (or an earlier run's unchanged DELIVERED passes
-    the gate, stop.py), only agents count, not a dev server or a monitor left running (review 2026-11-06: a background
-    shell turned the spec end into an endless wait). A notification
-    queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
+    `background_tasks`; once this run wrote the spec's Terminal state (or an earlier run's unchanged DELIVERED stands
+    there, outside the Stop right after the gate refused it, stop.py), only agents count, not a dev server or a
+    monitor left running (review 2026-11-06: a background shell turned the spec end into an endless wait). A
+    notification queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
     transcript."""
     if "background_tasks" not in hook_input:
         return bool(pending_agents(transcript_path))

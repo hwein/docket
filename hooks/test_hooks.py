@@ -1784,12 +1784,17 @@ class ReviewFindings(Project):
         self.assertEqual((self.state()["mode"], self.state().get("outcomes")), ("sealed", {}))
         self.assertIn("state: in-progress", self.spec.read_text("utf-8"))
 
-    def test_a_background_shell_holds_a_delivered_block_from_a_halted_run(self):
-        # Review of b0cb330 (P2): the old DELIVERED counted as written by this run, and a running build was no wait.
+    def test_a_background_shell_holds_the_stop_after_the_gate_refused_a_delivered_block_from_a_halted_run(self):
+        # Review of b0cb330 (P2): a running build got the gate and the second Stop halted. Since the recheck of
+        # 5c9abe1 (F2) the gap reaches the model first; the Stop right after it waits for the build instead of halting.
         self.resume("[ ]", "DELIVERED")
         shell = [{"id": "b1", "type": "shell", "status": "running", "command": "cargo build"}]
-        self.assertEqual(self.run_stop(background_tasks=shell), (0, "", ""))
-        self.assertEqual((self.state()["mode"], self.state()["refused"]), ("sealed", False))
+        code, err, _ = self.run_stop(background_tasks=shell)
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket gate] The docket of Login (s-0123abcd) says DELIVERED"), err)
+        self.assertEqual(self.run_stop(active=True, background_tasks=shell), (0, "", ""))
+        self.assertEqual(self.state()["mode"], "sealed")
+        self.assertNotIn("stop-forced", self.log())
         code, err, _ = self.run_stop(background_tasks=[])
         self.assertEqual(code, 2, err)
         self.assertTrue(err.startswith("[docket gate] The docket of Login (s-0123abcd) says DELIVERED"), err)
@@ -1925,13 +1930,56 @@ class ReviewFindings(Project):
         self.assertIn("before the last agent returned", err)
         self.assertEqual(self.state()["mode"], "sealed")
 
-    def test_a_delivered_block_from_a_halted_run_closes_beside_a_dev_server_once_the_gate_passes(self):
+    def returns(self, path):
+        sys.path.insert(0, str(HOOKS))
+        import docket_lib
+        return docket_lib.agent_returns(path)
+
+    def test_a_resumed_agents_report_equal_to_its_first_moves_its_return(self):
+        # Recheck of 5c9abe1 (F1): the texts seen survived the SendMessage, the resumed agent's same report was dropped
+        # and its return stayed at the first stop, before the check.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        spawn = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "Agent",
+                                                               "input": {}}]}},
+                 {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1",
+                                                           "content": "1. done\nUnverified: none\nagentId: a1"}]}}]
+        same = {"type": "user", "message": {"content": 'Another Claude session sent a message:\n<agent-message from="a1">'
+                                                       "\n[Subagent hand-back] 1. done\n  Unverified: none\n</agent-message>"}}
+        path = self.entries(*spawn, self.CHECK, self.RESUME, same, self.said())
+        self.assertEqual(self.returns(path), {"toolu_1": 4})
+        code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("before the last agent returned", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_refused_spawn_is_no_return(self):
+        # Recheck of 5c9abe1 (F3): an Agent call a hook refused counted as a return, the check before it was refused.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        refused = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_2", "name": "Agent",
+                                                                 "input": {"subagent_type": "docket:fixer"}}]}},
+                   {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_2",
+                                                             "is_error": True,
+                                                             "content": "PreToolUse:Agent hook error: [docket] no"}]}}]
+        path = self.entries(self.CHECK, *refused, self.said())
+        self.assertEqual(self.returns(path), {})
+        code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertNotIn("before the last agent returned", err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
+    def test_a_dev_server_lets_the_gap_of_a_delivered_block_from_a_halted_run_reach_the_model(self):
         # Review of 0d3bfb9 (A): a background shell that never ends (a dev server for an e2e acceptance command) was a
-        # wait at every Stop while the old DELIVERED counted as not written; before the check ran it still waits.
+        # wait at every Stop while the old DELIVERED counted as not written. Recheck of 5c9abe1 (F2): with the check
+        # missing it still waited silently, the orchestrator never learned the gap and the run idled.
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
         self.resume("[x]", "DELIVERED")
         server = [{"id": "b1", "type": "shell", "status": "running", "command": "npm run dev"}]
-        self.assertEqual(self.run_stop(transcript_path=self.entries(self.said()), background_tasks=server), (0, "", ""))
+        code, err, _ = self.run_stop(transcript_path=self.entries(self.said()), background_tasks=server)
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket gate] The docket of Login (s-0123abcd) says DELIVERED"), err)
+        self.assertIn("cargo test", err)
         self.assertEqual(self.state()["mode"], "sealed")
         code, err, _ = self.run_stop(transcript_path=self.entries(self.CHECK, self.said()), background_tasks=server)
         self.assertEqual(code, 2, err)
