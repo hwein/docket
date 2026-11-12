@@ -58,11 +58,11 @@ Each refusal names the key, its value and the path of DOCKET.md. An invalid rege
 
 ## PostToolUse
 
-No matcher. Refuses nothing, says nothing to the model. Side effects: in a run, a write on a docket that turns more
-points `[x]` or `[~]` than the LOG has counted gets the LOG line `point-delivered` or `deviation`; a spec written
-with `state: ready` gets LOG `ready` once; a command that matched `forbidden_commands` and ran gets LOG `grant`. The
-life sign: in a run, every tool call (orchestrator and agents) renews the state file's time, and the orchestrator's
-next tool call clears `refused`. Without the run mark it writes no state.
+No matcher, also for PostToolUseFailure. Refuses nothing, says nothing to the model. Side effects: in a run, a write
+on a docket that turns more points `[x]` or `[~]` than the LOG has counted gets the LOG line `point-delivered` or
+`deviation`; a spec written with `state: ready` gets LOG `ready` once; a command that matched `forbidden_commands`
+and ran gets LOG `grant`. The life sign: in a run, every tool call (orchestrator and agents) renews the state file's
+time, and the orchestrator's next tool call clears `refused`. Without the run mark it writes no state.
 
 ## Stop
 

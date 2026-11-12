@@ -1,4 +1,7 @@
-"""PostToolUse hook, every tool. It refuses nothing, undoes nothing and says nothing to the model.
+"""PostToolUse hook, every tool, also registered for PostToolUseFailure: Claude Code runs PostToolUse only after a
+call that succeeded, a failed one (a shell command with an exit code other than 0) runs PostToolUseFailure (hooks docs;
+none of 59 failed Bash/PowerShell calls in the eval transcripts carries a PostToolUse attachment). It refuses nothing,
+undoes nothing and says nothing to the model.
 
 What it keeps, as side effects:
 - LOG `point-delivered` and `deviation`: in a session with the run mark, a write on a docket counts the file's

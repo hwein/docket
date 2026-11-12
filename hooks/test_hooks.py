@@ -594,6 +594,20 @@ class SealedStop(Project):
             self.assertEqual(self.run_stop(active=True)[0], 2)
             self.assertNotIn("stop-forced", self.log())
 
+    def test_a_failed_tool_call_after_the_refusal_makes_the_next_stop_a_first_pass(self):
+        # A failed call runs PostToolUseFailure, not PostToolUse (hooks docs; none of 59 failed shell calls in the eval
+        # transcripts has a PostToolUse attachment): a failed check after the refusal ended the run with stop-forced.
+        hooks = json.loads((HOOKS / "hooks.json").read_text("utf-8"))["hooks"]
+        self.assertEqual(hooks["PostToolUseFailure"], hooks["PostToolUse"])
+        self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+        self.open_point()
+        self.assertEqual(self.run_stop()[0], 2)
+        run_hook("post_tool_use.py", {"session_id": SID, "cwd": self.p, "hook_event_name": "PostToolUseFailure",
+                                      "tool_name": "Bash", "tool_input": {"command": "cargo test"},
+                                      "error": "Exit code 101\ntest failed", "is_interrupt": False}, self.p)
+        self.assertEqual(self.run_stop(active=True)[0], 2)
+        self.assertNotIn("stop-forced", self.log())
+
     def test_a_closing_state_reads_as_none(self):
         # 1d.7: a state file of 0.5 in a mode that is gone is none for every hook.
         sys.path.insert(0, str(HOOKS))
