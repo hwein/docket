@@ -1869,7 +1869,7 @@ class ReviewFindings(Project):
         resume = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": "SendMessage",
                                                                 "input": {"to": "a1", "message": "check once more"}}]}}
         code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.HAND_BACK, self.CHECK, resume,
-                                                                  self.NEW_HAND_BACK), background_tasks=[])
+                                                                  self.SENT, self.NEW_HAND_BACK), background_tasks=[])
         self.assertEqual(code, 2)
         self.assertIn("before the last agent returned", err)
 
@@ -1878,6 +1878,9 @@ class ReviewFindings(Project):
                                                             "\n</agent-message>"}}
     RESUME = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": "SendMessage",
                                                             "input": {"to": "a1", "message": "check once more"}}]}}
+    SENT = {"type": "user", "toolUseResult": {"success": True, "resumedAgentId": "a1"},  # real format, 262a1070 line 93
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "m1", "content": [{"type": "text", "text":
+                        '{"success":true,"message":"Resuming agent a1","resumedAgentId":"a1"}'}]}]}}
 
     def test_the_notification_after_the_hand_back_of_the_same_stop_does_not_move_the_return(self):
         # wrong-fact-2 2026-11-12, real format: the reviewer's report came as a hand-back, the check ran, then the
@@ -1913,7 +1916,7 @@ class ReviewFindings(Project):
                                                                "input": {}}]}},
                  {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1",
                                                            "content": "Review: no findings.\nagentId: a1"}]}}]
-        code, err, _ = self.run_stop(transcript_path=self.entries(*spawn, self.CHECK, self.RESUME, self.NEW_HAND_BACK,
+        code, err, _ = self.run_stop(transcript_path=self.entries(*spawn, self.CHECK, self.RESUME, self.SENT, self.NEW_HAND_BACK,
                                                                   self.said()), background_tasks=[])
         self.assertEqual(code, 2, err)
         self.assertIn("before the last agent returned", err)
@@ -1923,7 +1926,7 @@ class ReviewFindings(Project):
         # Review of 0d3bfb9 (C): the old notification, repeated after the SendMessage, took the agent's return.
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
         self.end_spec()
-        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.HAND_BACK, self.RESUME,
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.HAND_BACK, self.RESUME, self.SENT,
                                                                   self.queued(), self.said(), self.CHECK,
                                                                   self.NEW_HAND_BACK, self.said()), background_tasks=[])
         self.assertEqual(code, 2, err)
@@ -1946,8 +1949,8 @@ class ReviewFindings(Project):
                                                            "content": "1. done\nUnverified: none\nagentId: a1"}]}}]
         same = {"type": "user", "message": {"content": 'Another Claude session sent a message:\n<agent-message from="a1">'
                                                        "\n[Subagent hand-back] 1. done\n  Unverified: none\n</agent-message>"}}
-        path = self.entries(*spawn, self.CHECK, self.RESUME, same, self.said())
-        self.assertEqual(self.returns(path), {"toolu_1": 4})
+        path = self.entries(*spawn, self.CHECK, self.RESUME, self.SENT, same, self.said())
+        self.assertEqual(self.returns(path), {"toolu_1": 5})
         code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
         self.assertEqual(code, 2, err)
         self.assertIn("before the last agent returned", err)
@@ -2086,6 +2089,50 @@ class ReviewFindings(Project):
         passed = self.entries(self.CHECK, self.BACKGROUND, self.said(),
                               self.shell_note("completed", "completed (exit code 0)"), self.said())
         code, err, _ = self.run_stop(transcript_path=passed, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
+    def test_a_gate_command_started_in_the_background_without_a_result_is_a_gap_not_a_wait(self):
+        # Recheck of 5b777f6 (W1): a gate command started with run_in_background (a dev server) may never end; every
+        # Stop waited silently. Real format: f2d00131 line 228.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        started = {"type": "user", "toolUseResult": {"backgroundTaskId": "bx1"},
+                   "message": {"content": [{"type": "tool_result", "tool_use_id": "b1", "is_error": False, "content":
+                               "Command running in background with ID: bx1. Output is being written to: x.output. You "
+                               "will be notified when it completes."}]}}
+        shell = [{"id": "bx1", "type": "shell", "status": "running", "command": "cargo test && cargo run --bin server"}]
+        code, err, _ = self.run_stop(transcript_path=self.entries(self.CHECK, started, self.said()), background_tasks=shell)
+        self.assertEqual(code, 2, err)
+        self.assertIn("the last run of the check `cargo test` runs in the background and has no result yet", err)
+        self.assertNotIn("waiting", self.state())
+
+    def test_a_send_message_that_did_not_reach_the_agent_starts_no_stop(self):
+        # Recheck of 5b777f6 (W2), real formats: a SendMessage to an unreachable agent and one without the tool started
+        # the agent's next stop, the notification of the first stop after the check moved its return.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        note = {"type": "attachment", "attachment": {"type": "queued_command", "prompt":
+                "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed"
+                "</status>\n<result>This agent's report was delivered to you as a message from \"a1\".</result>\n"
+                "</task-notification>"}}
+        failures = [{"content": '{"success":false,"message":"No agent named \'a1\' is reachable."}'},
+                    {"is_error": True, "content": "<tool_use_error>Error: No such tool available: SendMessage</tool_use_error>"}]
+        for failure in failures:
+            sent = {"type": "user", "message": {"content": [dict({"type": "tool_result", "tool_use_id": "m1"}, **failure)]}}
+            path = self.entries(*self.spawn(), self.HAND_BACK, self.RESUME, sent, self.CHECK, note, self.said())
+            self.assertEqual(self.returns(path), {"toolu_1": 2}, failure)
+        code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
+    def test_a_background_grep_without_a_match_counts_by_its_completed_status(self):
+        # Recheck of 5b777f6 (W4): "completed (exit code 1: No matches found)" (5 real notifications) counted as failed.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        done = self.shell_note("completed", "completed (exit code 1: No matches found)")
+        code, err, _ = self.run_stop(transcript_path=self.entries(self.CHECK, self.BACKGROUND, self.said(), done,
+                                                                  self.said()), background_tasks=[])
         self.assertEqual(code, 2, err)
         self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
 

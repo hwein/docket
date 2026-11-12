@@ -1196,11 +1196,15 @@ def point_commands(body, paths):
     return found
 
 
-# A shell call Claude Code moved to the background (after its timeout, or run_in_background): its tool result only
-# says so, its exit code comes later in a notification naming its tool_use_id (`<status>failed</status>`, "failed
-# with exit code 1"; recheck of 30f4bfa, V4).
+# A shell call in the background: its tool result only says so, its outcome comes later in a notification naming its
+# tool_use_id (recheck of 30f4bfa, V4). Its <status> decides: `completed` also for "completed (exit code 1: No
+# matches found)" (grep without a match), `failed` for "failed with exit code N", `killed` for "was stopped" (real
+# notifications, recheck of 5b777f6). A run moved there after its foreground timeout (`timedOutAfterMs`, "did not
+# complete within its 60s timeout") is stopped by Claude Code after ten minutes with a notification; one started with
+# run_in_background ("Command running in background with ID: …") may never end, such as a dev server (W1).
 BACKGROUND_SHELL = re.compile(r"\s*Command\b[^\n]{0,120}?\bbackground\b[^\n]{0,20}?\bID:\s*([A-Za-z0-9_-]+)",
                               re.IGNORECASE)
+TIMED_OUT = re.compile(r"\s*Command did not complete within\b", re.IGNORECASE)
 STOPPERS = ("TaskStop", "KillShell")
 SHELL_STATUS = re.compile(r"<status>\s*([A-Za-z_-]+)\s*</status>")
 EXIT_CODE = re.compile(r"\bexit code\s+(-?\d+)", re.IGNORECASE)
@@ -1208,9 +1212,9 @@ EXIT_CODE = re.compile(r"\bexit code\s+(-?\d+)", re.IGNORECASE)
 
 def shell_runs(transcript_path):
     """(line, command, outcome) for the main line's Bash and PowerShell calls, in order. The outcome is "failed" for an
-    error result, for a run in the background whose notification says a status other than completed or an exit code
-    other than 0, and for one stopped with TaskStop; "running" for a run in the background without a notification
-    yet; else "ok"."""
+    error result, for a run in the background whose notification has a status other than completed (without a status:
+    whose last exit code is not 0), and for one stopped with TaskStop; "timed-out" for a run moved to the background
+    after its timeout and "running" for one started there, while neither has a notification; else "ok"."""
     entries = transcript_entries(transcript_path)
     calls = tool_calls(entries, ("Bash", "PowerShell"))
     ids = {block.get("id") for _, block, _ in calls}
@@ -1226,44 +1230,52 @@ def shell_runs(transcript_path):
                 if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in STOPPERS:
                     given = block.get("input") or {}
                     stopped = tasks.get(str(given.get("task_id") or given.get("shell_id") or ""))
-                    if outcome.get(stopped) == "running":
+                    if outcome.get(stopped) in UNFINISHED:
                         outcome[stopped] = "failed"
             continue
         for text in entry_texts(entry):
             for note in NOTIFICATION.findall(text):
                 for tool_id in NOTIFIED.findall(note):
-                    if outcome.get(tool_id) == "running":
-                        status, code = SHELL_STATUS.search(note), EXIT_CODE.search(note)
-                        broke = (status and status.group(1).lower() != "completed") or (code and code.group(1) != "0")
+                    if outcome.get(tool_id) in UNFINISHED:
+                        status, codes = SHELL_STATUS.search(note), EXIT_CODE.findall(note)
+                        broke = status.group(1).lower() != "completed" if status else bool(codes) and codes[-1] != "0"
                         outcome[tool_id] = "failed" if broke else "ok"
         message = entry.get("message")
         if entry.get("type") != "user" or not isinstance(message, dict) or not isinstance(message.get("content"), list):
             continue
-        moved = isinstance(entry.get("toolUseResult"), dict) and entry["toolUseResult"].get("backgroundTaskId")
+        result = entry.get("toolUseResult") if isinstance(entry.get("toolUseResult"), dict) else {}
         for block in message["content"]:
             if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in ids:
-                found = BACKGROUND_SHELL.match(result_text(block))
-                outcome[block.get("tool_use_id")] = ("failed" if block.get("is_error") else "running"
-                                                     if moved or found else "ok")
-                if moved or found:
-                    tasks[str(moved or found.group(1))] = block.get("tool_use_id")
+                text = result_text(block)
+                found = BACKGROUND_SHELL.match(text)
+                moved = result.get("backgroundTaskId") or (found.group(1) if found else "")
+                timed_out = bool(result.get("timedOutAfterMs")) or bool(TIMED_OUT.match(text))
+                outcome[block.get("tool_use_id")] = ("failed" if block.get("is_error") else "ok" if not moved
+                                                     else "timed-out" if timed_out else "running")
+                if moved:
+                    tasks[str(moved)] = block.get("tool_use_id")
     return [(index, str((block.get("input") or {}).get("command", "")), outcome.get(block.get("id"), "ok"))
             for index, block, _ in calls]
+
+
+UNFINISHED = ("timed-out", "running")
 
 
 def gate_commands(paths, spec_id, body, transcript_path):
     """The commands of the gate (Festlegung „Umfang des Prüf-Tors“): every command of DOCKET.md `check` and, V16, the
     acceptance command of every delivered point ran in this session after the last agent of any kind returned, and
     its last run did not fail and has its result. One call per command or one call for several: what counts is the
-    last call that contains it. Returns (problems, running): running when the last run of one of them still runs in
-    the background (stop.py waits for it). Without a readable transcript nothing is checked here."""
+    last call that contains it. Returns (problems, waits): waits when the last run of one of them was moved to the
+    background after its timeout and has no result yet, which Claude Code ends within ten minutes with a
+    notification (stop.py waits for it). A run started in the background without a result is a gap without a wait:
+    it may never end (a dev server; recheck of 5b777f6, W1). Without a readable transcript nothing is checked here."""
     if not transcript_entries(transcript_path):
         return [], False
     shell = shell_runs(transcript_path)
     last_return = max(agent_returns(transcript_path).values(), default=-1)
     wanted = [("gate_check", {"command": c}) for c in check_commands(paths)]
     wanted += [("gate_point", {"point": p, "command": c}) for p, c in point_commands(body, paths)]
-    problems, running = [], False
+    problems, waits = [], False
     for key, fields in wanted:
         runs = [(index, outcome) for index, text, outcome in shell if fields["command"] in text]
         if not runs:
@@ -1271,9 +1283,9 @@ def gate_commands(paths, spec_id, body, transcript_path):
         elif runs[-1][0] < last_return:
             problems.append(say(paths, key + "_before", **fields))
         elif runs[-1][1] != "ok":
-            problems.append(say(paths, key + "_" + runs[-1][1], **fields))
-            running = running or runs[-1][1] == "running"
-    return problems, running
+            problems.append(say(paths, key + ("_running" if runs[-1][1] in UNFINISHED else "_failed"), **fields))
+            waits = waits or runs[-1][1] == "timed-out"
+    return problems, waits
 
 
 def review_stats(body):
@@ -1350,6 +1362,7 @@ NOTIFICATION = re.compile(r"<task-notification>(.*?)(?:</task-notification>|\Z)"
 NOTIFIED_RESULT = re.compile(r"<result>(.*?)(?:</result>|\Z)", re.DOTALL)
 TASK_ID = re.compile(r"<task-id>\s*([^<\s]+)\s*</task-id>")
 RESUMED = re.compile(r"\"resumedAgentId\"\s*:\s*\"([A-Za-z0-9_-]+)\"")
+NOT_SENT = re.compile(r"\"success\"\s*:\s*false\b")
 
 
 def agent_returns(transcript_path):
@@ -1389,7 +1402,7 @@ def agent_returns(transcript_path):
             stops.pop(tool_id, None)
             seen.pop(tool_id, None)
 
-    resumes, sends = {}, set()  # SendMessage call → the Agent call of the agent it resumed
+    resumes, sends = {}, {}  # SendMessage call → the Agent call of the agent it resumed, of the agent `to` names
     for index, entry in enumerate(transcript_entries(transcript_path)):
         if entry.get("isSidechain"):
             continue
@@ -1405,20 +1418,22 @@ def agent_returns(transcript_path):
                     if given.get("name"):
                         agents[str(given["name"])] = block.get("id")  # SendMessage may name it
                 elif block.get("name") == "SendMessage":
-                    sends.add(block.get("id"))
-                    resume(block.get("id"), agents.get(str(given.get("to", ""))))
+                    sends[block.get("id")] = agents.get(str(given.get("to", "")))
             continue
         if entry.get("type") == "user" and isinstance(content, list):
             for block in content:
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
                 tool_id, inner = block.get("tool_use_id"), result_text(block)
-                if tool_id in sends:
-                    # `{"success":true,…,"resumedAgentId":"<agentId>",…}`: the SendMessage resumed that agent
-                    named = RESUMED.findall(inner) + [str((entry.get("toolUseResult") or {}).get("resumedAgentId", ""))
-                                                      if isinstance(entry.get("toolUseResult"), dict) else ""]
-                    for agent_id in named:
-                        resume(tool_id, agents.get(agent_id))
+                if tool_id in sends and not block.get("is_error") and not NOT_SENT.search(inner):
+                    # Only a SendMessage that reached its agent starts the agent's next stop: `{"success":true,…,
+                    # "resumedAgentId":"<agentId>",…}` (resumed) or "Message queued for delivery …" (running). Not
+                    # `{"success":false,"message":"No agent named '<name>' is reachable…"}` or an error result such as
+                    # "No such tool available: SendMessage" (real formats, recheck of 5b777f6, W2).
+                    result = entry.get("toolUseResult") if isinstance(entry.get("toolUseResult"), dict) else {}
+                    named = [agents.get(a) for a in RESUMED.findall(inner) + [str(result.get("resumedAgentId", ""))]]
+                    for target in [t for t in named if t] or [sends[tool_id]]:
+                        resume(tool_id, target)
                 if tool_id not in returns or unstarted(block):
                     continue  # a spawn that never started is no agent
                 for agent_id in AGENT_ID.findall(inner or ""):
