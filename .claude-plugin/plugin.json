@@ -1,6 +1,6 @@
 {
   "name": "docket",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Spec in, docket out. Specs with done criteria a command checks, a delivery docket whose acceptance lines stand before the first code, autonomous runs that check their own work; the hooks hold only the project rules and the gate before delivered.",
   "author": {
     "name": "Heiko Wein"
