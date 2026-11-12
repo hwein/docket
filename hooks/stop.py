@@ -4,13 +4,15 @@ DOCKET.md; every other Stop passes without a word.
 In a run:
 - A Stop while agents run (background_tasks, or an agent whose notification has not reached the model) is a wait and
   passes; its time stays in the state (`waiting`), so the run stays live for other sessions (session_live). Until
-  this run wrote its Terminal state, a background shell is a wait too; an unchanged DELIVERED of an earlier run counts
-  as written, also at the Stop right after the gate refused it, which halts.
+  this run wrote its Terminal state, or while a command of the gate runs in the background, a background shell is a
+  wait too; an unchanged DELIVERED of an earlier run counts as written, also at the Stop right after the gate refused
+  it, which halts.
 - The spec's docket has a Terminal state (the last `state:` block of its `## Terminal state` section; an unchanged
   BLOCKED or DISSENT block an earlier run left does not count, a DELIVERED and a block whose `state:` line changed in
   place do). BLOCKED, and DISSENT from a docket of 0.5, close the spec unchecked. DELIVERED passes
   the gate first: no point `[ ]`, and every command of DOCKET.md `check` and the acceptance command of every `[x]`
-  point ran after the last agent returned and did not fail (read from the transcript, nothing is run). A gap is the
+  point ran after the last agent returned and did not fail; a run in the background counts with the exit code of its
+  notification (read from the transcript, nothing is run). A gap is the
   one refusal of this hook: `[docket gate]` with the facts.
 - No Terminal state: the turn goes on once with a `[docket state]` statement (the spec, k of m points open).
 - The second Stop right after either, with no tool call between (`stop_hook_active` and `refused`), passes: LOG
@@ -27,11 +29,11 @@ import time
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-from docket_lib import (RUN_MODES, Paths, acceptance_problems, agent_returns, check_commands, claim_lock,
-                        commit_records, frontmatter, load_state, log_event, marked, notice, open_predecessors, point_counts,
-                        points_summary, project_head, quoted, read_input, read_text, records_commands, refuse,
-                        release_lock, repo_facts, run_line, save_state, say, set_spec_state, spec_title, terminal_mark,
-                        terminal_section, transcript_blocks, untouched_since, waiting, work_dir_dirty, write_metrics)
+from docket_lib import (RUN_MODES, Paths, claim_lock, commit_records, frontmatter, gate_commands, load_state, log_event,
+                        marked, notice, open_predecessors, point_counts, points_summary, project_head, quoted, read_input,
+                        read_text, records_commands, refuse, release_lock, repo_facts, run_line, save_state, say,
+                        set_spec_state, spec_title, terminal_mark, terminal_section, untouched_since, waiting,
+                        work_dir_dirty, write_metrics)
 
 
 def main():
@@ -50,14 +52,15 @@ def run_stop(paths, session_id, state, hook_input):
     transcript = hook_input.get("transcript_path")
     spec_id = state.get("spec", "")
     terminal = terminal_section(paths, spec_id, state)
-    problems = gate_problems(paths, spec_id, transcript) if terminal["kind"] == "delivered" else []
+    problems, running = gate_problems(paths, spec_id, transcript) if terminal["kind"] == "delivered" else ([], False)
     # stop_hook_active stays true for the rest of a turn any Stop hook once blocked; only this hook's own word makes
     # the next Stop a second pass.
     second = bool(hook_input.get("stop_hook_active")) and bool(state.get("refused"))
     # An earlier run's unchanged DELIVERED counts as written, so a background shell (a dev server) is no wait: a gap
     # of the gate reaches the model as `[docket gate]`, and the Stop right after that refusal halts (Festlegung
-    # „Zweiter Stop nach dem Prüf-Tor“).
-    if waiting(hook_input, transcript, bool(terminal["kind"])):
+    # „Zweiter Stop nach dem Prüf-Tor“). While a command of the gate still runs in the background, a background shell
+    # is a wait again: its notification starts the next turn, whose Stop reads the gate with its result.
+    if waiting(hook_input, transcript, bool(terminal["kind"]) and not running):
         state["waiting"] = time.time()
         save_state(paths, session_id, state)
         return 0
@@ -103,31 +106,13 @@ def halt(paths, session_id, state, why):
 
 def gate_problems(paths, spec_id, transcript):
     """The gate before DELIVERED (Festlegung „Umfang des Prüf-Tors“): open points, the project's check, the acceptance
-    commands of the delivered points. Without a readable transcript only the open points count; without `check` in
-    DOCKET.md (a placeholder included) only the acceptance commands and the open points."""
+    commands of the delivered points (docket_lib.gate_commands). Without a readable transcript only the open points
+    count; without `check` in DOCKET.md (a placeholder included) only the acceptance commands and the open points.
+    Returns (problems, running): running while a command of the gate still runs in the background."""
     body = read_text(paths.docket_file(spec_id))
-    problems = []
     open_points = point_counts(body)[" "]
-    if open_points:
-        problems.append(say(paths, "gate_open", k=open_points))
-    blocks = transcript_blocks(transcript)
-    commands = check_commands(paths)
-    if commands and blocks:
-        last_return = max(agent_returns(transcript).values(), default=-1)
-        failed = {b.get("tool_use_id") for _, role, b in blocks
-                  if role == "user" and b.get("type") == "tool_result" and b.get("is_error")}
-        shell = [(i, b) for i, role, b in blocks if role == "assistant" and b.get("type") == "tool_use"
-                 and b.get("name") in ("Bash", "PowerShell")]
-        for command in commands:
-            # One call per command or one call for several: what counts is the last call that contains it.
-            runs = [(i, b) for i, b in shell if command in str((b.get("input") or {}).get("command", ""))]
-            if not runs:
-                problems.append(say(paths, "gate_check_missing", command=command))
-            elif last_return > runs[-1][0]:
-                problems.append(say(paths, "gate_check_before", command=command))
-            elif runs[-1][1].get("id") in failed:
-                problems.append(say(paths, "gate_check_failed", command=command))
-    return problems + acceptance_problems(paths, spec_id, body, transcript)
+    problems, running = gate_commands(paths, spec_id, body, transcript)
+    return ([say(paths, "gate_open", k=open_points)] if open_points else []) + problems, running
 
 
 def end_spec(paths, session_id, state, kind, transcript):

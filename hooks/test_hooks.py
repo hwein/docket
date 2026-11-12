@@ -2002,6 +2002,93 @@ class ReviewFindings(Project):
         self.assertIn("before the last agent returned", err)
         self.assertEqual(self.state()["mode"], "sealed")
 
+    def test_a_spawn_that_never_started_is_no_return(self):
+        # Recheck of 30f4bfa (V1), real formats: an unknown agent type, the user's rejection and the auto mode
+        # classifier's denial counted as returns, the check before them was refused.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        texts = ["Agent type 'nonexistent-skip' not found. Available agents: general-purpose",
+                 "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+                 "Permission for this action was denied by the Claude Code auto mode classifier."]
+        spawns = []
+        for n, text in enumerate(texts):
+            spawns += [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"toolu_n{n}",
+                                                                     "name": "Agent", "input": {}}]}},
+                       {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"toolu_n{n}",
+                                                                 "is_error": True, "content": text}]}}]
+        path = self.entries(self.CHECK, *spawns, self.said())
+        self.assertEqual(self.returns(path), {})
+        code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
+    def test_a_resumed_agents_notification_without_a_hand_back_moves_its_return(self):
+        # Recheck of 30f4bfa (V2), real format (user-over-rule-2 262a1070, lines 92, 93, 112): the notification of an
+        # agent resumed by SendMessage names the SendMessage call; without a hand-back the return stayed before the
+        # check and the gate passed.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        spawn = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "Agent",
+                                                               "input": {"name": "impl-1"}}]}},
+                 {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1",
+                                                           "content": "1. done\nagentId: a1"}]}}]
+        for to in ("a1", "impl-1", "unknown-name"):
+            send = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": "SendMessage",
+                                                                  "input": {"to": to, "message": "fix point 2"}}]}}
+            sent = {"type": "user", "toolUseResult": {"success": True, "resumedAgentId": "a1"},
+                    "message": {"content": [{"type": "tool_result", "tool_use_id": "m1", "content": [{"type": "text",
+                                "text": '{"success":true,"message":"Resuming agent a1","resumedAgentId":"a1"}'}]}]}}
+            note = {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "task-notification",
+                    "prompt": "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>m1</tool-use-id>\n<status>"
+                              "completed</status>\n<result>2. fixed</result>\n</task-notification>"}}
+            path = self.entries(*spawn, self.CHECK, send, sent, self.said(), note, self.said())
+            self.assertEqual(self.returns(path), {"toolu_1": 6}, to)
+            code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
+            self.assertEqual(code, 2, err)
+            self.assertIn("before the last agent returned", err)
+            self.assertEqual(self.state()["mode"], "sealed")
+
+    BACKGROUND = {"type": "user", "toolUseResult": {"backgroundTaskId": "bx1", "timedOutAfterMs": 60000},
+                  "message": {"content": [{"type": "tool_result", "tool_use_id": "b1", "is_error": False, "content":
+                              "Command did not complete within its 60s timeout and was moved to the background (ID: "
+                              "bx1). You will be notified when it completes."}]}}
+
+    def shell_note(self, status, summary):
+        return {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "task-notification",
+                "prompt": f"<task-notification>\n<task-id>bx1</task-id>\n<tool-use-id>b1</tool-use-id>\n<status>"
+                          f"{status}</status>\n<summary>Background command \"cargo test\" {summary}</summary>\n"
+                          "</task-notification>"}}
+
+    def test_a_check_moved_to_the_background_counts_with_the_exit_code_of_its_notification(self):
+        # Recheck of 30f4bfa (V4), real format (precondition-powershell-2 171bd3aa, lines 102, 104, 119): the check's
+        # tool result only said it was moved to the background, its exit code came in the notification, the gate
+        # passed a failed or still running check.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        failed = self.entries(self.CHECK, self.BACKGROUND, self.said(), self.shell_note("failed", "failed with exit code 1"),
+                              self.said())
+        code, err, _ = self.run_stop(transcript_path=failed, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("the check `cargo test` failed in its last run", err)
+        running = self.entries(self.CHECK, self.BACKGROUND, self.said())
+        shell = [{"id": "bx1", "type": "shell", "status": "running", "command": "cargo test"}]
+        self.assertEqual(self.run_stop(transcript_path=running, background_tasks=shell), (0, "", ""))
+        self.assertEqual(self.state()["mode"], "sealed")
+        code, err, _ = self.run_stop(transcript_path=running, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("the last run of the check `cargo test` runs in the background and has no result yet", err)
+        stop = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "s1", "name": "TaskStop",
+                                                              "input": {"task_id": "bx1"}}]}}
+        code, err, _ = self.run_stop(transcript_path=self.entries(self.CHECK, self.BACKGROUND, stop, self.said()),
+                                     background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("the check `cargo test` failed in its last run", err)  # stopped, no notification
+        passed = self.entries(self.CHECK, self.BACKGROUND, self.said(),
+                              self.shell_note("completed", "completed (exit code 0)"), self.said())
+        code, err, _ = self.run_stop(transcript_path=passed, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
     def test_a_dev_server_lets_the_gap_of_a_delivered_block_from_a_halted_run_reach_the_model(self):
         # Review of 0d3bfb9 (A): a background shell that never ends (a dev server for an e2e acceptance command) was a
         # wait at every Stop while the old DELIVERED counted as not written. Recheck of 5c9abe1 (F2): with the check

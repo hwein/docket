@@ -67,16 +67,16 @@ next tool call clears `refused`. Without the run mark it writes no state.
 ## Stop
 
 No matcher; acts only in a run. A Stop while agents run, or a background shell before this run wrote its Terminal
-state, is a wait and passes; its time stays in the state, so the run stays live for other sessions. An earlier run's
-unchanged DELIVERED counts as written: its gap reaches the model as `[docket gate]`, and the Stop right after that
-refusal halts, a background shell or not. Then the docket of the spec at work:
+state or while a gate command runs in the background, is a wait and passes; its time stays in the state (run live).
+An earlier run's unchanged DELIVERED counts as written; the Stop right after its gate refusal halts. Then the docket:
 
 - `state: DELIVERED` passes the gate: no point `[ ]`, and every `check` command of DOCKET.md and the acceptance
   command of every `[x]` point (the part before the arrow in backticks) ran after the last agent returned and did
-  not fail, read from the transcript; nothing is run. An agent returns per stop: at the stop's first delivery of its
-  result (tool result, notification, hand-back), or at its hand-back when that comes later; each form counts once
-  per stop, and a second delivery of a form or a SendMessage to the agent starts its next stop. A spawn a hook
-  refused is no agent; one interrupted or failed returns with its error. A gap is refused once, `[docket gate]`.
+  not fail (in the background: by its notification's exit code), read from the transcript; nothing is run. An agent
+  returns per stop: at the stop's first delivery (tool result, notification, hand-back), or at its later hand-back;
+  each form counts once per stop, a text seen since the last SendMessage never; a second delivery of a form, or a
+  SendMessage resuming the agent (its notification names the SendMessage), starts the next stop. A spawn that never
+  started (hook, user, unknown type) is no agent; one interrupted or failed returns. A gap: `[docket gate]`, once.
 - `state: BLOCKED: <reason>`, and any other terminal state of a 0.5 docket, closes the spec unchecked.
 - No Terminal state: the turn goes on once with `[docket state]` (the spec, k of m points open). A block the docket
   held when the run began counts only when it says DELIVERED or the run changed its `state:` line in place.

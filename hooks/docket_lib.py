@@ -181,10 +181,13 @@ SAY = {
         "gate_check_missing": "der Check `{command}` lief in dieser Sitzung nicht",
         "gate_check_before": "der Check `{command}` lief zuletzt vor der Rückkehr des letzten Agenten",
         "gate_check_failed": "der Check `{command}` scheiterte in seinem letzten Lauf",
+        "gate_check_running": "der letzte Lauf des Checks `{command}` läuft im Hintergrund und hat noch kein Ergebnis",
         "gate_point_missing": "der Akzeptanzbefehl von Punkt {point} (`{command}`) lief in dieser Sitzung nicht",
         "gate_point_before": ("der Akzeptanzbefehl von Punkt {point} (`{command}`) lief zuletzt vor der Rückkehr des "
                               "letzten Agenten"),
         "gate_point_failed": "der Akzeptanzbefehl von Punkt {point} (`{command}`) scheiterte in seinem letzten Lauf",
+        "gate_point_running": ("der letzte Lauf des Akzeptanzbefehls von Punkt {point} (`{command}`) läuft im "
+                               "Hintergrund und hat noch kein Ergebnis"),
         "no_terminal": "Das Docket von {title} ({spec}) hat keinen Terminal state; {open} von {total} Punkten sind offen.",
         "no_terminal_old": ("Das Docket von {title} ({spec}) hat keinen Terminal state aus diesem Lauf: `state: {kind}` "
                             "stand dort schon beim Beginn des Laufs; {open} von {total} Punkten sind offen."),
@@ -258,10 +261,13 @@ SAY = {
         "gate_check_missing": "the check `{command}` did not run in this session",
         "gate_check_before": "the check `{command}` last ran before the last agent returned",
         "gate_check_failed": "the check `{command}` failed in its last run",
+        "gate_check_running": "the last run of the check `{command}` runs in the background and has no result yet",
         "gate_point_missing": "the acceptance command of point {point} (`{command}`) did not run in this session",
         "gate_point_before": ("the acceptance command of point {point} (`{command}`) last ran before the last agent "
                               "returned"),
         "gate_point_failed": "the acceptance command of point {point} (`{command}`) failed in its last run",
+        "gate_point_running": ("the last run of the acceptance command of point {point} (`{command}`) runs in the "
+                               "background and has no result yet"),
         "no_terminal": "The docket of {title} ({spec}) has no Terminal state; {open} of {total} points are open.",
         "no_terminal_old": ("The docket of {title} ({spec}) has no Terminal state from this run: `state: {kind}` stood "
                             "there when the run began; {open} of {total} points are open."),
@@ -863,22 +869,6 @@ def strip_harness_blocks(prompt):
     return text
 
 
-def transcript_blocks(transcript_path):
-    """(index, role, block) for every content block of the main line of a transcript, in order; the index is the
-    file line of transcript_entries."""
-    blocks = []
-    for index, entry in enumerate(transcript_entries(transcript_path)):
-        if entry.get("type") not in ("assistant", "user") or entry.get("isSidechain"):
-            continue
-        message = entry.get("message")
-        content = message.get("content") if isinstance(message, dict) else None
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict):
-                    blocks.append((index, entry["type"], block))
-    return blocks
-
-
 def lock_holder(paths, spec_id):
     try:
         with open(paths.lock_file(spec_id), encoding="utf-8-sig") as handle:
@@ -1109,16 +1099,15 @@ def sealed_stamp(paths, spec_id):
     return max((line[:20] for line in log_lines(paths, spec_id) if " sealed " in line), default="")
 
 
-def failed_calls(entries):
-    return {block.get("tool_use_id") for entry in entries if entry.get("type") == "user"
-            for block in ((entry.get("message") or {}).get("content") or [])
-            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")}
-
-
-# A PreToolUse hook's refusal as Claude Code writes it into the tool result: `PreToolUse:Agent hook error: [<hook
-# command>]: <message>`, with is_error. Only such a call never ran; an interrupted one (`[Request interrupted by user
-# for tool use]`) or one that failed at an API error did, and may have changed files (recheck of 64bd98a, R2).
-HOOK_REFUSED = re.compile(r"\s*PreToolUse:\S+ hook error:")
+# The error results of a call that never started, as Claude Code writes them (real transcripts, recheck of 30f4bfa,
+# V1): a PreToolUse hook's refusal (`PreToolUse:Agent hook error: [<hook command>]: <message>`), the user's rejection,
+# an unknown agent type, the auto mode classifier's denial or its unavailability, invalid input. Every other error
+# result is a call that ran: interrupted by the user (`[Request interrupted by user for tool use]`), ended at an API
+# error (`Agent terminated early due to an API error`), or of unknown outcome; it may have changed files (R2).
+NOT_STARTED = re.compile(r"\s*(?:<tool_use_error>\s*)?(?:Error:\s*)?(?:PreToolUse:\S+ hook error:"
+                         r"|The user doesn't want to proceed with this tool use|Agent type '[^'\n]*' not found"
+                         r"|Permission for this action was denied|InputValidationError"
+                         r"|[^\n]{0,80}\bis temporarily unavailable\b[^\n]{0,80}\bcannot determine the safety\b)")
 
 
 def result_text(block):
@@ -1127,12 +1116,31 @@ def result_text(block):
         b.get("text", "") for b in inner or [] if isinstance(b, dict))
 
 
-def refused_calls(entries):
-    """The tool_use_ids of calls a hook refused before they ran."""
+def unstarted(block):
+    """A tool result that says its call never started."""
+    return bool(block.get("is_error")) and bool(NOT_STARTED.match(result_text(block)))
+
+
+def unstarted_calls(entries):
+    """The tool_use_ids of calls that never started."""
     return {block.get("tool_use_id") for entry in entries if entry.get("type") == "user"
             for block in ((entry.get("message") or {}).get("content") or [])
-            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")
-            and HOOK_REFUSED.match(result_text(block))}
+            if isinstance(block, dict) and block.get("type") == "tool_result" and unstarted(block)}
+
+
+def entry_texts(entry):
+    """The texts of a user entry or an attachment in which a notification or a hand-back can reach the model."""
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if entry.get("type") == "attachment" and isinstance(entry.get("attachment"), dict):
+        prompt = entry["attachment"].get("prompt")
+        return [prompt] if isinstance(prompt, str) else []
+    if entry.get("type") != "user":
+        return []
+    if isinstance(content, str):
+        return [content]
+    return [b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text"] \
+        if isinstance(content, list) else []
 
 
 def tool_calls(entries, names):
@@ -1149,10 +1157,11 @@ def tool_calls(entries, names):
 
 
 def agent_runs(transcript_path, since=""):
-    """The main line's agents since the sealing, in order: (kind, launch index, return index, model). A spawn a hook
-    refused is none; an interrupted or failed one ran. An agent that has not returned yet carries STILL_RUNNING."""
+    """The main line's agents since the sealing, in order: (kind, launch index, return index, model). A spawn that
+    never started is none (NOT_STARTED); an interrupted or failed one ran. An agent that has not returned yet carries
+    STILL_RUNNING."""
     entries = transcript_entries(transcript_path)
-    returns, refused = agent_returns(transcript_path), refused_calls(entries)
+    returns, refused = agent_returns(transcript_path), unstarted_calls(entries)
     runs = []
     for index, block, stamp in tool_calls(entries, ("Agent", "Task")):
         if block.get("id") in refused or (since and stamp[:19] < since[:19]):
@@ -1187,27 +1196,84 @@ def point_commands(body, paths):
     return found
 
 
-def acceptance_problems(paths, spec_id, body, transcript_path):
-    """V16: a delivered point's own command ran in this session after the last agent returned, of any kind, as the
-    check does (Festlegung „Umfang des Prüf-Tors“), and did not fail in its last run. The project's check says the
-    whole still holds, this says the point does."""
+# A shell call Claude Code moved to the background (after its timeout, or run_in_background): its tool result only
+# says so, its exit code comes later in a notification naming its tool_use_id (`<status>failed</status>`, "failed
+# with exit code 1"; recheck of 30f4bfa, V4).
+BACKGROUND_SHELL = re.compile(r"\s*Command\b[^\n]{0,120}?\bbackground\b[^\n]{0,20}?\bID:\s*([A-Za-z0-9_-]+)",
+                              re.IGNORECASE)
+STOPPERS = ("TaskStop", "KillShell")
+SHELL_STATUS = re.compile(r"<status>\s*([A-Za-z_-]+)\s*</status>")
+EXIT_CODE = re.compile(r"\bexit code\s+(-?\d+)", re.IGNORECASE)
+
+
+def shell_runs(transcript_path):
+    """(line, command, outcome) for the main line's Bash and PowerShell calls, in order. The outcome is "failed" for an
+    error result, for a run in the background whose notification says a status other than completed or an exit code
+    other than 0, and for one stopped with TaskStop; "running" for a run in the background without a notification
+    yet; else "ok"."""
     entries = transcript_entries(transcript_path)
-    if not entries:
-        return []
-    failed = failed_calls(entries)
-    shell = [(index, str((block.get("input") or {}).get("command", "")), block.get("id") in failed)
-             for index, block, _ in tool_calls(entries, ("Bash", "PowerShell"))]
+    calls = tool_calls(entries, ("Bash", "PowerShell"))
+    ids = {block.get("id") for _, block, _ in calls}
+    outcome, tasks = {}, {}
+    for entry in entries:
+        if entry.get("isSidechain"):
+            continue
+        message = entry.get("message")
+        if entry.get("type") == "assistant" and isinstance(message, dict):
+            for block in message.get("content") if isinstance(message.get("content"), list) else []:
+                # A run stopped with TaskStop (KillShell before) gets no notification: it did not finish
+                # (wrong-fact-1-20261112-042247, lines 110 and 164).
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in STOPPERS:
+                    given = block.get("input") or {}
+                    stopped = tasks.get(str(given.get("task_id") or given.get("shell_id") or ""))
+                    if outcome.get(stopped) == "running":
+                        outcome[stopped] = "failed"
+            continue
+        for text in entry_texts(entry):
+            for note in NOTIFICATION.findall(text):
+                for tool_id in NOTIFIED.findall(note):
+                    if outcome.get(tool_id) == "running":
+                        status, code = SHELL_STATUS.search(note), EXIT_CODE.search(note)
+                        broke = (status and status.group(1).lower() != "completed") or (code and code.group(1) != "0")
+                        outcome[tool_id] = "failed" if broke else "ok"
+        message = entry.get("message")
+        if entry.get("type") != "user" or not isinstance(message, dict) or not isinstance(message.get("content"), list):
+            continue
+        moved = isinstance(entry.get("toolUseResult"), dict) and entry["toolUseResult"].get("backgroundTaskId")
+        for block in message["content"]:
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in ids:
+                found = BACKGROUND_SHELL.match(result_text(block))
+                outcome[block.get("tool_use_id")] = ("failed" if block.get("is_error") else "running"
+                                                     if moved or found else "ok")
+                if moved or found:
+                    tasks[str(moved or found.group(1))] = block.get("tool_use_id")
+    return [(index, str((block.get("input") or {}).get("command", "")), outcome.get(block.get("id"), "ok"))
+            for index, block, _ in calls]
+
+
+def gate_commands(paths, spec_id, body, transcript_path):
+    """The commands of the gate (Festlegung „Umfang des Prüf-Tors“): every command of DOCKET.md `check` and, V16, the
+    acceptance command of every delivered point ran in this session after the last agent of any kind returned, and
+    its last run did not fail and has its result. One call per command or one call for several: what counts is the
+    last call that contains it. Returns (problems, running): running when the last run of one of them still runs in
+    the background (stop.py waits for it). Without a readable transcript nothing is checked here."""
+    if not transcript_entries(transcript_path):
+        return [], False
+    shell = shell_runs(transcript_path)
     last_return = max(agent_returns(transcript_path).values(), default=-1)
-    problems = []
-    for point, command in point_commands(body, paths):
-        runs = [(index, broke) for index, text, broke in shell if command in text]
+    wanted = [("gate_check", {"command": c}) for c in check_commands(paths)]
+    wanted += [("gate_point", {"point": p, "command": c}) for p, c in point_commands(body, paths)]
+    problems, running = [], False
+    for key, fields in wanted:
+        runs = [(index, outcome) for index, text, outcome in shell if fields["command"] in text]
         if not runs:
-            problems.append(say(paths, "gate_point_missing", point=point, command=command))
+            problems.append(say(paths, key + "_missing", **fields))
         elif runs[-1][0] < last_return:
-            problems.append(say(paths, "gate_point_before", point=point, command=command))
-        elif runs[-1][1]:
-            problems.append(say(paths, "gate_point_failed", point=point, command=command))
-    return problems
+            problems.append(say(paths, key + "_before", **fields))
+        elif runs[-1][1] != "ok":
+            problems.append(say(paths, key + "_" + runs[-1][1], **fields))
+            running = running or runs[-1][1] == "running"
+    return problems, running
 
 
 def review_stats(body):
@@ -1282,20 +1348,24 @@ HANDED_BACK = re.compile(r"<agent-message\s+from=\"([^\"]+)\">\s*\[Subagent hand
                          re.DOTALL)
 NOTIFICATION = re.compile(r"<task-notification>(.*?)(?:</task-notification>|\Z)", re.DOTALL)
 NOTIFIED_RESULT = re.compile(r"<result>(.*?)(?:</result>|\Z)", re.DOTALL)
+TASK_ID = re.compile(r"<task-id>\s*([^<\s]+)\s*</task-id>")
+RESUMED = re.compile(r"\"resumedAgentId\"\s*:\s*\"([A-Za-z0-9_-]+)\"")
 
 
 def agent_returns(transcript_path):
     """{tool_use_id: line index of its return} for the main line's agents: the return of the agent's last stop, which
     is the stop's first delivery or, when it comes later, its hand-back. A result reaches the model in up to three
-    forms: the tool result of a foreground agent (a background one's only says it was launched; a hook's refusal is
-    a spawn that never ran, no agent, while an agent interrupted or failed at an API error ran and returns with its
-    error result), a hand-back message from its agentId, and a notification naming
-    its tool_use_id. One stop delivers its result at most once in each form; the hand-back carries the report while
-    the other two may only point to it (wrong-fact-2 2026-11-12: the hand-back, the check, then the notification as a
-    queued_command whose result only points to the hand-back). A second delivery of a form the stop already delivered
-    starts the agent's next stop, as does a SendMessage to the agent. A line that repeats a text the agent delivered
-    since the last SendMessage to it (in any form, such as a notification written again as a queued_command) does not
-    move the return, nor does a notification without a result text once one of its texts was seen."""
+    forms: the tool result of a foreground agent (a background one's only says it was launched; a spawn that never
+    started, NOT_STARTED, is no agent, while an agent interrupted or failed at an API error ran and returns with its
+    error result), a hand-back message from its agentId, and a notification naming its tool_use_id or, for an agent
+    resumed by a SendMessage, that SendMessage's (its <task-id> is the agentId; recheck of 30f4bfa, V2). One stop
+    delivers its result at most once in each form; the hand-back carries the report while the other two may only
+    point to it (wrong-fact-2 2026-11-12: the hand-back, the check, then the notification as a queued_command whose
+    result only points to the hand-back). A second delivery of a form the stop already delivered starts the agent's
+    next stop, as does a SendMessage that resumes the agent (named by its agentId or its name, or by `resumedAgentId`
+    in the SendMessage's result). A line that repeats a text the agent delivered since the last SendMessage to it (in
+    any form, such as a notification written again as a queued_command) does not move the return, nor does a
+    notification without a result text once one of its texts was seen."""
     returns, seen, stops, agents = {}, {}, {}, {}
 
     def came_back(tool_id, index, text, form):
@@ -1313,6 +1383,13 @@ def agent_returns(transcript_path):
         stop.add(form)
         returns[tool_id] = index
 
+    def resume(send_id, tool_id):
+        if tool_id in returns and resumes.get(send_id) != tool_id:
+            resumes[send_id] = tool_id
+            stops.pop(tool_id, None)
+            seen.pop(tool_id, None)
+
+    resumes, sends = {}, set()  # SendMessage call → the Agent call of the agent it resumed
     for index, entry in enumerate(transcript_entries(transcript_path)):
         if entry.get("isSidechain"):
             continue
@@ -1322,40 +1399,40 @@ def agent_returns(transcript_path):
             for block in content if isinstance(content, list) else []:
                 if not isinstance(block, dict) or block.get("type") != "tool_use":
                     continue
+                given = block.get("input") or {}
                 if block.get("name") in ("Agent", "Task"):
                     returns.setdefault(block.get("id"), -1)
+                    if given.get("name"):
+                        agents[str(given["name"])] = block.get("id")  # SendMessage may name it
                 elif block.get("name") == "SendMessage":
-                    resumed = agents.get(str((block.get("input") or {}).get("to", "")))
-                    stops.pop(resumed, None)
-                    seen.pop(resumed, None)
+                    sends.add(block.get("id"))
+                    resume(block.get("id"), agents.get(str(given.get("to", ""))))
             continue
-        texts = []
-        if entry.get("type") == "attachment" and isinstance(entry.get("attachment"), dict):
-            prompt = entry["attachment"].get("prompt")
-            texts.append(prompt if isinstance(prompt, str) else "")
-        elif entry.get("type") == "user":
-            if isinstance(content, str):
-                texts.append(content)
-            for block in content if isinstance(content, list) else []:
-                if not isinstance(block, dict):
+        if entry.get("type") == "user" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
-                if block.get("type") == "text":
-                    texts.append(block.get("text", ""))
-                elif block.get("type") == "tool_result" and block.get("tool_use_id") in returns:
-                    tool_id = block.get("tool_use_id")
-                    inner = result_text(block)
-                    if block.get("is_error") and HOOK_REFUSED.match(inner):
-                        continue  # a spawn a hook refused never ran
-                    for agent_id in AGENT_ID.findall(inner or ""):
-                        agents[agent_id] = tool_id
-                    if not LAUNCHED.match((inner or "").lstrip()):
-                        came_back(tool_id, index, AGENT_ID.split(inner or "")[0] or inner, "result")
-        for text in texts:
+                tool_id, inner = block.get("tool_use_id"), result_text(block)
+                if tool_id in sends:
+                    # `{"success":true,…,"resumedAgentId":"<agentId>",…}`: the SendMessage resumed that agent
+                    named = RESUMED.findall(inner) + [str((entry.get("toolUseResult") or {}).get("resumedAgentId", ""))
+                                                      if isinstance(entry.get("toolUseResult"), dict) else ""]
+                    for agent_id in named:
+                        resume(tool_id, agents.get(agent_id))
+                if tool_id not in returns or unstarted(block):
+                    continue  # a spawn that never started is no agent
+                for agent_id in AGENT_ID.findall(inner or ""):
+                    agents[agent_id] = tool_id
+                if not LAUNCHED.match((inner or "").lstrip()):
+                    came_back(tool_id, index, AGENT_ID.split(inner or "")[0] or inner, "result")
+        for text in entry_texts(entry):
             for notification in NOTIFICATION.findall(text) or ([text] if NOTIFIED.search(text) else []):
                 result = NOTIFIED_RESULT.search(notification)
-                for tool_id in NOTIFIED.findall(notification):
-                    if tool_id in returns:
-                        came_back(tool_id, index, result.group(1) if result else "", "notification")
+                # A resumed agent's notification names the SendMessage call; its <task-id> is the agentId.
+                named = [t if t in returns else resumes.get(t) for t in NOTIFIED.findall(notification)]
+                named = [t for t in named if t] or [agents.get(t) for t in TASK_ID.findall(notification)]
+                for tool_id in dict.fromkeys(t for t in named if t in returns):
+                    came_back(tool_id, index, result.group(1) if result else "", "notification")
             for agent_id, said in HANDED_BACK.findall(text):
                 if agents.get(agent_id) in returns:
                     came_back(agents[agent_id], index, said, "hand-back")
@@ -1365,7 +1442,8 @@ def agent_returns(transcript_path):
 def waiting(hook_input, transcript_path, terminal_written):
     """A Stop that waits for work in the background: no check, no text needed (V4). Claude Code reports that work in
     `background_tasks`; once this run wrote the spec's Terminal state (or an earlier run's unchanged DELIVERED stands
-    there, with or without a gap of the gate, stop.py), only agents count, not a dev server or a
+    there, with or without a gap of the gate) and no command of the gate still runs in the background (stop.py passes
+    `terminal_written` so), only agents count, not a dev server or a
     monitor left running (review 2026-11-06: a background shell turned the spec end into an endless wait). A
     notification queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
     transcript."""
