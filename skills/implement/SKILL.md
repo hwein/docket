@@ -66,9 +66,11 @@ naming the step you are at is fine.
 The line `No run marked: <reason>` in the context: the turn ends with that reason to the user. Otherwise read
 DOCKET.md and the project rules it names (CONTRIBUTING.md, AGENTS.md); `git status` clean outside the work dir and
 `.claude/docket/` (docket has just written the LOG, the spec's state and the lock there), branch as DOCKET.md and
-CONTRIBUTING.md say. A resume (a docket without Terminal state, or with BLOCKED last): read the docket and the last
-LOG lines and go on at the first open point; the run's own `state:` line goes below the old block. Where docket, LOG and the spec's `state:` disagree, the docket counts
-(its last Terminal state block), then the LOG, then the spec; note the contradiction as `[~]`.
+CONTRIBUTING.md say. A resume (a docket from an earlier run): read the docket and the last LOG lines and go on at the
+first open point. An earlier run's `BLOCKED` or `DISSENT` does not end the spec; the run's own `state:` line goes
+below it. A `DELIVERED` already there ends the spec once no point is open and check and acceptance ran green in this
+run. Where docket, LOG and the spec's `state:` disagree, the docket counts (its last Terminal state block), then the
+LOG, then the spec; note the contradiction as `[~]`.
 
 Preconditions, the first step of every spec: run each line of the spec's `Preconditions (user only)` in the shell it
 is written for (PowerShell syntax in the PowerShell tool). The text after the arrow is a description: met when the
@@ -129,8 +131,9 @@ is open is passed over. docket does this and names the result.
 ## 7. Closing message
 After docket's statement at the end of the series (`[docket state] The series is over: …`), write the one message of
 the run from `${CLAUDE_PLUGIN_ROOT}/templates/closing-message.md`, from the dockets. When specs did not start or one
-ended `stopped by user`, the message gives `/docket:implement <their ids>`, the command that takes them up. Where the
-statement names two commands for the records, they stand at its end.
+ended `stopped by user`, the message gives `/docket:implement <ids>`, the command that takes them up: those specs and
+each blocked spec one of them waits for, in series order (docket starts no spec before an undone predecessor). Where
+the statement names two commands for the records, they stand at its end.
 
 ## Briefings
 Implementer, in the language of the spec:

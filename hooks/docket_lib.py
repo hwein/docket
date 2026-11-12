@@ -1054,21 +1054,22 @@ def terminal_blocks(paths, spec_id):
 
 def terminal_section(paths, spec_id, state=None):
     """The last block counts, from its `state:` line on. With `state` (a run, its fields from terminal_mark): a block
-    the docket already held when the run marked the spec counts when it says DELIVERED (the gate then reads it) or
-    when the run changed it in place; an unchanged BLOCKED or DISSENT an earlier run left does not close the resumed
-    spec (review 2026-11-06). A block written below the old ones always counts. Without `terminal_last` (a state of
-    an older version) only a block below the old ones or a DELIVERED counts (review 2026-11-12: a resumed spec whose
-    old block was rewritten in place never closed)."""
+    the docket already held when the run marked the spec counts when it says DELIVERED (the gate then reads it; the
+    block carries `earlier`) or when the run changed its `state:` line in place (kind or reason; review 2026-11-12:
+    an `open:` line deleted, or a `result:` line under a `state:` line that does not parse, closed the spec as
+    BLOCKED); an unchanged BLOCKED or DISSENT an earlier run left does not close the resumed spec (review 2026-11-06).
+    A block written below the old ones always counts. Without `terminal_last` (a state of an older version) only a
+    block below the old ones or a DELIVERED counts."""
     blocks = terminal_blocks(paths, spec_id)
     empty = {"kind": "", "reason": "", "result": "", "open": [], "watch": [], "user": [], "decision": [],
              "repaired": [], "dissent": []}
     if not blocks:
         return empty
     last = blocks[-1]
-    if state is not None and len(blocks) <= int(state.get("terminal_base", 0) or 0) and last["kind"] != "delivered":
+    if state is not None and len(blocks) <= int(state.get("terminal_base", 0) or 0):
         known = state.get("terminal_last")
-        if known is None or last == known:
-            return empty
+        if known is None or (last["kind"], last["reason"]) == (known.get("kind"), known.get("reason")):
+            return dict(last, earlier=True) if last["kind"] == "delivered" else empty
     return last
 
 
@@ -1308,7 +1309,7 @@ def agent_returns(transcript_path):
 
 def waiting(hook_input, transcript_path, terminal_written):
     """A Stop that waits for work in the background: no check, no text needed (V4). Claude Code reports that work in
-    `background_tasks`; once the spec's Terminal state is written, only agents count, not a dev server or a monitor
+    `background_tasks`; once this run wrote the spec's Terminal state, only agents count, not a dev server or a monitor
     left running (review 2026-11-06: a background shell turned the spec end into an endless wait). A notification
     queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
     transcript."""

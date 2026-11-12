@@ -24,7 +24,8 @@ For you:
 
 <the next spec's block>
 
-Resume: `/docket:implement <ids>`   (the specs not started and the one ended `stopped by user`, in series order)
+Resume: `/docket:implement <ids>`   (the specs not started, the one ended `stopped by user` and each blocked spec
+                                     one of them waits for, in series order)
 Records: `<first command>`, then `<second command>`   (only when docket's statement names them)
 ```
 

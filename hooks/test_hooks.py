@@ -1376,6 +1376,22 @@ class Series(Project):
         self.assertIn("queue-dropped", self.log())
         self.assertIn("run-closed", self.log())
 
+    def test_the_resume_line_names_the_blocked_spec_before_the_one_that_waits_for_it(self):
+        # Review of b0cb330: the closing message's resume line named only the specs not started; mark_run refuses a
+        # spec whose predecessor ended blocked unless the predecessor runs first.
+        self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
+        self.end_spec("BLOCKED: start Docker", result="Login is not built yet.")
+        self.assertEqual(self.run_stop()[0], 2)
+        self.assertEqual(self.state()["mode"], "none")
+        code, err, out = self.prompt("/docket:implement s-aaaa1111")
+        self.assertIn("No run marked: ", out)
+        self.assertIn("s-aaaa1111 needs s-0123abcd first", out)
+        self.assertEqual(self.state()["mode"], "none")
+        code, err, out = self.prompt(f"/docket:implement {SPEC}, s-aaaa1111")
+        self.assertEqual(code, 0, err)
+        state = self.state()
+        self.assertEqual((state["mode"], state["spec"], state["queue"]), ("sealed", SPEC, ["s-aaaa1111"]))
+
     def repo(self):
         """The project as a git repository with one commit; docket's state dir is ignored."""
         git = lambda *args: subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t"]
@@ -1727,6 +1743,47 @@ class ReviewFindings(Project):
             self.docket.write_text(self.docket.read_text("utf-8").replace("[ ]", "[x]"), "utf-8")
             self.assertEqual(self.run_stop()[0], 2)
             self.assertEqual(self.state()["outcomes"], {SPEC: "delivered"})
+
+    def test_only_a_changed_state_line_closes_the_resumed_spec(self):
+        # Review of b0cb330 (Q3): an `open:` line deleted under the old BLOCKED closed the spec as blocked.
+        self.set_state(mode="none")
+        self.spec.write_text(f"---\nid: {SPEC}\ntitle: Login\nstate: in-progress\n---\n# Login\n", "utf-8")
+        self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [ ] |\n| 2 | logout | `cargo test` | [ ] |\n\n"
+                               "## Terminal state\n\n- state: BLOCKED: three rounds\n"
+                               "- open: point 1, cargo test fails\n", "utf-8")
+        self.prompt(f"/docket:implement {SPEC}")
+        self.docket.write_text(self.docket.read_text("utf-8").replace("| 1 | login | `cargo test` | [ ]",
+                               "| 1 | login | `cargo test` | [x]").replace("- open: point 1, cargo test fails\n", ""),
+                               "utf-8")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket state] The docket of Login (s-0123abcd) has no Terminal state from "
+                                       "this run: `state: BLOCKED`"), err)
+        self.assertIn("1 of 2 points are open", err)
+        self.assertEqual((self.state()["mode"], self.state()["spec"]), ("sealed", SPEC))
+        self.assertNotIn(" blocked ", self.log())
+
+    def test_a_state_line_that_does_not_parse_leaves_the_old_block_unchanged(self):
+        # Review of b0cb330 (P1): `State: ✅ DELIVERED` did not parse, its `result:` line hung on the old BLOCKED.
+        self.resume("[ ]", "BLOCKED: three rounds")
+        self.docket.write_text(self.docket.read_text("utf-8").replace("[ ]", "[x]")
+                               + "- State: ✅ DELIVERED\n- result: Login works.\n", "utf-8")
+        code, err, _ = self.run_stop()
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket state] The docket of Login (s-0123abcd) has no Terminal state from "
+                                       "this run"), err)
+        self.assertEqual((self.state()["mode"], self.state().get("outcomes")), ("sealed", {}))
+        self.assertIn("state: in-progress", self.spec.read_text("utf-8"))
+
+    def test_a_background_shell_holds_a_delivered_block_from_a_halted_run(self):
+        # Review of b0cb330 (P2): the old DELIVERED counted as written by this run, and a running build was no wait.
+        self.resume("[ ]", "DELIVERED")
+        shell = [{"id": "b1", "type": "shell", "status": "running", "command": "cargo build"}]
+        self.assertEqual(self.run_stop(background_tasks=shell), (0, "", ""))
+        self.assertEqual((self.state()["mode"], self.state()["refused"]), ("sealed", False))
+        code, err, _ = self.run_stop(background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket gate] The docket of Login (s-0123abcd) says DELIVERED"), err)
 
     def test_resuming_the_spec_at_work_keeps_the_series(self):
         (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
