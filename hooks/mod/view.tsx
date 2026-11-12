@@ -169,7 +169,7 @@ export const canRun = (spec: Spec): boolean => spec.state === 'ready' && !spec.r
 export const pickedSpecs = (data: Overview, picked: readonly string[]): Spec[] =>
   (data.specs ?? []).filter(spec => picked.includes(spec.id) && canRun(spec)).sort((a, b) => a.order - b.order)
 
-/** The first ticked spec whose predecessor is neither done nor ticked: the hooks would refuse that series. */
+/** The first ticked spec whose predecessor is neither done nor ticked: docket would start no run for that series. */
 const pickGap = (data: Overview, specs: readonly Spec[]): { spec: Spec; before: string } | undefined => {
   const ids = new Set(specs.map(spec => spec.id))
 

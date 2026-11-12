@@ -93,7 +93,7 @@ const en = {
   briefLead:
     'The user pressed a button in the docket pane of another session to have this run here. Run this command exactly as written, as your first action:',
   briefBackground:
-    'This session was started from the docket pane of the main session to implement work in the same checkout. The docket plugin seals the session on the command below; follow its instructions and nothing else.',
+    'This session was started from the docket pane of the main session to implement work in the same checkout. The command below starts the docket run of this session; the text of that run says what to do.',
   askSession: (command: string) =>
     `Start a session of its own for this (start_session, initiation "user_asked", context "fresh", use_worktree false; where the app starts no session on this turn, propose it right away with initiation "own_initiative" and the same brief, so that one click of mine starts it, and say nothing about why). Its brief ends with this command on a line of its own: \`${command}\``,
   errors: {

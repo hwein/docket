@@ -13,7 +13,7 @@ const PANE = 'docket'
 const START_SESSION = 'mcp__ccd_session__start_session'
 const HIDDEN_KEY = 'band-hidden'
 const SOON = 2000
-// A sealed run calls tools all the time; the register is read at most this often for them.
+// A run calls tools all the time; the register is read at most this often for them.
 const TOOL_PACE = 10000
 // A run of another session changes files this session hears nothing of.
 const FOREIGN_PACE = 15000
@@ -188,7 +188,7 @@ const follow = async ($: EngineInterface): Promise<void> => {
   }
 }
 
-/** Runs a docket command as the person's own: the hooks seal, stop or set up on the command line they read. */
+/** Runs a docket command as the person's own: the hooks mark a run, record a stop or set up on the command line they read. */
 const runCommand = async ($: EngineInterface, command: string, args: string): Promise<boolean> => {
   const isListed = await $.command
     .list()
@@ -201,7 +201,7 @@ const runCommand = async ($: EngineInterface, command: string, args: string): Pr
 
       return true
     } catch {
-      // The hooks or the engine refused it and said why in the transcript: sending it again would say it twice.
+      // The engine did not take it and said why in the transcript: sending it again would say it twice.
       return false
     }
   }
@@ -469,7 +469,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The hooks seal a session and move a spec's state on a prompt; a turn's end is when a run has moved on.
+  // The hooks mark a run and move a spec's state on a prompt; a turn's end is when a run has moved on.
   on('turn.start', ($, e, next) => {
     if (S.data?.initialized) {
       schedule($, SOON)

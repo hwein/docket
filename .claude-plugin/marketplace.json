@@ -7,7 +7,7 @@
     {
       "name": "docket",
       "source": "./",
-      "description": "Spec in, docket out: frozen specs, append-only dockets, provenance hooks, a judge before delivery."
+      "description": "Spec in, docket out: specs with checkable done criteria, delivery dockets with evidence, autonomous runs that check their own work."
     }
   ]
 }

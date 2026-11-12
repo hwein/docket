@@ -14,6 +14,10 @@ this working tree. An edit here reaches no session until it is committed, pushed
 (`.github/workflows/test.yml`, Linux and Windows) and installed with `claude plugin marketplace update docket`
 and `claude plugin update docket@docket` (restart needed).
 
-A change to `templates/judge-hook.json` appends its SHA-256 to `JUDGE_VERSIONS` in `hooks/session_start.py`
-(a test fails otherwise): session start keeps every project's judge entry current. docket adds no code file to a
-user's repository.
+docket adds no code file to a user's repository.
+
+# Evals
+
+`evals/` is the project's comparison test, not `claude plugin eval`: `python evals/run.py --stand <stand>` runs each
+case headless (`claude -p`) in a fresh fixture repository on the committed plugin files, and `python evals/report.py`
+reads the result files under `evals/results/`.

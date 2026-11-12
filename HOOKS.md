@@ -1,266 +1,114 @@
-# How the hooks enforce it
+# docket's hooks
 
-Hooks check provenance, form and state, never content. This is the mechanics behind the three README sections
-"What you can rely on", "When docket interrupts you" and "What you see".
+Five hooks in `hooks/hooks.json`, Python with the standard library only. They refuse exactly five things: a write
+into `forbidden_paths`, a push to a branch outside `push_branch`, a commit whose message does not match
+`commit_regex`, a command from `forbidden_commands` in a run (all four in PreToolUse), and `state: DELIVERED` while
+the gate finds a gap (Stop). Outside a run, a command from `forbidden_commands` goes to the user as a permission
+dialog; that is a question, not a refusal. Every other text a hook gives is a statement of state, never an order.
 
-## Frozen specs, append-only dockets, hook-written log
+Every refusal and the dialog begin with an identifier: `[docket rule: <key>]` (PreToolUse, the key of DOCKET.md) or
+`[docket gate]` (Stop). A turn the Stop hook continues with a statement begins with `[docket state]`; a state line in
+the context begins with `[docket]`. Every text stands in one table in `hooks/docket_lib.py` (`SAY`), in English and
+German after `user_language`.
 
-- A spec in state `ready` is refused to every write; only the conceptor agent in rewrite mode may edit it, and the
-  hook logs `rewrite` and `rewrite-done`.
-- The docket is append-only: after every edit each previous line must still be there, in order; a checkbox flip
-  `[ ]` to `[x]` or `[~]` and filling a placeholder are the only in-place changes.
-- A docket line that cites a `file:line` which does not exist is undone at once (the snapshot is restored, a
-  skeleton removed). A citation is checked at that moment and never again: the line stays, the code moves on.
-- A line is corrected by writing it again below: of two lines the later one counts, in the Refinement, Triage and
-  Review sections and for the Terminal state block.
-- `LOG.md` is written by hooks only: sealed, point-delivered, deviation, delivered, blocked, dissent, grants,
-  judge verdicts.
+The hooks read DOCKET.md at every call and make no exception, for the orchestrator and its agents alike. Who wants
+a project rule changed changes its key in DOCKET.md: when the user asks for it explicitly in the chat, the session
+does that itself and says so in one line (`commands/spec.md`, `commands/concept.md`, `skills/implement/SKILL.md`).
 
-## The end of a spec
+A run is a session with the run mark (`mode: sealed` in its state file). The mark is set by `/docket:implement`,
+typed or called by the model as the skill `docket:implement`, and taken off by the Stop hook at the end of the series.
 
-A spec ends in its docket, not in a message: the orchestrator writes the `Terminal state` section (`state:`
-DELIVERED, BLOCKED or DISSENT, `result:`, `repaired:`, `user:`, `decision:`, `watch:`, `dissent:`, `open:`), in the user's language, without
-ids or hashes; the last block counts. The Stop hook accepts DELIVERED only if every command of the project's check (as
-many as the project has, listed in `DOCKET.md`) ran after the last agent returned and none failed in its last run;
-the command of every delivered point's acceptance line (`<command> → <expected>`) ran after the last implementer or
-fixer returned and did not fail in its last run; every reference doc the spec names is marked `updated` (and
-changed since the spec's first sealing) or `not needed`; every refinement line and every review line carries a
-decision, and the review holds (below); with `ci` configured, the last `CI: <state> <hash>` line names a hash
-reachable from HEAD after a push in this session. Otherwise the run goes on until it holds. An accepted end closes
-the spec, writes its metrics (`metrics/<id>.json`) and seals the next spec of the series, or starts the closing.
-The series goes on after DELIVERED, and after BLOCKED or DISSENT when the spec left nothing in the project that the
-next spec's push would carry: the project is as it was at the spec's sealing (`sealed_head`, `untouched_since`), or
-everything is pushed and the tree is clean. A queued spec whose predecessor is not done is passed over (LOG
-`passed-over`) and named in the closing message with what it waits for.
+## SessionStart
 
-## docket never stands in its own way
+Matcher `startup|resume|clear|compact`. Refuses nothing. At every start, also in a project without DOCKET.md: the
+judge entry of docket 0.5 leaves `.claude/settings.json` and `.claude/settings.local.json` (known by the digests of
+its eight versions or by the mark in a changed copy; a file git tracks included), and the removed entry is appended
+to `.claude/docket/judge-removed.json` before a settings file changes; files of 0.5 nobody reads any more go once
+they are an hour old. In a project with DOCKET.md, state lines as context: the session's mode, the work dir with the
+path of DOCKET.md and `user_language`, the run line of a marked run (spec i of n, its docket, its points), else the
+interrupted series, the runs without a Terminal state, the runs stopped with open points, and the last LOG line. A
+marked run that goes on after `resume` or `compact` gets the LOG line `resumed`.
 
-A run ends without DELIVERED only for what the project lacks or what only the user can do. The record is never
-such a reason (luradb-web-client 2026-11-10: a spec whose code was reviewed and pushed ended BLOCKED because a
-line of an earlier session cited two line numbers of a file that had since become shorter; the series ended there
-and the next spec never started):
+## UserPromptSubmit
 
-- No check at the end of a spec reads a line that can no longer be changed against a state that has moved on: no
-  citation is checked at DELIVERED, a reference doc counts from the spec's first sealing, and of the CI lines the
-  last one counts.
-- What the Terminal state lacks in form (a line too long for the closing message, a missing part of a `watch:`
-  line, a proposal without its `why:` or its `outside:`, a deferred review finding no `decision:` or `user:` line
-  stands for, an id or a hash, a red CI line without a word about it) is sent back to be
-  written again below. Sent back the third time unchanged, or when the turn ends again right after the refusal,
-  the hook lets the spec end as written (LOG `waived`). The evidence of a DELIVERED is never let pass.
-- A red CI run is the run's to make green, also when its cause lies outside the order (implement command, step 4).
+No matcher. Refuses no prompt. `/docket:implement` marks the run (`mark_run`): run mark, lock of the first spec,
+the series in the state, LOG `sealed` and `queued`, the spec's state `in-progress`. It takes a spec, a list of specs,
+a concept (its ready specs), `--all` or nothing (the next ready spec). It marks nothing for an unknown spec, no ready
+spec, a predecessor not done, a spec another live session holds or has queued, or another spec at work in this
+session, and says why in a state line. `/docket:stop` in a run records `stop_requested` and LOG `stop-requested`.
+`/docket:status` and `/docket:register` get the series of this session and the interrupted ones. Every typed
+`/docket:` command gets the work dir line; in a project without DOCKET.md, the line that it is not set up. Every
+prompt in a run gets the run line. Every prompt clears the Stop hook's fields `refused` and `halted`.
 
-## The user gets back only what the run could not do
+## PreToolUse
 
-A run that hands undecided work back contradicts what it is for (luradb-web-client 2026-11-11: two specs
-delivered, and the closing message carried four pieces of advice, one thing to watch and "15 open points: ask
-here for them"; no rule had forbidden the run to settle any of them, and two it had caused or measured itself).
-The rule is in the implement command (step 4, "Settle what is left"); the hooks hold its form:
+Matcher `Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell|Skill`, only in a project with DOCKET.md.
 
-- A `decision:` line is a proposal for work after the run, in three parts: what to do, `why:`, and `outside:`,
-  what kept the run from doing it itself. A line without `why:` or `outside:` is sent back.
-- A review finding that is `deferred` reaches the user by name: a delivery with more deferred findings than
-  `decision:` and `user:` lines is sent back.
-- What the run repaired outside the order stands in the Terminal state as `repaired:` and in the closing message.
-- An `open:` line is a note for the record. The closing message neither shows nor counts it.
+- A write tool on a path matching a glob of `forbidden_paths`: refused, `[docket rule: forbidden_paths]`.
+- A `git push` to a branch `push_branch` does not match: refused, `[docket rule: push_branch]`.
+- A `git commit` whose message (`-m`, `--message` or a heredoc) does not match `commit_regex`: refused,
+  `[docket rule: commit_regex]`.
+- A shell command matching `forbidden_commands`: in a run refused, `[docket rule: forbidden_commands]`, which says
+  as a fact that the command is on that list and did not run; what the run does next stands in the run's text.
+  Outside a run the user is asked (`permissionDecision: ask`, LOG `ask`); one click runs it once.
+- The Skill call `docket:implement`: the second trigger of `mark_run`, a side effect; the call goes on and the run
+  line, or why no run was marked, reaches the model as context.
 
-## The closing message
+Each refusal names the key, its value and the path of DOCKET.md. An invalid regex matches nothing.
 
-When the last spec of a run has ended, or the series ended at a BLOCKED or DISSENT spec, or the user stopped the
-run, the hook renders the run's one message from the dockets, the LOG and git, in blocks with a blank line between
-them and a bold label on each block after the specs:
+## PostToolUse
 
-- one line for the run: how many specs are implemented, whether the work is pushed, the CI state of the last spec
-  that has one (red stays red, whatever state that spec ended in);
-- one line per spec by its title with its points and result, and each point that deviates by its name. A spec that
-  needs the user is not called blocked: it is "stopped at x of n points", or, with every point done and its work
-  pushed, "implemented, not closed". A spec that did not start says why (it waits for a predecessor, the run ended
-  at another spec, the user stopped it);
-- "For you to do": numbered steps under the spec they belong to: its `user:` lines, or what it stopped at;
-  then the specs to take up again, by their titles, with the one command that does it (an id stands nowhere else),
-  and, where docket's records lie uncommitted inside another repository, the two commands that commit them
-  (`commit_records: yes` in `DOCKET.md` lets the hook do it; it never pushes). Where there is no step, the block
-  says "nothing";
-- "Also repaired, outside the order": each `repaired:` line;
-- "Proposals for later, outside the order": each `decision:` line once for the whole run, numbered, by what to do
-  and why, and one line that says how a proposal becomes a spec (`/docket:spec` and its number; the hook keeps the
-  run's proposals whole in `proposals.json` of its state folder and hands the numbered one to the spec session);
-- "To watch": each `watch:` line by its first part, what it is about;
-- what came of the user's messages: each with its Inbox line; messages no line answers are one line with their
-  count. A report an agent hands back to the session is no message of the user (`agent-message`);
-- where the dockets are.
+No matcher. Refuses nothing, says nothing to the model. Side effects: in a run, a write on a docket that turns more
+points `[x]` or `[~]` than the LOG has counted gets the LOG line `point-delivered` or `deviation`; a spec written
+with `state: ready` gets LOG `ready` once; a command that matched `forbidden_commands` and ran gets LOG `grant`. The
+life sign: in a run, every tool call (orchestrator and agents) renews the state file's time, and the orchestrator's
+next tool call clears `refused`. Without the run mark it writes no state.
 
-No line is cut: a line too long for the message is refused when the Terminal state is written. No sentence stands
-twice. Nothing is counted that the user would have to ask for. The orchestrator sends the message verbatim (blank
-lines and bold markers do not count in the comparison); the display gate shows nothing else, and after three
-misses it shows the rendered text itself. The session is closed afterwards.
+## Stop
 
-## Project rules
+No matcher; acts only in a run. A Stop while agents run is a wait and passes; its time stays in the state, so the
+run stays live for other sessions. Then the docket of the spec at work:
 
-Branch (`push_branch`), commit form (`commit_regex`), `forbidden_paths` and `forbidden_commands` from `DOCKET.md`
-apply to every command. A forbidden command is not refused but put to the user as a permission dialog: one click
-runs it once, and the LOG records the grant. A sealed run has nobody to ask, so there it stays refused and is named
-as BLOCKED in the spec's docket and in the closing message.
+- `state: DELIVERED` passes the gate: no point `[ ]`, and every `check` command of DOCKET.md and the acceptance
+  command of every `[x]` point (the part before the arrow in backticks) ran after the last agent returned and did
+  not fail, read from the transcript; nothing is run. A gap is refused once, `[docket gate]`, with the facts.
+- `state: BLOCKED: <reason>`, and any other terminal state of a 0.5 docket, closes the spec unchecked.
+- No Terminal state: the turn goes on once with `[docket state]` (the spec, k of m points open).
+- A second Stop right after either, without a tool call between, passes: LOG `stop-forced`, one line to the user
+  with where the run stands and the command that resumes it.
 
-## Messages
-
-- Every message in every session of a project with a `DOCKET.md` ends with a time stamp; the hooks hand the time to
-  the model with every prompt and tool result, so no tool call is spent on it.
-- In concept and spec mode a returning agent gets no message while others still run: the user gets one message when
-  the last one is back.
-- Every message to the user is in the language `DOCKET.md` sets (`user_language`, question 12 of `/docket:init`:
-  the author's language, not the repo's); the check counts function words, code spans and URLs excluded.
-- No hashes, ids or hedge words; at most one question, with a recommendation; no option menus, no promises, no
-  self-talk. The question in the desktop app's next-step box counts toward the one question.
-- A blocker is said once: the same `Blocker` line twice in a row is refused. A blocker ends the turn: until the user
-  answers, nothing is written and no agent or workflow starts.
-- A quoted hook answer must have come from a hook in this session.
-- A refusal by a hook is Claude's to resolve, and the user reads nothing about it: no hook, no refusal text, no
-  session state, no judge; where only the user can clear it, one sentence says what they decide or type. The rule
-  comes with every prompt and session start outside a run and with every refused tool call of the conversation.
-- The display gate (MessageDisplay hook) holds a message that breaks a rule back before the user sees it; the Stop
-  hook asks for it again in full.
-- A sealed run writes no text. A turn that waits for agents ends without text: the Stop hook recognises the wait by
-  Claude Code's `background_tasks` or by an agent notification queued and not yet seen by the model, and checks
-  nothing; once the spec's Terminal state is written, only agents still running hold it, not a dev server. Whatever
-  text the orchestrator still writes is replaced live by the hook's status line (spec i of n, title, points
-  delivered), and only when that line differs from the last one shown.
-- The description of an agent in a run is what the user reads when it finishes: in a series it starts with
-  `Spec i of n: `, then the task in everyday words; the plugin's words are refused there.
-- The Stop hook refuses a message only once: a second Stop right after its own refusal, with no tool call between,
-  is let through and logged; in a run the user is told in one line that the run stopped and how to resume it.
-
-## Modes
-
-Each mode keeps to its work: concept mode writes concepts and `DOCKET.md`, any other write in the repo comes to the
-user as a permission dialog, and an order for specs given there is answered with `/docket:spec`. A sealed run asks
-no question, not in the text and not in the next-step box.
-
-No prompt of the user is refused: `user_prompt.py` never exits 2. Free text typed during a run reaches the
-orchestrator, whose next text is the answer and is shown (`answer_due`, the one text of a run the display gate
-lets through); the inbox keeps the message for the docket and the closing message, and a run that had stopped
-goes on with it. A command that cannot do what it says (a spec that runs or waits in another session, a
-precondition not met, specs out of order, a spec the project does not have, a mode command during a run) changes
-nothing and reaches the model with the reason and the way out; the model tells the user in one or two sentences,
-and outside a run nothing is written or started in that turn (`declined`, `pre_tool_use.py`).
-
-In a sealed run the orchestrator keeps the docket itself; a fixer gets no docket or metrics path. The hooks' own
-source is not read. An implementer, refiner, reviewer, diagnoser or conceptor is spawned with its `model`; a spawn without
-one is refused, so the model is a decision per tier and role and never the orchestrator's own by default.
-
-The review gates the push and DELIVERED alike:
-
-- The Review section carries a line of each angle of round one, `code` and `spec` (a finding or
-  `<angle> | no findings`), and every line a decision.
-- A finding line that names its angle names its severity. A finding of severity `bug`, `unmet` or `rule` that is
-  `deferred` is refused: it is fixed, rejected with its source, or the spec ends BLOCKED.
-- Of two lines with the same angle and finding the later one counts, so a line is corrected by writing it again.
-- The review is run, not written: once an implementer or fixer wrote in the session, a reviewer agent must have
-  started after the last of them returned, and returned itself. A fix after a review therefore needs a reviewer
-  again; a spawn a hook refused is none.
-- A reviewer's briefing that names the docket is refused: it judges the order and the delivery, not the
-  orchestrator's account of them.
-- A `suspect` (wrong behaviour the reviewer could not show) that is `deferred` is refused, and so is `observe` on
-  any other severity.
-
-Against chasing a symptom, and against waving a fault away:
-
-- While a point is open, the implementers that returned since the last point was closed are its rounds. A second
-  implementer is refused until the docket's Triage section has a line for that point with its `cause:`; a third
-  until that cause names a `file:line`. Of two Triage lines for a point the later one counts.
-- A new docket line whose decision is `observe` is undone at once, like a wrong citation, unless it carries
-  `cause:`, `repro:` and `impact:`, the orchestrator ran the backticked repro command three times in the session
-  and it did not fail all three times, and two diagnoser agents have returned (the examination and its
-  challenge). A `repro:` without a command (nothing of a reasonable size shows the fault) skips the runs, not the
-  challenge. No rule counts time.
-- A spec whose docket sets something to `observe` ends only with a `watch:` line in its Terminal state, and a
-  `watch:` line only with all its parts: what it is about, `seen:`, `suspected:`, `impact:`, `signal:`. The closing
-  message shows each as a block of its own, so that the user can copy it into `/docket:spec` as it stands.
-
-Before the session seals, the user-only preconditions of every spec of
-the run (`Preconditions (user only)`: `command` → expected output) are run; the first that fails is named and
-nothing is sealed; a precondition that matches `forbidden_commands` is not run, and its output never reaches the LOG.
-Only the spec at work is locked, exclusively; a session counts as running while its state was touched within the hour
-or it waits for its agents, so a lock of a crashed run is taken over and the next session start names an interrupted series with the
-titles and state of its specs.
-
-## The judge
-
-The optional judge (a prompt hook, per project, opt-in at `/docket:init`) checks the form of a message after the
-user has read it: one question at most, no option menus, no manual tasks for the user beyond the steps of a blocker,
-no promises, no self-talk. Whether a sentence names its source is a rule of the prose, not of the judge. Its verdicts
-go to Claude and the log, never to the screen: Claude answers them with silence. Where the harness answers that
-silence with a demand for visible output, Claude writes the line `[docket] noted`, and the display gate hides it, as
-it hides a bare stamp or `Blocker unverändert` after a verdict. A sentence that names a `/docket:` command for the
-user to type is no manual task.
+A closed spec: lock released, the spec's state `done` (delivered) or back to `ready`, `metrics/<spec>.json`, LOG
+`delivered` or `blocked`. The series goes on with its next spec (`[docket state] Spec i of n is running …`): after
+DELIVERED; after BLOCKED when the spec left the project as it found it or its work is pushed; a spec whose
+predecessor is open is passed over (LOG `passed-over`). Otherwise, or after `stop_requested`, or after the last spec,
+the series ends: run mark `none`, LOG `run-closed`, `commit_records` where DOCKET.md sets it, and once a
+`[docket state]` statement with the count of every outcome and why each unstarted spec did not start. The model
+then writes the closing message; the Stop after it passes.
 
 ## The session state
 
-One file per session in `.claude/docket/` holds the mode, the spec at work and the clock. Many hooks run at once (a
-message that starts 14 agents runs 14 hooks in the same second), so a hook never writes the state as it read it:
-under a lock file it reads the file again and writes back only the fields it changed. A read that fails while the
-file exists is tried again and never counts as "no state". An agent's tool calls write nothing into it; in a run
-they only renew the file's time, which is what tells other sessions that the run lives.
-
-No hook sets a mode back to none. Where the state says none and the last mode command the user typed in this
-session was `/docket:concept`, `/docket:spec` or `/docket:init`, the mode is put back from the transcript (LOG
-`mode-restored`): at the user's next prompt, when an agent is started, and before a spec or concept is written. A
-run (`/docket:implement`) is not rebuilt this way.
-
-A sealed run has no judge: at sealing its entry leaves `.claude/settings.json` (or `settings.local.json`) for a
-record in `.claude/docket/` (written first), and it comes back when the run ends; a session start puts it back when
-the run that took it is no longer running. A settings file a commit could carry (tracked, or not ignored) is left
-alone; there a verdict in a run is logged as `judge-ignored` and counts nothing.
+One file per session, `.claude/docket/state-<session>.json`: the mode (`none` or `sealed`; a mode of 0.5 reads as
+`none`), the spec at work, the series. Hooks run at once (a message that starts many agents runs many hooks in the
+same second), so a hook writes under a lock file and only the fields it changed. A read that fails while the file
+exists is tried again and never counts as "no state". A run counts as live while its state file was touched within
+the hour or it waits for its agents; a lock of a dead run is taken over. LOG.md is written by the hooks; in a work dir
+with its own git history every LOG line is a commit.
 
 ## The pane
 
-`hooks/hooks.json` names one hooks module beside the hook commands, `hooks/mod/register.tsx`. It draws the pane, the
-line under the prompt and, where docket is not set up, the line above it. It reads no docket file's meaning by
-itself: `hooks/docket_ui.py overview` answers the register, the runs and the LOG as JSON, built with the functions
-the hooks use (`spec_records`, `docket_counts`, `terminal_section`, `session_live`), so the pane and the hooks read
-one project the same way. A spec's or a docket's text is shown as the file holds it.
-
-Every open spec carries its position in the recommended order of implementation in front of its state: a spec after
-every predecessor (`follows:` in its header, `after: <id>` in its Goal section), then by age (`in_order`), counted
-over the whole project, since a series runs across concepts
-in that order. A concept's open specs are listed by that position, its finished ones below.
-
-What a button does:
-
-- Implement, stop, set up: the command itself (`/docket:implement s-… | c-…`, `/docket:stop`, `/docket:init`), run
-  as if typed, so `user_prompt.py` resolves, checks and seals exactly as for a typed command. Ticked specs go as
-  `/docket:implement s-a, s-b` in implementation order (`in_order`, the order `overview` numbers them in); a tick
-  whose predecessor is neither done nor ticked offers no run, since the hook would refuse it. In a session of its
-  own: Claude Code Desktop's session tool is called with a brief that ends with the command on a line of its own.
-  Where the call starts none, the request is put into the empty prompt box for the person to send, in a sentence
-  that names the command and carries it on no line of its own: the app starts a session on a turn the person began
-  and refuses it on a prompt the plugin submits. Where no box takes it, or a draft stands in it, the plugin submits
-  that request, which has Claude propose the session for one click where the app starts none. `user_prompt.py`
-  reads a command on the first line of a prompt or on its last (`docket_lib.command_line`), never on a line in
-  between: pasted text and a request that names a command are text. One exception: the app wraps the brief of a
-  session it starts (a heading and the background above, a line about a notes folder below), so the pane records
-  the command first (`docket_ui.py handoff --command …`, `.claude/docket/handoff.json`), and the session whose
-  prompt carries exactly that command on a line of its own takes it (`take_handoff`): once, within fifteen
-  minutes, never the session that recorded it. In a project without DOCKET.md no command but `/docket:init` changes anything, a state that names another
-  mode is read as none (`load_state`), and a spec named in `/docket:implement` is a spec of this project.
-- Superseded: `docket_ui.py supersede --spec … --by …` writes `state: superseded` and the LOG line
-  `superseded … by=s-…`. It refuses a spec that runs or waits in a running series, an unknown or superseded
-  successor, and a spec already superseded. The model still never sets this state.
-- Stop for a run of another session: `docket_ui.py stop --session …` records what `/docket:stop` records there
-  (`stop_requested`, LOG `stop-requested`): that series ends with the spec at work.
-
-Claude Code Desktop starts the process of a new session in a placeholder folder (`claude-code-spare` in the app's
-data) before the first prompt and moves it to the project with that prompt (`relocated` in the transcript). The
-pane therefore reads the project again when the session start hooks run (`classic.SessionStart`), when a surface
-attaches and at a turn's start, wherever the session's root is no longer the one of the last read, and opens on
-the first read that finds a DOCKET.md. Before the first prompt the process does not know the project.
-
-The pane reads again after a prompt, at the end of a turn, at most every ten seconds while tools run, every fifteen
-while another session runs a spec, and on `Refresh`. Its tests run against the engine's own test kit
-(`claude plugin test .`), with the Python side mocked; `python hooks/test_hooks.py` covers `docket_ui.py`.
+`hooks/hooks.json` names one hooks module, `hooks/mod/register.tsx`: the pane, the line under the prompt and, where
+docket is not set up, the line above it. It reads no docket file's meaning itself: `hooks/docket_ui.py overview`
+answers register, runs and LOG as JSON with the functions the hooks use, so both read one project the same way.
+Every open spec shows its position in implementation order (after every `follows:` and `after:` predecessor, then
+by age). A button runs the command as typed (`/docket:implement …`, `/docket:stop`, `/docket:init`), in this session
+or, in Claude Code Desktop, in a session of its own whose brief ends with the command; the pane records it first
+(`docket_ui.py handoff`), and the started session takes it once within fifteen minutes. `docket_ui.py supersede`
+writes `state: superseded` with its LOG line; `docket_ui.py stop` records the stop request for a run of another
+session. The pane reads again after a prompt, at the end of a turn, at most every ten seconds while tools run and
+every fifteen while another session runs a spec. Tests: `claude plugin test .` (the pane, Python side mocked) and
+`python hooks/test_hooks.py` (hooks and `docket_ui.py`).
 
 ## Footprint
 
-docket adds no code to the repository. The judge entry `/docket:init` writes into `.claude/settings.json` follows
-the plugin: every session start brings it to the installed version, so an update needs no second init; a judge the
-project changed stays as it is.
+docket adds no code to a repository. In a project it writes `.claude/docket/` (session state, ignored by git) and,
+after `/docket:init`, its work dir.
