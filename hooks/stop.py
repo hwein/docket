@@ -4,7 +4,8 @@ DOCKET.md; every other Stop passes without a word.
 In a run:
 - A Stop while agents run (background_tasks, or an agent whose notification has not reached the model) is a wait and
   passes; its time stays in the state (`waiting`), so the run stays live for other sessions (session_live). Until
-  this run wrote its Terminal state, a background shell is a wait too.
+  this run wrote its Terminal state, a background shell is a wait too; an unchanged DELIVERED of an earlier run counts
+  as written once it passes the gate.
 - The spec's docket has a Terminal state (the last `state:` block of its `## Terminal state` section; an unchanged
   BLOCKED or DISSENT block an earlier run left does not count, a DELIVERED and a block whose `state:` line changed in
   place do). BLOCKED, and DISSENT from a docket of 0.5, close the spec unchecked. DELIVERED passes
@@ -49,7 +50,11 @@ def run_stop(paths, session_id, state, hook_input):
     transcript = hook_input.get("transcript_path")
     spec_id = state.get("spec", "")
     terminal = terminal_section(paths, spec_id, state)
-    if waiting(hook_input, transcript, bool(terminal["kind"]) and not terminal.get("earlier")):
+    problems = gate_problems(paths, spec_id, transcript) if terminal["kind"] == "delivered" else []
+    # An earlier run's DELIVERED counts as this run's own once the gate passes: the check and the acceptance ran green
+    # after the last agent returned, so a background shell (a dev server) is no wait any more.
+    written = bool(terminal["kind"]) and not (terminal.get("earlier") and problems)
+    if waiting(hook_input, transcript, written):
         state["waiting"] = time.time()
         save_state(paths, session_id, state)
         return 0
@@ -58,7 +63,6 @@ def run_stop(paths, session_id, state, hook_input):
     second = bool(hook_input.get("stop_hook_active")) and bool(state.get("refused"))
     title = spec_title(paths, spec_id) or spec_id
     if terminal["kind"]:
-        problems = gate_problems(paths, spec_id, transcript) if terminal["kind"] == "delivered" else []
         if not problems:
             return end_spec(paths, session_id, state, terminal["kind"], transcript)
         if second:

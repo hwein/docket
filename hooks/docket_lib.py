@@ -183,7 +183,7 @@ SAY = {
         "gate_check_failed": "der Check `{command}` scheiterte in seinem letzten Lauf",
         "gate_point_missing": "der Akzeptanzbefehl von Punkt {point} (`{command}`) lief in dieser Sitzung nicht",
         "gate_point_before": ("der Akzeptanzbefehl von Punkt {point} (`{command}`) lief zuletzt vor der Rückkehr des "
-                              "letzten Umsetzers oder Fixers"),
+                              "letzten Agenten"),
         "gate_point_failed": "der Akzeptanzbefehl von Punkt {point} (`{command}`) scheiterte in seinem letzten Lauf",
         "no_terminal": "Das Docket von {title} ({spec}) hat keinen Terminal state; {open} von {total} Punkten sind offen.",
         "no_terminal_old": ("Das Docket von {title} ({spec}) hat keinen Terminal state aus diesem Lauf: `state: {kind}` "
@@ -259,8 +259,8 @@ SAY = {
         "gate_check_before": "the check `{command}` last ran before the last agent returned",
         "gate_check_failed": "the check `{command}` failed in its last run",
         "gate_point_missing": "the acceptance command of point {point} (`{command}`) did not run in this session",
-        "gate_point_before": ("the acceptance command of point {point} (`{command}`) last ran before the last implementer "
-                              "or fixer returned"),
+        "gate_point_before": ("the acceptance command of point {point} (`{command}`) last ran before the last agent "
+                              "returned"),
         "gate_point_failed": "the acceptance command of point {point} (`{command}`) failed in its last run",
         "no_terminal": "The docket of {title} ({spec}) has no Terminal state; {open} of {total} points are open.",
         "no_terminal_old": ("The docket of {title} ({spec}) has no Terminal state from this run: `state: {kind}` stood "
@@ -1102,7 +1102,6 @@ def review_lines(body):
 
 
 # --- the acceptance commands of the delivered points (V16) ---------------------
-WRITING_AGENTS = ("implementer", "fixer")  # every change to the project goes to one of them
 ARROW = re.compile(r"\s*→\s*|\s+->\s+")
 STILL_RUNNING = 10 ** 9
 
@@ -1146,11 +1145,6 @@ def agent_runs(transcript_path, since=""):
     return runs
 
 
-def last_written(runs):
-    """The return index of the last agent that changed the project, -1 when none ran."""
-    return max((back for kind, _, back, _ in runs if any(name in kind for name in WRITING_AGENTS)), default=-1)
-
-
 def point_commands(body, paths):
     """(point, command) for every delivered point `[x]` whose pre-registered acceptance line is
     `<command> → <expected>`: only what stands in backticks before the arrow is a command (REWORK-SPEC 1d.2); a
@@ -1176,21 +1170,22 @@ def point_commands(body, paths):
 
 
 def acceptance_problems(paths, spec_id, body, transcript_path):
-    """V16: a delivered point's own command ran in this session after the last implementer or fixer returned, and
-    did not fail in its last run. The project's check says the whole still holds, this says the point does."""
+    """V16: a delivered point's own command ran in this session after the last agent returned, of any kind, as the
+    check does (Festlegung „Umfang des Prüf-Tors“), and did not fail in its last run. The project's check says the
+    whole still holds, this says the point does."""
     entries = transcript_entries(transcript_path)
     if not entries:
         return []
     failed = failed_calls(entries)
     shell = [(index, str((block.get("input") or {}).get("command", "")), block.get("id") in failed)
              for index, block, _ in tool_calls(entries, ("Bash", "PowerShell"))]
-    written = last_written(agent_runs(transcript_path, sealed_stamp(paths, spec_id)))
+    last_return = max(agent_returns(transcript_path).values(), default=-1)
     problems = []
     for point, command in point_commands(body, paths):
         runs = [(index, broke) for index, text, broke in shell if command in text]
         if not runs:
             problems.append(say(paths, "gate_point_missing", point=point, command=command))
-        elif runs[-1][0] < written:
+        elif runs[-1][0] < last_return:
             problems.append(say(paths, "gate_point_before", point=point, command=command))
         elif runs[-1][1]:
             problems.append(say(paths, "gate_point_failed", point=point, command=command))
@@ -1265,21 +1260,28 @@ def pending_agents(transcript_path, queued_only=False):
 
 AGENT_TASKS = ("subagent", "workflow", "agent")
 AGENT_ID = re.compile(r"\bagentId:\s*([A-Za-z0-9_-]+)")
-HANDED_BACK = re.compile(r"<agent-message\s+from=\"([^\"]+)\">\s*\[Subagent hand-back\]")
+HANDED_BACK = re.compile(r"<agent-message\s+from=\"([^\"]+)\">\s*\[Subagent hand-back\](.*?)(?:</agent-message>|\Z)",
+                         re.DOTALL)
+NOTIFICATION = re.compile(r"<task-notification>(.*?)(?:</task-notification>|\Z)", re.DOTALL)
+NOTIFIED_RESULT = re.compile(r"<result>(.*?)(?:</result>|\Z)", re.DOTALL)
 
 
 def agent_returns(transcript_path):
-    """{tool_use_id: line index of its return} for the main line's agents: the first line at which the agent's result
-    reached the model. That is the tool result of a foreground agent; for a background one (its tool result only says
-    it was launched) the first notification naming its tool_use_id or the first hand-back message from its agentId.
-    A later repeat of the same result does not move the return. A SendMessage to the agent resumes it: its next result
-    is a new return."""
-    returns, launched, returned, agents = {}, set(), set(), {}
+    """{tool_use_id: line index of its return} for the main line's agents: the last line at which a new result of the
+    agent reached the model. A result is the tool result of a foreground agent (a background one's only says it was
+    launched), a notification naming its tool_use_id, or a hand-back message from its agentId. A line that repeats a
+    result of the agent already seen (the same text in either form, such as a notification written again as a
+    queued_command after the check) does not move the return; a notification without a result text counts only as the
+    agent's first return. An agent resumed with SendMessage returns again with its next new result."""
+    returns, seen, agents = {}, {}, {}
 
-    def came_back(tool_id, index):
-        if tool_id not in returned:
-            returns[tool_id] = index
-            returned.add(tool_id)
+    def came_back(tool_id, index, text):
+        key = " ".join((text or "").split())
+        known = seen.setdefault(tool_id, set())
+        if key in known or (not key and known):
+            return
+        known.add(key)
+        returns[tool_id] = index
 
     for index, entry in enumerate(transcript_entries(transcript_path)):
         if entry.get("isSidechain"):
@@ -1288,12 +1290,8 @@ def agent_returns(transcript_path):
         content = message.get("content") if isinstance(message, dict) else None
         if entry.get("type") == "assistant":
             for block in content if isinstance(content, list) else []:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
-                    continue
-                if block.get("name") in ("Agent", "Task"):
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task"):
                     returns.setdefault(block.get("id"), -1)
-                elif block.get("name") == "SendMessage":
-                    returned.discard(agents.get(str((block.get("input") or {}).get("to", ""))))
             continue
         texts = []
         if entry.get("type") == "attachment" and isinstance(entry.get("attachment"), dict):
@@ -1314,24 +1312,25 @@ def agent_returns(transcript_path):
                         b.get("text", "") for b in inner or [] if isinstance(b, dict))
                     for agent_id in AGENT_ID.findall(inner or ""):
                         agents[agent_id] = tool_id
-                    if LAUNCHED.match((inner or "").lstrip()):
-                        launched.add(tool_id)
-                    else:
-                        came_back(tool_id, index)
+                    if not LAUNCHED.match((inner or "").lstrip()):
+                        came_back(tool_id, index, AGENT_ID.split(inner or "")[0] or inner)
         for text in texts:
-            for tool_id in NOTIFIED.findall(text):
-                if tool_id in launched:
-                    came_back(tool_id, index)
-            for agent_id in HANDED_BACK.findall(text):
-                if agents.get(agent_id) in launched:
-                    came_back(agents[agent_id], index)
+            for notification in NOTIFICATION.findall(text) or ([text] if NOTIFIED.search(text) else []):
+                result = NOTIFIED_RESULT.search(notification)
+                for tool_id in NOTIFIED.findall(notification):
+                    if tool_id in returns:
+                        came_back(tool_id, index, result.group(1) if result else "")
+            for agent_id, said in HANDED_BACK.findall(text):
+                if agents.get(agent_id) in returns:
+                    came_back(agents[agent_id], index, said)
     return {k: v for k, v in returns.items() if v >= 0}
 
 
 def waiting(hook_input, transcript_path, terminal_written):
     """A Stop that waits for work in the background: no check, no text needed (V4). Claude Code reports that work in
-    `background_tasks`; once this run wrote the spec's Terminal state, only agents count, not a dev server or a monitor
-    left running (review 2026-11-06: a background shell turned the spec end into an endless wait). A notification
+    `background_tasks`; once this run wrote the spec's Terminal state (or an earlier run's unchanged DELIVERED passes
+    the gate, stop.py), only agents count, not a dev server or a monitor left running (review 2026-11-06: a background
+    shell turned the spec end into an endless wait). A notification
     queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
     transcript."""
     if "background_tasks" not in hook_input:

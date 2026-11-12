@@ -1499,7 +1499,7 @@ class Series(Project):
 
 
 class AcceptanceCommands(Project):
-    """V16: a delivered point's own command ran after the last implementer or fixer and did not fail. The Stop hook
+    """V16: a delivered point's own command ran after the last agent returned and did not fail. The Stop hook
     checked the project's check only; whether the point's criterion ran was the orchestrator's word."""
 
     def setUp(self):
@@ -1533,7 +1533,7 @@ class AcceptanceCommands(Project):
         return self.run_stop(transcript_path=str(path), background_tasks=[])
 
     def test_every_delivered_points_command_ran_after_the_last_change(self):
-        code, err, _ = self.deliver("implementer", "cargo test login", "reviewer")
+        code, err, _ = self.deliver("implementer", "reviewer", "cargo test login")
         self.assertEqual(code, 2)
         self.assertTrue(err.startswith("[docket gate] "), err)
         self.assertIn("point 2 (`cargo test | grep ok`) did not run in this session", err)
@@ -1543,7 +1543,7 @@ class AcceptanceCommands(Project):
         self.assertEqual(self.state()["mode"], "sealed")
         code, err, _ = self.deliver("cargo test login", "implementer", "cargo test | grep ok", "reviewer")
         self.assertEqual(code, 2)
-        self.assertIn("point 1 (`cargo test login`) last ran before the last implementer or fixer returned", err)
+        self.assertIn("point 1 (`cargo test login`) last ran before the last agent returned", err)
         code, err, _ = self.deliver("implementer", "reviewer", ("cargo test login", "failed"), "cargo test | grep ok")
         self.assertEqual(code, 2)
         self.assertIn("point 1 (`cargo test login`) failed in its last run", err)
@@ -1551,6 +1551,15 @@ class AcceptanceCommands(Project):
                                     "cd app && cargo test login", "cargo test | grep ok")
         self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered"), err)
         self.assertEqual(self.state()["mode"], "none")
+
+    def test_an_acceptance_command_before_the_reviewers_return_is_refused(self):
+        # Review of 0d3bfb9 (D): the gate counted only implementer and fixer; the Festlegung „Umfang des Prüf-Tors“
+        # says after the last agent return.
+        code, err, _ = self.deliver("implementer", "cargo test login", "cargo test | grep ok", "reviewer")
+        self.assertEqual(code, 2, err)
+        self.assertIn("point 1 (`cargo test login`) last ran before the last agent returned", err)
+        self.assertIn("point 2 (`cargo test | grep ok`) last ran before the last agent returned", err)
+        self.assertEqual(self.state()["mode"], "sealed")
 
     def test_prose_before_the_arrow_does_not_hold_delivered(self):
         # 1d.2: only what stands in backticks before the arrow is an acceptance command; prose the orchestrator checks.
@@ -1855,9 +1864,53 @@ class ReviewFindings(Project):
         resume = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": "SendMessage",
                                                                 "input": {"to": "a1", "message": "check once more"}}]}}
         code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.HAND_BACK, self.CHECK, resume,
-                                                                  self.HAND_BACK), background_tasks=[])
+                                                                  self.NEW_HAND_BACK), background_tasks=[])
         self.assertEqual(code, 2)
         self.assertIn("before the last agent returned", err)
+
+    NEW_HAND_BACK = {"type": "user", "message": {"content": 'Another Claude session sent a message:\n<agent-message '
+                                                            'from="a1">\n[Subagent hand-back] Review: one finding, fixed.'
+                                                            "\n</agent-message>"}}
+    RESUME = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": "SendMessage",
+                                                            "input": {"to": "a1", "message": "check once more"}}]}}
+
+    def test_a_resumed_foreground_agents_new_result_moves_its_return(self):
+        # Review of 0d3bfb9 (B): only a background agent got a new return after a SendMessage.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        spawn = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_1", "name": "Agent",
+                                                               "input": {}}]}},
+                 {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1",
+                                                           "content": "Review: no findings.\nagentId: a1"}]}}]
+        code, err, _ = self.run_stop(transcript_path=self.entries(*spawn, self.CHECK, self.RESUME, self.NEW_HAND_BACK,
+                                                                  self.said()), background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("before the last agent returned", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_stale_repeat_after_a_send_message_leaves_the_return_to_the_new_result(self):
+        # Review of 0d3bfb9 (C): the old notification, repeated after the SendMessage, took the agent's return.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), self.HAND_BACK, self.RESUME,
+                                                                  self.queued(), self.said(), self.CHECK,
+                                                                  self.NEW_HAND_BACK, self.said()), background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("before the last agent returned", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_delivered_block_from_a_halted_run_closes_beside_a_dev_server_once_the_gate_passes(self):
+        # Review of 0d3bfb9 (A): a background shell that never ends (a dev server for an e2e acceptance command) was a
+        # wait at every Stop while the old DELIVERED counted as not written; before the check ran it still waits.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.resume("[x]", "DELIVERED")
+        server = [{"id": "b1", "type": "shell", "status": "running", "command": "npm run dev"}]
+        self.assertEqual(self.run_stop(transcript_path=self.entries(self.said()), background_tasks=server), (0, "", ""))
+        self.assertEqual(self.state()["mode"], "sealed")
+        code, err, _ = self.run_stop(transcript_path=self.entries(self.CHECK, self.said()), background_tasks=server)
+        self.assertEqual(code, 2, err)
+        self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered"), err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
 
     def test_the_lock_is_exclusive_and_a_live_holder_keeps_it(self):
         self.set_state(mode="none")

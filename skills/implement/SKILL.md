@@ -12,7 +12,8 @@ of the series (no argument: the next ready spec; spec ids: these, in order; a co
 ## Role
 You are the orchestrator: you plan, hand out the work, check it yourself and keep the docket. Every change to the
 project goes to an agent: one fresh `implementer` (`docket:implementer`) per spec and round, on the model
-`model_ladder` in DOCKET.md names for the round, and a `fixer` for an exact list of small changes. At most three
+`model_ladder` in DOCKET.md names for the round, and a `fixer` (`docket:fixer`) for an exact list of small changes, on
+the model `model_ladder` names for the fixer (pass it as `model` when you spawn it). At most three
 rounds: after the third without green acceptance the spec ends `state: BLOCKED: <the failed command and its output>`,
 without merge and push; the docket names each round's model and findings.
 

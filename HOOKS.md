@@ -67,12 +67,14 @@ next tool call clears `refused`. Without the run mark it writes no state.
 ## Stop
 
 No matcher; acts only in a run. A Stop while agents run, or a background shell before this run wrote its Terminal
-state, is a wait and passes; its time stays in the state, so the run stays live for other sessions. Then the docket
-of the spec at work:
+state (an earlier run's unchanged DELIVERED counts once it passes the gate), is a wait and passes; its time stays in
+the state, so the run stays live for other sessions. Then the docket of the spec at work:
 
 - `state: DELIVERED` passes the gate: no point `[ ]`, and every `check` command of DOCKET.md and the acceptance
   command of every `[x]` point (the part before the arrow in backticks) ran after the last agent returned and did
-  not fail, read from the transcript; nothing is run. A gap is refused once, `[docket gate]`, with the facts.
+  not fail, read from the transcript; nothing is run. An agent returns at the last line where a new result of it
+  (tool result, notification, hand-back) reached the model; a repeat of a result already seen does not count. A gap
+  is refused once, `[docket gate]`, with the facts.
 - `state: BLOCKED: <reason>`, and any other terminal state of a 0.5 docket, closes the spec unchecked.
 - No Terminal state: the turn goes on once with `[docket state]` (the spec, k of m points open). A block the docket
   held when the run began counts only when it says DELIVERED or the run changed its `state:` line in place.
