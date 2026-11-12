@@ -5,7 +5,7 @@ In a run:
 - A Stop while agents run (background_tasks, or an agent whose notification has not reached the model) is a wait and
   passes; its time stays in the state (`waiting`), so the run stays live for other sessions (session_live). Until
   this run wrote its Terminal state, a background shell is a wait too; an unchanged DELIVERED of an earlier run counts
-  as written, except at the Stop right after the gate refused it, which waits for a background shell.
+  as written, also at the Stop right after the gate refused it, which halts.
 - The spec's docket has a Terminal state (the last `state:` block of its `## Terminal state` section; an unchanged
   BLOCKED or DISSENT block an earlier run left does not count, a DELIVERED and a block whose `state:` line changed in
   place do). BLOCKED, and DISSENT from a docket of 0.5, close the spec unchecked. DELIVERED passes
@@ -54,12 +54,10 @@ def run_stop(paths, session_id, state, hook_input):
     # stop_hook_active stays true for the rest of a turn any Stop hook once blocked; only this hook's own word makes
     # the next Stop a second pass.
     second = bool(hook_input.get("stop_hook_active")) and bool(state.get("refused"))
-    # An earlier run's unchanged DELIVERED counts as written, so a background shell (a dev server) is no wait and a
-    # gap of the gate reaches the model as `[docket gate]`. Only the Stop right after that refusal waits for a
-    # background shell instead of halting: the shell may still run the work that closes the gap, and its end starts
-    # the next turn, whose Stop reads the gate again.
-    written = bool(terminal["kind"]) and not (terminal.get("earlier") and problems and second)
-    if waiting(hook_input, transcript, written):
+    # An earlier run's unchanged DELIVERED counts as written, so a background shell (a dev server) is no wait: a gap
+    # of the gate reaches the model as `[docket gate]`, and the Stop right after that refusal halts (Festlegung
+    # „Zweiter Stop nach dem Prüf-Tor“).
+    if waiting(hook_input, transcript, bool(terminal["kind"])):
         state["waiting"] = time.time()
         save_state(paths, session_id, state)
         return 0

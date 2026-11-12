@@ -864,19 +864,11 @@ def strip_harness_blocks(prompt):
 
 
 def transcript_blocks(transcript_path):
-    """(index, role, block) for every content block of the main line of a transcript, in order."""
-    try:
-        with open(transcript_path, encoding="utf-8", errors="ignore") as handle:
-            lines = handle.readlines()
-    except (OSError, TypeError):
-        return []
+    """(index, role, block) for every content block of the main line of a transcript, in order; the index is the
+    file line of transcript_entries."""
     blocks = []
-    for index, line in enumerate(lines):
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(entry, dict) or entry.get("type") not in ("assistant", "user") or entry.get("isSidechain"):
+    for index, entry in enumerate(transcript_entries(transcript_path)):
+        if entry.get("type") not in ("assistant", "user") or entry.get("isSidechain"):
             continue
         message = entry.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -939,6 +931,10 @@ TAIL_BYTES = 262144
 
 
 def transcript_entries(transcript_path, tail=False):
+    """One dict per line of the file, split at `\\n` only: a line that does not parse is an empty dict, so an index is
+    the line's number in every function that compares indices (recheck of 64bd98a, R3: str.splitlines also split at
+    an unescaped U+2028 inside a JSON string and dropped the line, every later return looked earlier than the check
+    the gate compared it with)."""
     try:
         with open(transcript_path, "rb") as handle:
             if tail:
@@ -947,14 +943,16 @@ def transcript_entries(transcript_path, tail=False):
             raw = handle.read().decode("utf-8", errors="ignore")
     except (OSError, TypeError, ValueError):
         return []
+    lines = raw.split("\n")
+    if lines and not lines[-1].strip():
+        lines.pop()  # what follows the last line's end
     entries = []
-    for line in raw.splitlines():
+    for line in lines:
         try:
             entry = json.loads(line)
         except ValueError:
-            continue  # also the first, cut line of a tail
-        if isinstance(entry, dict):
-            entries.append(entry)
+            entry = {}  # also the first, cut line of a tail
+        entries.append(entry if isinstance(entry, dict) else {})
     return entries
 
 
@@ -1117,6 +1115,26 @@ def failed_calls(entries):
             if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")}
 
 
+# A PreToolUse hook's refusal as Claude Code writes it into the tool result: `PreToolUse:Agent hook error: [<hook
+# command>]: <message>`, with is_error. Only such a call never ran; an interrupted one (`[Request interrupted by user
+# for tool use]`) or one that failed at an API error did, and may have changed files (recheck of 64bd98a, R2).
+HOOK_REFUSED = re.compile(r"\s*PreToolUse:\S+ hook error:")
+
+
+def result_text(block):
+    inner = block.get("content")
+    return inner if isinstance(inner, str) else " ".join(
+        b.get("text", "") for b in inner or [] if isinstance(b, dict))
+
+
+def refused_calls(entries):
+    """The tool_use_ids of calls a hook refused before they ran."""
+    return {block.get("tool_use_id") for entry in entries if entry.get("type") == "user"
+            for block in ((entry.get("message") or {}).get("content") or [])
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error")
+            and HOOK_REFUSED.match(result_text(block))}
+
+
 def tool_calls(entries, names):
     """(entry index, block) for the main line's calls of the named tools, in order."""
     calls = []
@@ -1132,12 +1150,12 @@ def tool_calls(entries, names):
 
 def agent_runs(transcript_path, since=""):
     """The main line's agents since the sealing, in order: (kind, launch index, return index, model). A spawn a hook
-    refused or that failed is none; an agent that has not returned yet carries STILL_RUNNING."""
+    refused is none; an interrupted or failed one ran. An agent that has not returned yet carries STILL_RUNNING."""
     entries = transcript_entries(transcript_path)
-    returns, failed = agent_returns(transcript_path), failed_calls(entries)
+    returns, refused = agent_returns(transcript_path), refused_calls(entries)
     runs = []
     for index, block, stamp in tool_calls(entries, ("Agent", "Task")):
-        if block.get("id") in failed or (since and stamp[:19] < since[:19]):
+        if block.get("id") in refused or (since and stamp[:19] < since[:19]):
             continue
         given = block.get("input") or {}
         kind = str(given.get("subagent_type") or "general").split(":")[-1].lower()
@@ -1269,8 +1287,9 @@ NOTIFIED_RESULT = re.compile(r"<result>(.*?)(?:</result>|\Z)", re.DOTALL)
 def agent_returns(transcript_path):
     """{tool_use_id: line index of its return} for the main line's agents: the return of the agent's last stop, which
     is the stop's first delivery or, when it comes later, its hand-back. A result reaches the model in up to three
-    forms: the tool result of a foreground agent (a background one's only says it was launched; an error result is a
-    spawn a hook refused or that failed, no agent), a hand-back message from its agentId, and a notification naming
+    forms: the tool result of a foreground agent (a background one's only says it was launched; a hook's refusal is
+    a spawn that never ran, no agent, while an agent interrupted or failed at an API error ran and returns with its
+    error result), a hand-back message from its agentId, and a notification naming
     its tool_use_id. One stop delivers its result at most once in each form; the hand-back carries the report while
     the other two may only point to it (wrong-fact-2 2026-11-12: the hand-back, the check, then the notification as a
     queued_command whose result only points to the hand-back). A second delivery of a form the stop already delivered
@@ -1322,12 +1341,11 @@ def agent_returns(transcript_path):
                     continue
                 if block.get("type") == "text":
                     texts.append(block.get("text", ""))
-                elif (block.get("type") == "tool_result" and block.get("tool_use_id") in returns
-                      and not block.get("is_error")):  # a spawn a hook refused or that failed is no agent
+                elif block.get("type") == "tool_result" and block.get("tool_use_id") in returns:
                     tool_id = block.get("tool_use_id")
-                    inner = block.get("content")
-                    inner = inner if isinstance(inner, str) else " ".join(
-                        b.get("text", "") for b in inner or [] if isinstance(b, dict))
+                    inner = result_text(block)
+                    if block.get("is_error") and HOOK_REFUSED.match(inner):
+                        continue  # a spawn a hook refused never ran
                     for agent_id in AGENT_ID.findall(inner or ""):
                         agents[agent_id] = tool_id
                     if not LAUNCHED.match((inner or "").lstrip()):
@@ -1347,7 +1365,7 @@ def agent_returns(transcript_path):
 def waiting(hook_input, transcript_path, terminal_written):
     """A Stop that waits for work in the background: no check, no text needed (V4). Claude Code reports that work in
     `background_tasks`; once this run wrote the spec's Terminal state (or an earlier run's unchanged DELIVERED stands
-    there, outside the Stop right after the gate refused it, stop.py), only agents count, not a dev server or a
+    there, with or without a gap of the gate, stop.py), only agents count, not a dev server or a
     monitor left running (review 2026-11-06: a background shell turned the spec end into an endless wait). A
     notification queued but not yet seen by the model also waits. A client without `background_tasks` falls back to the
     transcript."""

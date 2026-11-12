@@ -1784,20 +1784,20 @@ class ReviewFindings(Project):
         self.assertEqual((self.state()["mode"], self.state().get("outcomes")), ("sealed", {}))
         self.assertIn("state: in-progress", self.spec.read_text("utf-8"))
 
-    def test_a_background_shell_holds_the_stop_after_the_gate_refused_a_delivered_block_from_a_halted_run(self):
-        # Review of b0cb330 (P2): a running build got the gate and the second Stop halted. Since the recheck of
-        # 5c9abe1 (F2) the gap reaches the model first; the Stop right after it waits for the build instead of halting.
+    def test_the_stop_after_the_gate_refused_a_delivered_block_from_a_halted_run_halts_with_a_background_shell(self):
+        # Recheck of 64bd98a (R1): the second Stop waited for a dev server, without `stop-forced` and without a line
+        # to the user, and the wait kept the run live for three hours (Festlegung „Zweiter Stop nach dem Prüf-Tor“).
         self.resume("[ ]", "DELIVERED")
-        shell = [{"id": "b1", "type": "shell", "status": "running", "command": "cargo build"}]
+        shell = [{"id": "b1", "type": "shell", "status": "running", "command": "npm run dev"}]
         code, err, _ = self.run_stop(background_tasks=shell)
         self.assertEqual(code, 2, err)
         self.assertTrue(err.startswith("[docket gate] The docket of Login (s-0123abcd) says DELIVERED"), err)
-        self.assertEqual(self.run_stop(active=True, background_tasks=shell), (0, "", ""))
-        self.assertEqual(self.state()["mode"], "sealed")
-        self.assertNotIn("stop-forced", self.log())
-        code, err, _ = self.run_stop(background_tasks=[])
-        self.assertEqual(code, 2, err)
-        self.assertTrue(err.startswith("[docket gate] The docket of Login (s-0123abcd) says DELIVERED"), err)
+        code, err, out = self.run_stop(active=True, background_tasks=shell)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("systemMessage", json.loads(out))
+        self.assertIn("stop-forced", self.log())
+        self.assertTrue(self.state()["halted"])
+        self.assertNotIn("waiting", self.state())
 
     def test_resuming_the_spec_at_work_keeps_the_series(self):
         (self.work / "specs" / "core" / "s-aaaa1111-logout.md").write_text(
@@ -1969,6 +1969,39 @@ class ReviewFindings(Project):
         self.assertNotIn("before the last agent returned", err)
         self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
 
+    def test_an_interrupted_foreground_agent_returns_and_the_check_before_it_is_refused(self):
+        # Recheck of 64bd98a (R2), real format (bergbau-game 7c548a89): a foreground agent the user interrupted has an
+        # error result; it ran and may have changed files, so the check before it no longer holds.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        interrupted = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_3", "name": "Agent",
+                                                                     "input": {"subagent_type": "docket:implementer"}}]}},
+                       {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_3",
+                                                                 "is_error": True, "content":
+                                                                 "[Request interrupted by user for tool use]"}]}}]
+        path = self.entries(self.CHECK, *interrupted, self.said())
+        self.assertEqual(self.returns(path), {"toolu_3": 2})
+        code, err, _ = self.run_stop(transcript_path=path, background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("before the last agent returned", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
+    def test_a_line_with_an_unescaped_line_separator_does_not_shift_the_returns(self):
+        # Recheck of 64bd98a (R3): str.splitlines split a line at a raw U+2028 and dropped it, so the agent's return
+        # counted one line earlier than the check in transcript_blocks and the check before it passed.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        note = {"type": "user", "message": {"content": "<task-notification>\n<tool-use-id>toolu_1</tool-use-id>\n"
+                                                       "<result>done</result>\n</task-notification>"}}
+        lines = [json.dumps(e) for e in self.spawn()] + [json.dumps(self.said("a b"), ensure_ascii=False)]
+        lines += [json.dumps(e) for e in (self.CHECK, note, self.said())]
+        self.path.write_text("\n".join(lines) + "\n", "utf-8")
+        self.assertEqual(self.returns(str(self.path)), {"toolu_1": 4})
+        code, err, _ = self.run_stop(transcript_path=str(self.path), background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertIn("before the last agent returned", err)
+        self.assertEqual(self.state()["mode"], "sealed")
+
     def test_a_dev_server_lets_the_gap_of_a_delivered_block_from_a_halted_run_reach_the_model(self):
         # Review of 0d3bfb9 (A): a background shell that never ends (a dev server for an e2e acceptance command) was a
         # wait at every Stop while the old DELIVERED counted as not written. Recheck of 5c9abe1 (F2): with the check
@@ -2008,19 +2041,22 @@ class ExperimentTwelve(Project):
         call = lambda i: {"type": "assistant", "timestamp": now, "message": {"content": [
             {"type": "tool_use", "id": f"f{i}", "name": "Agent", "input": {"subagent_type": "docket:fixer"}}]}}
         refused = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "f1", "is_error": True,
-                                                            "content": "[docket] The docket is yours"}]}}
+                                                            "content": "PreToolUse:Agent hook error: [command hook]: "
+                                                                       "[docket] The docket is yours"}]}}
         path = self.tmp / "t.jsonl"
         back = lambda tool_id: {"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": tool_id, "content": "done"}]}}
         review = {"type": "assistant", "timestamp": now, "message": {"content": [
             {"type": "tool_use", "id": "r1", "name": "Agent", "input": {"subagent_type": "docket:reviewer", "model": "opus"}}]}}
-        path.write_text("\n".join(json.dumps(e) for e in (call(1), refused, call(2), back("f2"), review, back("r1")))
-                        + "\n", "utf-8")
+        interrupted = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "f3", "is_error": True,
+                                                                "content": "[Request interrupted by user for tool use]"}]}}
+        path.write_text("\n".join(json.dumps(e) for e in (call(1), refused, call(2), back("f2"), call(3), interrupted,
+                                                         review, back("r1"))) + "\n", "utf-8")
         self.docket.write_text("| 1 | x | `x` | [x] |\n", "utf-8")
         self.end_spec()
         self.run_stop(transcript_path=str(path), background_tasks=[])
         metrics = json.loads((self.work / "metrics" / f"{SPEC}.json").read_text("utf-8"))
-        self.assertEqual(metrics["agents"], {"fixer": 1, "reviewer": 1})
+        self.assertEqual(metrics["agents"], {"fixer": 2, "reviewer": 1})  # an interrupted agent ran (R2)
         self.assertEqual(metrics["reviewer_models"], ["opus"])
 
 
