@@ -1874,6 +1874,32 @@ class ReviewFindings(Project):
     RESUME = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": "SendMessage",
                                                             "input": {"to": "a1", "message": "check once more"}}]}}
 
+    def test_the_notification_after_the_hand_back_of_the_same_stop_does_not_move_the_return(self):
+        # wrong-fact-2 2026-11-12, real format: the reviewer's report came as a hand-back, the check ran, then the
+        # notification as a queued_command whose result only points to the hand-back; the gate refused the check.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
+        self.end_spec()
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        spawn = [{"type": "assistant", "timestamp": now, "message": {"content": [
+                     {"type": "tool_use", "id": "toolu_01S1V", "name": "Agent", "input": {"run_in_background": True}}]}},
+                 {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_01S1V", "content": [
+                     {"type": "text", "text": "Async agent launched successfully.\nagentId: aca2cb2e (internal ID)"}]}]}}]
+        hand_back = {"type": "user", "isMeta": True, "message": {"role": "user", "content":
+                     'Another Claude session sent a message:\n<agent-message from="aca2cb2e">\n[Subagent hand-back] '
+                     "The report follows:\n  no findings\n  Unverified: none\n</agent-message>\n\nThat \"other Claude "
+                     "session\" is an agent working inside this same session."}}
+        notification = {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "task-notification",
+                        "prompt": "<task-notification>\n<task-id>aca2cb2e</task-id>\n<tool-use-id>toolu_01S1V</tool-use-id>"
+                                  "\n<status>completed</status>\n<summary>Agent \"Review spec angle\" finished</summary>\n"
+                                  "<result>This agent's report was delivered to you as a message from \"aca2cb2e\" (its "
+                                  "SubagentHandback call). Read it there; it is not repeated here.\n</result>\n"
+                                  "</task-notification>"}}
+        code, err, _ = self.run_stop(transcript_path=self.entries(*spawn, self.said(), hand_back, self.CHECK,
+                                                                  notification, self.said()), background_tasks=[])
+        self.assertEqual(code, 2, err)
+        self.assertNotIn("before the last agent returned", err)
+        self.assertEqual((self.state()["mode"], self.state()["outcomes"]), ("none", {SPEC: "delivered"}))
+
     def test_a_resumed_foreground_agents_new_result_moves_its_return(self):
         # Review of 0d3bfb9 (B): only a background agent got a new return after a SendMessage.
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")

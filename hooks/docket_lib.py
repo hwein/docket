@@ -1268,19 +1268,31 @@ NOTIFIED_RESULT = re.compile(r"<result>(.*?)(?:</result>|\Z)", re.DOTALL)
 
 def agent_returns(transcript_path):
     """{tool_use_id: line index of its return} for the main line's agents: the last line at which a new result of the
-    agent reached the model. A result is the tool result of a foreground agent (a background one's only says it was
-    launched), a notification naming its tool_use_id, or a hand-back message from its agentId. A line that repeats a
-    result of the agent already seen (the same text in either form, such as a notification written again as a
-    queued_command after the check) does not move the return; a notification without a result text counts only as the
-    agent's first return. An agent resumed with SendMessage returns again with its next new result."""
-    returns, seen, agents = {}, {}, {}
+    agent reached the model. A result reaches it in up to three forms: the tool result of a foreground agent (a
+    background one's only says it was launched), a hand-back message from its agentId, and a notification naming its
+    tool_use_id. One stop of the agent delivers its result at most once in each form; the return is the stop's first
+    delivery or, when it comes later, its hand-back, the form that carries the report while the other two may only
+    point to it. A tool result or notification after a delivery of the same stop is a second delivery of that result
+    (wrong-fact-2 2026-11-12: the hand-back, the check, then the notification as a queued_command whose result only
+    points to the hand-back). A form the agent already delivered starts its next stop, as does a SendMessage to the
+    agent. A line that
+    repeats a text of the agent already seen (in any form, such as a notification written again as a queued_command)
+    does not move the return, nor does a notification without a result text once the agent returned."""
+    returns, seen, stops, agents = {}, {}, {}, {}
 
-    def came_back(tool_id, index, text):
+    def came_back(tool_id, index, text, form):
         key = " ".join((text or "").split())
         known = seen.setdefault(tool_id, set())
         if key in known or (not key and known):
             return
         known.add(key)
+        stop = stops.setdefault(tool_id, set())
+        if form in stop or not stop:
+            stop.clear()
+        elif form != "hand-back":
+            stop.add(form)
+            return
+        stop.add(form)
         returns[tool_id] = index
 
     for index, entry in enumerate(transcript_entries(transcript_path)):
@@ -1290,8 +1302,12 @@ def agent_returns(transcript_path):
         content = message.get("content") if isinstance(message, dict) else None
         if entry.get("type") == "assistant":
             for block in content if isinstance(content, list) else []:
-                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task"):
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                if block.get("name") in ("Agent", "Task"):
                     returns.setdefault(block.get("id"), -1)
+                elif block.get("name") == "SendMessage":
+                    stops.pop(agents.get(str((block.get("input") or {}).get("to", ""))), None)
             continue
         texts = []
         if entry.get("type") == "attachment" and isinstance(entry.get("attachment"), dict):
@@ -1313,16 +1329,16 @@ def agent_returns(transcript_path):
                     for agent_id in AGENT_ID.findall(inner or ""):
                         agents[agent_id] = tool_id
                     if not LAUNCHED.match((inner or "").lstrip()):
-                        came_back(tool_id, index, AGENT_ID.split(inner or "")[0] or inner)
+                        came_back(tool_id, index, AGENT_ID.split(inner or "")[0] or inner, "result")
         for text in texts:
             for notification in NOTIFICATION.findall(text) or ([text] if NOTIFIED.search(text) else []):
                 result = NOTIFIED_RESULT.search(notification)
                 for tool_id in NOTIFIED.findall(notification):
                     if tool_id in returns:
-                        came_back(tool_id, index, result.group(1) if result else "")
+                        came_back(tool_id, index, result.group(1) if result else "", "notification")
             for agent_id, said in HANDED_BACK.findall(text):
                 if agents.get(agent_id) in returns:
-                    came_back(agents[agent_id], index, said)
+                    came_back(agents[agent_id], index, said, "hand-back")
     return {k: v for k, v in returns.items() if v >= 0}
 
 
