@@ -159,9 +159,9 @@ def end_spec(paths, session_id, state, kind, transcript):
 
 
 def end_series(paths, session_id, state, last):
-    """The series is over, in order or early: the run mark goes, LOG `run-closed`, the records are committed where
-    DOCKET.md `commit_records` says so, and the turn goes on once with the outcome of every spec. The closing message
-    is the model's, from the template of the implement command."""
+    """The series is over, in order or early: the run mark goes, LOG `run-closed`, the records are committed and
+    pushed unless DOCKET.md says `commit_records: no`, and the turn goes on once with the outcome of every spec. The
+    closing message is the model's, from the template of the implement command."""
     outcomes = state.get("outcomes") or {}
     series = list(state.get("series") or []) or list(outcomes)
     skipped = state.get("skipped") or {}
@@ -169,7 +169,7 @@ def end_series(paths, session_id, state, last):
     state.update({"mode": "none", "spec": "", "queue": [], "refused": False})
     save_state(paths, session_id, state)
     log_event(paths, session_id, last, "run-closed")
-    commit_records(paths)
+    unpushed = commit_records(paths)
     unstarted = [spec_id for spec_id in series if spec_id not in outcomes]
     reasons = [unstarted_reason(paths, spec_id, skipped.get(spec_id), stopped, last) for spec_id in unstarted]
     text = say(paths, "series_end", d=sum(1 for kind in outcomes.values() if kind == "delivered"),
@@ -178,6 +178,8 @@ def end_series(paths, session_id, state, last):
     commands = records_commands(paths) if work_dir_dirty(paths) else None
     if commands:
         text += say(paths, "series_records", add=commands[0], commit=commands[1])
+    elif unpushed:
+        text += say(paths, "series_records_push", push=unpushed)
     return notice(marked(paths, "state", text))
 
 

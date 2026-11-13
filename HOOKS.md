@@ -72,7 +72,9 @@ run's unchanged DELIVERED counts as written; the Stop right after its gate refus
 
 - `state: DELIVERED` passes the gate: no point `[ ]`, and every `check` command of DOCKET.md and the acceptance
   command of every `[x]` point (the part before the arrow in backticks) ran after the last agent returned and did
-  not fail (in the background: by its notification, a gap until then), from the transcript; nothing is run. An agent
+  not fail (in the background: by its notification, a gap until then), from the transcript; nothing is run. A command
+counts where a shell call runs it (at the start of the call or of a line, after `;`, `&`, `|`, `(` or `{`), not as
+text in a string or a here-document; a refusal names the call it counted. An agent
   returns per stop: at the stop's first delivery (tool result, notification, hand-back), or at its later hand-back;
   each form counts once per stop, a text seen since the last SendMessage never; a second delivery of a form, or a
   SendMessage that reached it (its notification names the SendMessage), starts the next stop. A spawn that never
@@ -87,7 +89,9 @@ A closed spec: lock released, the spec's state `done` (delivered) or back to `re
 `delivered` or `blocked`. The series goes on with its next spec (`[docket state] Spec i of n is running …`): after
 DELIVERED; after BLOCKED when the spec left the project as it found it or its work is pushed; a spec whose
 predecessor is open is passed over (LOG `passed-over`). Otherwise, or after `stop_requested`, or after the last spec,
-the series ends: run mark `none`, LOG `run-closed`, `commit_records` where DOCKET.md sets it, and once a
+the series ends: run mark `none`, LOG `run-closed`, the records committed and that commit pushed where they lie
+inside another repository (not with `commit_records: no`; a push only where the branch has an upstream and nothing
+else waits on it), and once a
 `[docket state]` statement with the count of every outcome and why each unstarted spec did not start. The model
 then writes the closing message; the Stop after it passes.
 

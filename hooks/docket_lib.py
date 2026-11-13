@@ -188,6 +188,7 @@ SAY = {
         "gate_point_failed": "der Akzeptanzbefehl von Punkt {point} (`{command}`) scheiterte in seinem letzten Lauf",
         "gate_point_running": ("der letzte Lauf des Akzeptanzbefehls von Punkt {point} (`{command}`) läuft im "
                                "Hintergrund und hat noch kein Ergebnis"),
+        "gate_counted": " (gezählt: `{call}`)",
         "no_terminal": "Das Docket von {title} ({spec}) hat keinen Terminal state; {open} von {total} Punkten sind offen.",
         "no_terminal_old": ("Das Docket von {title} ({spec}) hat keinen Terminal state aus diesem Lauf: `state: {kind}` "
                             "stand dort schon beim Beginn des Laufs; {open} von {total} Punkten sind offen."),
@@ -196,6 +197,7 @@ SAY = {
                    "jede Nachricht von dir auch."),
         "series_end": "Die Reihe ist zu Ende: {d} geliefert, {b} blockiert, {k} nicht begonnen{rest}.",
         "series_records": " Die Protokolle sind nicht committet: `{add}`, dann `{commit}`.",
+        "series_records_push": " Die Protokolle sind committet, nicht gepusht: `{push}`.",
         "unstarted_waits": "{title} wartet auf {on}",
         "unstarted_ended": "der Lauf endete bei {on} vor {title}",
         "unstarted_stopped": "{title} nach /docket:stop",
@@ -268,6 +270,7 @@ SAY = {
         "gate_point_failed": "the acceptance command of point {point} (`{command}`) failed in its last run",
         "gate_point_running": ("the last run of the acceptance command of point {point} (`{command}`) runs in the "
                                "background and has no result yet"),
+        "gate_counted": " (counted: `{call}`)",
         "no_terminal": "The docket of {title} ({spec}) has no Terminal state; {open} of {total} points are open.",
         "no_terminal_old": ("The docket of {title} ({spec}) has no Terminal state from this run: `state: {kind}` stood "
                             "there when the run began; {open} of {total} points are open."),
@@ -276,6 +279,7 @@ SAY = {
                    "message from you."),
         "series_end": "The series is over: {d} delivered, {b} blocked, {k} not started{rest}.",
         "series_records": " The records are not committed: `{add}`, then `{commit}`.",
+        "series_records_push": " The records are committed, not pushed: `{push}`.",
         "unstarted_waits": "{title} waits for {on}",
         "unstarted_ended": "the run ended at {on} before {title}",
         "unstarted_stopped": "{title} after /docket:stop",
@@ -1270,14 +1274,31 @@ def gate_commands(paths, spec_id, body, transcript_path):
     wanted += [("gate_point", {"point": p, "command": c}) for p, c in point_commands(body, paths)]
     problems = []
     for key, fields in wanted:
-        runs = [(index, outcome) for index, text, outcome in shell if fields["command"] in text]
+        runs = [(index, outcome, text) for index, text, outcome in shell if runs_command(text, fields["command"])]
         if not runs:
             problems.append(say(paths, key + "_missing", **fields))
-        elif runs[-1][0] < last_return:
-            problems.append(say(paths, key + "_before", **fields))
-        elif runs[-1][1] != "ok":
-            problems.append(say(paths, key + "_" + runs[-1][1], **fields))
+            continue
+        index, outcome, text = runs[-1]
+        counted = say(paths, "gate_counted", call=" ".join(text.replace("`", "'").split())[:80])
+        if index < last_return:
+            problems.append(say(paths, key + "_before", **fields) + counted)
+        elif outcome != "ok":
+            problems.append(say(paths, key + "_" + outcome, **fields) + counted)
     return problems
+
+
+# A here-string of PowerShell and a here-document of a POSIX shell: text a call hands on, not commands it runs.
+HERE_TEXT = re.compile(r"@(['\"])[ \t]*\r?\n.*?\r?\n[ \t]*\1@|<<-?[ \t]*(['\"]?)(\w+)\2[^\n]*\n.*?\n[ \t]*\3\b", re.DOTALL)
+COMMAND_PLACE = r"(?:^|[\n;&|({])[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*"
+
+
+def runs_command(text, command):
+    """Whether a shell call runs the command: it stands where a command starts (the start of the call or of a line,
+    after `;`, `&`, `|`, `(` or `{`; variable assignments before it are fine), outside a here-string or
+    here-document. The same words as prose are no run: a call that wrote the docket carried `npm run check` and
+    `npm test` in an Evidence line, failed at a parser error and counted as the checks' failed last run, after a
+    green one (luradb-web-client 2026-11-12, lines 446 and 504)."""
+    return bool(re.search(COMMAND_PLACE + re.escape(command) + r"(?!\w)", HERE_TEXT.sub("\n", text)))
 
 
 def review_stats(body):
@@ -1647,23 +1668,50 @@ def records_commands(paths):
 
 
 def commit_records(paths):
-    """With `commit_records` set in DOCKET.md the hook commits the records itself at the end of a run, in the
-    repository they lie in and only their folder; it never pushes."""
-    if config_values(paths).get("commit_records", "").lower() not in ("yes", "true", "ja", "on"):
-        return
+    """At the end of a run the hook commits the records itself where they lie inside another repository, only their
+    folder, and pushes that commit: the user got two commands to type at the end of a run that had delivered and
+    pushed its code (luradb-web-client 2026-11-12, line 566). It pushes where the branch has an upstream and the
+    commit is the only one waiting (what a run left unpushed stays so), in the project's own repository only on a
+    branch `push_branch` allows. `commit_records: no` in DOCKET.md turns both off. Returns the push command where the
+    records are committed and a push the hook may make did not happen, else ""; a commit that failed leaves the work
+    dir dirty, and the statement names its two commands."""
+    config = config_values(paths)
+    if config.get("commit_records", "").lower() in ("no", "false", "nein", "off"):
+        return ""
     commands = records_commands(paths)
     if not commands or not work_dir_dirty(paths):
-        return
+        return ""
     folder = commands[0].rsplit(" ", 1)[-1]
     code, top = git_out(paths.work, "rev-parse", "--show-toplevel")
     if code != 0 or not top:
-        return
+        return ""
+    upstream = git_out(top, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    waiting_commits = git_out(top, "rev-list", "--count", "@{u}..HEAD")[1] if upstream[0] == 0 and upstream[1] else ""
     try:
         subprocess.run(["git", "-C", top, "add", "--", folder], capture_output=True, timeout=15)
         subprocess.run(["git", "-C", top, "commit", "-q", "-m", "docket: records", "--", folder],
                        capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
-        pass
+        return ""
+    if work_dir_dirty(paths) or not waiting_commits:
+        return ""  # not committed, or a branch without an upstream: nothing to push
+    push = commands[0].rsplit(" add ", 1)[0] + " push"
+    own = norm(git_out(paths.root, "rev-parse", "--show-toplevel")[1]).rstrip("/") == norm(top).rstrip("/")
+    if own:
+        branch, allowed = git_out(top, "rev-parse", "--abbrev-ref", "HEAD")[1], config.get("push_branch", "")
+        try:
+            if waiting_commits != "0" or (allowed and not re.fullmatch(allowed, branch)):
+                return ""  # the project's branch is the run's to push, by the project's rules
+        except re.error:
+            return ""
+    elif waiting_commits != "0":
+        return push
+    try:
+        pushed = subprocess.run(["git", "-C", top, "push", "-q"], capture_output=True, timeout=25,
+                                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"})
+    except (OSError, subprocess.SubprocessError):
+        return push
+    return "" if pushed.returncode == 0 else push
 
 
 # --- metrics (V6) ------------------------------------------------------------------
@@ -1682,6 +1730,9 @@ def write_metrics(paths, spec_id, transcript_path, kind):
             reviewers.append(model or "inherit")
     stats = review_stats(body)
     counts = point_counts(body) if body else {"x": 0, "~": 0, " ": 0}
+    # A deviation is a `[~]` box of a point or a `[~]` line of the Deviations section: three such lines beside
+    # thirteen delivered points counted as none (luradb-web-client 2026-11-12, metrics/s-83467ecf.json).
+    counts["~"] = max(counts["~"], len(re.findall(r"(?<!`)\[~\](?!`)", section_text(body or "", "Deviations"))))
     data = {"spec": spec_id, "title": spec_title(paths, spec_id), "outcome": kind, "sealed": sealed,
             "closed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "points": {"delivered": counts["x"], "deviations": counts["~"], "open": counts[" "]},

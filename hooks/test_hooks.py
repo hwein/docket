@@ -1566,6 +1566,43 @@ class AcceptanceCommands(Project):
         self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered"), err)
         self.assertEqual(self.state()["mode"], "none")
 
+    def test_a_command_named_in_prose_is_no_run(self):
+        # luradb-web-client 2026-11-12, lines 446 and 504: a PowerShell call that wrote the docket carried the check
+        # commands in an Evidence line and failed at a parser error; the gate took it for their failed last run.
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n"
+                                             "| check | `npm run check` `npm test` | |\n", "utf-8")
+        green = ("implementer", "reviewer", "npm run check; npm test", "cargo test login", "cargo test | grep ok")
+        prose = ('Set-Content docket.md "- check: `npm run check` (Exit 0), `npm test` (967 green), '
+                 'point 1: `cargo test login` → 3 passed"', "failed")
+        code, err, _ = self.deliver(*green, prose)
+        self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered"), err)
+        here = ("@'\nnpm test\ncargo test login\n'@ | Set-Content docket.md", "failed")
+        code, err, _ = self.deliver(*green, here, ("cat > docket.md <<'EOF'\nnpm run check\nEOF", "failed"),
+                                    ('git commit -m "npm test green"', "failed"))
+        self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered"), err)
+        code, err, _ = self.deliver("implementer", "reviewer", prose, "cargo test login", "cargo test | grep ok")
+        self.assertEqual(code, 2)
+        self.assertIn("the check `npm test` did not run in this session", err)
+
+    def test_the_gate_names_the_call_it_counted(self):
+        code, err, _ = self.deliver("implementer", "reviewer", ("cd app; CI=1 cargo test login  2>&1", "failed"),
+                                    "cargo test | grep ok")
+        self.assertEqual(code, 2)
+        self.assertIn("point 1 (`cargo test login`) failed in its last run (counted: `cd app; CI=1 cargo test login "
+                      "2>&1`)", err)
+
+    def test_the_metrics_count_the_lines_of_the_deviations_section(self):
+        # luradb-web-client 2026-11-12: three `[~]` lines under Deviations, every point `[x]`, metrics said 0.
+        self.docket.write_text("## Points\n\n| # | Point | Evidence line expected | State |\n|---|---|---|---|\n"
+                               "| 1 | login | `cargo test login → 3 passed` | [x] |\n\n"
+                               "## Deviations\n\n`[~]` lines: what differs.\n\n- [~] point 1: one commit for all\n"
+                               "- [~] the reference file lies in another repository\n- [~] user: expose the header\n",
+                               "utf-8")
+        code, err, _ = self.deliver("implementer", "reviewer", "cargo test login")
+        self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered"), err)
+        metrics = json.loads((self.work / "metrics" / f"{SPEC}.json").read_text("utf-8"))
+        self.assertEqual(metrics["points"], {"delivered": 1, "deviations": 3, "open": 0})
+
     def test_an_acceptance_command_before_the_reviewers_return_is_refused(self):
         # Review of 0d3bfb9 (D): the gate counted only implementer and fixer; the Festlegung „Umfang des Prüf-Tors“
         # says after the last agent return.
@@ -2623,7 +2660,18 @@ class RecordsInAnotherRepository(Project):
         self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
         self.docket.write_text("# Docket\n| 1 | login | `cargo test` | [x] |\n", "utf-8")
 
-    def test_uncommitted_records_are_named_with_their_commands_at_the_end_of_the_series(self):
+    def with_upstream(self):
+        remote = self.tmp / "concept-remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], capture_output=True, check=True)
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-q", "-u", "origin", "HEAD")
+        return lambda: subprocess.run(["git", "-C", str(remote), "log", "--oneline", "--all"], capture_output=True,
+                                      check=True, text=True).stdout
+
+    def test_uncommitted_records_are_named_with_their_commands_where_the_project_turns_the_commit_off(self):
+        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n"
+                                             "| commit_records | `no` | |\n", "utf-8")
+        self.git("commit", "-q", "-m", "config", "--", "docket/DOCKET.md")
         self.end_spec()
         code, err, _ = self.run_stop()
         self.assertEqual(code, 2)
@@ -2632,9 +2680,38 @@ class RecordsInAnotherRepository(Project):
                                       'commit -m "docket: records" -- docket`.')
         self.assertNotIn("docket: records", self.git("log", "--oneline"))
 
-    def test_the_hook_commits_them_itself_where_the_project_says_so(self):
-        (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n"
-                                             "| commit_records | `yes` | |\n", "utf-8")
+    def test_the_hook_pushes_its_commit_where_the_branch_has_an_upstream(self):
+        # luradb-web-client 2026-11-12, line 566: the run had pushed its code, the closing message ended with two
+        # commands for the records.
+        remote_log = self.with_upstream()
+        self.end_spec()
+        code, err, _ = self.run_stop()
+        self.assertEqual(err.strip(), "[docket state] The series is over: 1 delivered, 0 blocked, 0 not started.")
+        self.assertEqual(remote_log().count("docket: records"), 1)
+        self.assertEqual(self.git("status", "--porcelain").strip(), "")
+
+    def test_it_pushes_nothing_beside_its_own_commit(self):
+        remote_log = self.with_upstream()
+        (self.work.parent / "notes.md").write_text("draft\n", "utf-8")
+        self.git("add", "notes.md")
+        self.git("commit", "-q", "-m", "a commit the user has not pushed")
+        self.end_spec()
+        code, err, _ = self.run_stop()
+        self.assertEqual(err.strip(), "[docket state] The series is over: 1 delivered, 0 blocked, 0 not started. The "
+                                      "records are committed, not pushed: `git -C concept push`.")
+        self.assertEqual(self.git("log", "--oneline").count("docket: records"), 1)
+        self.assertNotIn("docket: records", remote_log())
+        self.assertNotIn("not pushed", remote_log())
+
+    def test_a_push_that_fails_is_named_with_its_command(self):
+        self.with_upstream()
+        self.git("remote", "set-url", "origin", str(self.tmp / "gone.git"))
+        self.end_spec()
+        code, err, _ = self.run_stop()
+        self.assertEqual(err.strip(), "[docket state] The series is over: 1 delivered, 0 blocked, 0 not started. The "
+                                      "records are committed, not pushed: `git -C concept push`.")
+
+    def test_the_hook_commits_them_itself(self):
         self.end_spec()
         code, err, _ = self.run_stop()
         self.assertEqual(code, 2)

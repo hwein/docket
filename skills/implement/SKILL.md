@@ -61,9 +61,12 @@ the user). Each such answer begins with `[docket rule: <key>]`.
 | Closing message | you, from the template | after docket's statement at the end of the series | the chat |
 
 ## Text in the run
-After every Terminal state the turn ends without text. You write the closing message after docket's statement at the
-end of the series, from the dockets. Otherwise you write only the answer to a message of the user; a status line
-naming the step you are at is fine.
+After every Terminal state the turn ends with one line, the docket's `state:` line, and nothing else: docket closes
+the spec at the end of that turn and answers it. A turn without any text does not reach docket, the client asks for a
+visible answer instead. You write the closing message once, after docket's statement at the end of the series, from
+the dockets; until that statement there is no summary of the run, also where the client asks for a closing word or a
+recap: the one line is the answer. Otherwise you write only the answer to a message of the user; a status line naming
+the step you are at is fine.
 
 ## 0. Start or resume
 The line `No run marked: <reason>` in the context: the turn ends with that reason to the user. Otherwise read
@@ -89,7 +92,8 @@ Before the first code, write the docket from `${CLAUDE_PLUGIN_ROOT}/templates/de
 run and that ends with exit 0 on success, then the arrow and the expectation: `` `<command>` → <expected> ``. Where
 the spec points to a script or another section, write the command out; a criterion "no hits" gets a command that then
 ends with exit 0 (`! grep -q …`). A criterion in prose you check yourself and write the evidence. The acceptance line
-stays as registered; a point that cannot meet it becomes `[~]` with its deviation line.
+stays as registered; a point that cannot meet it becomes `[~]` with its deviation line. The docket is written with
+Write and Edit, never through the shell: docket counts the points at these writes.
 
 Then set the start model, the first Evidence line (`start: <model>, <reason>`): the ladder's model for round 1, or
 its model for complex work (a ladder without one: its round 2 model) when the spec falls under a theme the ladder
@@ -116,18 +120,21 @@ spec path, the base (`git diff <base>...HEAD`), for `spec` the points that ended
 is a line in the docket's Review section, `<angle> | <finding> | <source> | <severity> | <decision>`, an angle without
 findings `<angle> | no findings`. Findings of severity `bug`, `unmet` and `rule` are fixed (an implementer or a fixer,
 briefed with the line verbatim) or rejected with the source that refutes them; every other finding stays in the docket
-and goes into the closing message. After a fix, one reviewer of angle `recheck` reads the fixed findings and the range
+and is counted in the closing message. After a fix, one reviewer of angle `recheck` reads the fixed findings and the range
 since; one recheck per round, at most three rounds. Then every acceptance command and the `check` run once more: they
 count after the last agent.
 
 ## 5. Close the spec
 1. Reference update: per file the spec names, `updated <file>` or `<file>: not needed, <reason>`.
-2. Merge and push as DOCKET.md and CONTRIBUTING.md say. With `ci` set, read the CI state of the pushed hash (Evidence:
+2. Merge and push as DOCKET.md and CONTRIBUTING.md say. A reference file the run changed in another repository (a
+   concept repository beside the code) is committed and pushed there in the same step, that file alone; where
+   DOCKET.md rules it out, it becomes a `user:` line with the command. docket commits and pushes its own records
+   itself at the end of the series. With `ci` set, read the CI state of the pushed hash (Evidence:
    `CI: <state> <hash>`). A red run not shown locally is started again once; a shown fault is repaired in this run as
    a commit of its own, with a `recheck`; what stays red is a `[~]` line with its cause.
 3. Terminal state, in the user's language: `state: DELIVERED` or `state: BLOCKED: <reason>`, `result: <what works
    now>`, a `user:` line per step only the user can take, a `decision:` line per proposal for later. Then the turn
-   ends without text. docket closes the spec (state, lock, metrics, LOG) and answers with the next spec of the series
+   ends with the `state:` line as its only text. docket closes the spec (state, lock, metrics, LOG) and answers with the next spec of the series
    (`[docket state] Spec i of n is running …`: start it at step 0) or with the end of the series.
 
 ## 6. Series
@@ -140,7 +147,7 @@ After docket's statement at the end of the series (`[docket state] The series is
 the run from `${CLAUDE_PLUGIN_ROOT}/templates/closing-message.md`, from the dockets. When specs did not start or one
 ended `stopped by user`, the message gives `/docket:implement <ids>`, the command that takes them up: those specs and
 each blocked spec one of them waits for, in series order (docket starts no spec before an undone predecessor). Where
-the statement names two commands for the records, they stand at its end.
+the statement names a command or two for the records, they stand at its end.
 
 ## Briefings
 Implementer, in the language of the spec:

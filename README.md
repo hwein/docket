@@ -55,8 +55,8 @@ titles instead of ids, one message when the agents are back. It is your choice (
    run once before it is `ready`.
 4. `/docket:implement <id>`: the run. A docket with one acceptance line per point before the first code,
    implementer agents, checks the orchestrator runs itself, a review, push. Nothing asks you until it is over.
-5. One closing message: what is delivered, the commands checked with their results, what deviated, what is yours
-   to do. Deviations go back to step 2.
+5. One closing message: what is delivered, what was checked, what deviated, what is yours to do. Deviations go
+   back to step 2.
 
 ## Commands
 
@@ -76,7 +76,9 @@ titles instead of ids, one message when the agents are back. It is your choice (
   and passed.
 - docket enforces five things: `forbidden_paths`, `push_branch`, `commit_regex`, `forbidden_commands` in a run,
   and the gate before delivered. Details: [HOOKS.md](HOOKS.md).
-- Every command the closing message lists as checked was run by the orchestrator, with the result it saw.
+- Every command the closing message counts as checked was run by the orchestrator, with the result it saw.
+- At the end of a run docket commits and pushes its own records where they lie in a repository
+  (`commit_records: no` turns it off).
 
 The pane beside the chat shows specs, their state and the run at work; its buttons run the same commands.
 

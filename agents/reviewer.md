@@ -32,6 +32,6 @@ Praise is not a finding; a matter of taste is not a finding. Each finding is one
 a command and its output, or the path through the code with the input that takes it), `suspect` (wrong behaviour
 you expect but cannot show: say what you tried), `unmet` (a point or the goal not delivered), `rule` (a project
 rule broken), `test`, `docs`, `scope` (built beyond the order), `cleanup`. Findings of severity `bug`, `unmet` and
-`rule` are fixed before the push; every other finding goes to the user in the closing message. A `bug` is shown,
+`rule` are fixed before the push; every other finding stays in the docket for the user. A `bug` is shown,
 not guessed; a case no user of this project reaches is no finding. Report at most 20 lines, then `Unverified: ...` for anything you assert without a source, or
 `Unverified: none`. With nothing to report, the one line `no findings`, then `Unverified: none`.

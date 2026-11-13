@@ -41,7 +41,8 @@ diff changes files the project owns.
    The `check` row lists those commands, each in backticks, in the order the project runs them, with their source
    (`npm run check`, `npm test` from `.github/workflows/ci.yml:19-20`); docket adds no file of its own to the repo.
    When the work dir is the home default, docket keeps it under its own git history
-   (`git init` on the first LOG line); for `docket/` inside the repo or a second repo, the diff says which.
+   (`git init` on the first LOG line); for `docket/` inside the repo or a second repo, the diff says which, and that docket commits its records there at
+   the end of a run and pushes that commit (`commit_records: no` leaves both to the user).
    New repo: `git init`, remote (existing / create via `gh repo create` / none), all twelve questions.
    Questions 1, 2, 10 and 11 also become the configuration keys `push_branch`, `commit_regex`, `forbidden_paths`
    and `forbidden_commands` (regexes and globs docket enforces); a pipe inside a regex is written `\|`.
