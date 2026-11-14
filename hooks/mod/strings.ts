@@ -74,9 +74,7 @@ const en = {
   otherSession: (session: string) => `session ${session}`,
   dirty: 'Note: specs, dockets or the LOG have changes that are not committed to git yet.',
   updated: (time: string) => `as of ${time}`,
-  status: (open: number, draft: number, ready: number, busy: number, done: number, superseded: number) =>
-    `${open} open (${draft} draft · ${ready} ready · ${busy} in progress) · ${done} done · ${superseded} superseded`,
-  statusRun: (title: string, progress: string) => `▶ ${title} ${progress}`,
+  active: 'active',
   bandText: 'docket is not set up in this project.',
   bandInit: 'Set up docket',
   bandHide: 'Hide',
@@ -182,9 +180,7 @@ const de: typeof en = {
   otherSession: session => `Sitzung ${session}`,
   dirty: 'Hinweis: Specs, Dockets oder LOG haben Änderungen, die noch nicht in Git committet sind.',
   updated: time => `Stand ${time}`,
-  status: (open, draft, ready, busy, done, superseded) =>
-    `${open} offen (${draft} Entwurf · ${ready} bereit · ${busy} in Arbeit) · ${done} erledigt · ${superseded} abgelöst`,
-  statusRun: (title, progress) => `▶ ${title} ${progress}`,
+  active: 'aktiv',
   bandText: 'docket ist in diesem Projekt nicht eingerichtet.',
   bandInit: 'docket einrichten',
   bandHide: 'Ausblenden',

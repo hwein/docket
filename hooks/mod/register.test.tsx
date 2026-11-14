@@ -162,7 +162,9 @@ const world = (on: On, read: () => unknown, tool: () => unknown = () => ({ resul
   on('ui.notify', () => ({ value: { isSent: false, reason: 'no-surface' } }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('fs.read', (_, e) => ({
-    value: e.path.endsWith('.svg')
+    value: /[\\/]\.claude-plugin[\\/]plugin\.json$/.test(e.path)
+      ? '{"name": "docket", "version": "1.2.3"}'
+      : e.path.endsWith('.svg')
       ? '<svg xmlns="http://www.w3.org/2000/svg" width="203.1" height="52" viewBox="0 0 203.1 52"><g transform="scale(1)"><path fill="#E6EDF3" d="M0 0H9V9H0Z"/></g></svg>'
       : `---\nid: x\n---\n# Heading of the file\n\nBody of ${e.path}\n`,
   }))
@@ -212,7 +214,7 @@ test('a docket project opens the pane, sets the status line and lists specs unde
 
   await start($, clock)
   expect(seen.opened).toEqual(['docket'])
-  expect(seen.status.at(-1)).toBe('3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded')
+  expect(seen.status.at(-1)).toBe('1.2.3')
   expect(seen.argv[0]?.slice(1)).toEqual([
     expect.stringContaining('/hooks/docket_ui.py'),
     'overview',
@@ -569,7 +571,8 @@ test('a run shows with its progress; this session stops by command, another by i
   const { seen, clock } = world(on, () => overview({ runs }))
 
   await start($, clock)
-  expect(seen.status.at(-1)).toContain('▶ Login 1/3 · 3 open')
+  // A run stands in the pane, not in the status line.
+  expect(seen.status.at(-1)).toBe('1.2.3')
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
@@ -645,9 +648,9 @@ test('a project without docket gets a band that starts the setup and can be hidd
   await ui.unmount()
 })
 
-test('the desktop app gets the name and the counts as one label of the footer, the terminal keeps the status line', async ($, on) => {
+test('the desktop app gets the name and the version as one label of the footer, the terminal keeps the status line', async ($, on) => {
   const { seen, clock } = world(on, overview)
-  const line = '3 open (1 draft · 2 ready · 0 in progress) · 1 done · 0 superseded'
+  const line = '1.2.3'
   const label = `docket ${line}`
 
   await start($, clock)
@@ -661,7 +664,7 @@ test('the desktop app gets the name and the counts as one label of the footer, t
   expect(seen.status.at(-1)).toBe(line)
 
   // The desktop app draws a status line's name smaller than its text. Once it asks for the footer's label, the
-  // plugin draws the name and the counts there as one text, and the status line is taken back.
+  // plugin draws the name and the version there as one text, and the status line is taken back.
   ui = await $.ui.mount({ ...MODES, surface: 'desktop' })
   expect((await ui.find({ type: 'Text' }))?.text).toBe(label)
   await ui.unmount()

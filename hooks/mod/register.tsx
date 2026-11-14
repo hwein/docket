@@ -41,6 +41,10 @@ let isAskedAgain = false
 // True once a desktop surface has asked for the footer's label: the counts stand there, and the status line is
 // taken back. Until then, and on every other surface, the status line carries them.
 let isLabelDrawn = false
+// The installed plugin's version, from its plugin.json, read once before the first status line; empty where it
+// could not be read.
+let version = ''
+let versionRead: Promise<string> | undefined
 let timer: { cancel: () => void } | undefined
 let lastRead = 0
 // The session root the last read was made for; undefined before the first.
@@ -54,34 +58,10 @@ const redraw = ($: EngineInterface): void => {
   $.ui.invalidate('ui.render')
 }
 
-const statusLine = (data: Overview): string | undefined => {
-  const counts = data.counts
-
-  if (!data.initialized || counts === undefined) {
-    return undefined
-  }
-
-  const say = t()
-  const line = say.status(
-    counts.open ?? 0,
-    counts.draft ?? 0,
-    counts.ready ?? 0,
-    counts['in-progress'] ?? 0,
-    counts.done ?? 0,
-    counts.superseded ?? 0,
-  )
-  const mine = data.runs?.find(run => run.mine)
-
-  if (mine === undefined) {
-    return line
-  }
-
-  const points = mine.points
-    ? `${mine.points.done}/${mine.points.done + mine.points.deviating + mine.points.open}`
-    : ''
-
-  return `${say.statusRun(mine.title, points).trim()} · ${line}`
-}
+// The status line says that docket is on in this project and which version; the counts and the runs stand in the
+// pane. The desktop app cuts the footer's label at 24 characters' width.
+const statusLine = (data: Overview): string | undefined =>
+  data.initialized ? version || t().active : undefined
 
 /** A run that was there and is gone has ended: say how, once, where the person sees it without the pane. */
 const announce = ($: EngineInterface, before: Overview | undefined, after: Overview): void => {
@@ -160,6 +140,8 @@ const refresh = async ($: EngineInterface): Promise<void> => {
       S.error = `${problem(reply.error)}${reply.detail ? ` (${reply.detail})` : ''}`
     }
 
+    versionRead ??= readVersion($)
+    version = await versionRead
     $.ui.status(S.data && !isLabelDrawn ? statusLine(S.data) : undefined)
     redraw($)
   } catch {
@@ -431,6 +413,17 @@ const readLogo = async ($: EngineInterface): Promise<string> => {
   }
 }
 
+const readVersion = async ($: EngineInterface): Promise<string> => {
+  try {
+    const manifest: unknown = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`))
+    const found = (manifest as { version?: unknown }).version
+
+    return typeof found === 'string' ? found : ''
+  } catch {
+    return ''
+  }
+}
+
 const boot = async ($: EngineInterface): Promise<void> => {
   S.logo = await readLogo($)
   isBandHidden = (await hiddenRoots($)).includes(await $.session.root())
@@ -514,7 +507,7 @@ export const register: Register = on => {
   // The desktop app draws a plugin's status line as the plugin's name in a smaller size than the text beside it
   // (Claude 5.1231.2, ion-dist.asar: the name `text-caption`, the line `text-footnote`). The footer's mode label is
   // one text in one size, so there the name stands before the same line. The app cuts the label at 24 characters'
-  // width and shows the whole of it on hover. The plugin draws it: a rewrite of
+  // width and shows the whole of it on hover (2026-11-14: the counts ended in "…"). The plugin draws it: a rewrite of
   // `modes` comes back as the engine's own slot, which the app does not draw (probe 2026-11-11, docket 0.5.9 left
   // the footer empty), and the Code tab never asks for the hint line. The terminal draws one size everywhere and
   // keeps the status line.

@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="580" height="755" viewBox="0 0 580 755" role="img" aria-labelledby="title">
+<title id="title">The docket pane: register, run and selection (example data)</title>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif">
+<rect x="0.5" y="0.5" width="579" height="754" rx="12" fill="#1C1C1B" stroke="#3D444D"/>
+<g transform="translate(22 22) scale(0.5385)"><g transform="scale(0.928571)">
+<path fill="#3FC6B8" d="M11 49H34V56H11A3.5 3.5 0 0 1 11 49Z"/>
+<path fill="#E6EDF3" d="M11 19H34V26H11A3.5 3.5 0 0 1 11 19Z M4 29H34V36H4A3.5 3.5 0 0 1 4 29Z M4 39H34V46H4A3.5 3.5 0 0 1 4 39Z M32 4.5A4.5 4.5 0 0 1 41 4.5V56H32Z"/>
+</g>
+<path fill="#E6EDF3" d="M64.27 43.28Q61.39 43.28 58.9 41.86Q56.4 40.45 54.91 37.71Q53.42 34.98 53.42 31.14V30.37Q53.42 26.53 54.91 23.79Q56.4 21.06 58.87 19.64Q61.34 18.22 64.27 18.22Q66.48 18.22 68.02 18.75Q69.55 19.28 70.49 20.1Q71.42 20.91 71.95 21.87H72.77V9.01H78.24V42.61H72.86V39.49H72.05Q71.18 40.93 69.41 42.1Q67.63 43.28 64.27 43.28ZM65.9 38.48Q68.88 38.48 70.85 36.54Q72.82 34.59 72.82 30.99V30.51Q72.82 26.86 70.87 24.94Q68.93 23.02 65.9 23.02Q62.93 23.02 60.94 24.94Q58.94 26.86 58.94 30.51V30.99Q58.94 34.59 60.94 36.54Q62.93 38.48 65.9 38.48Z M94.56 43.28Q91.01 43.28 88.2 41.82Q85.39 40.35 83.78 37.64Q82.18 34.93 82.18 31.14V30.37Q82.18 26.58 83.78 23.84Q85.39 21.1 88.2 19.66Q91.01 18.22 94.56 18.22Q98.11 18.22 100.9 19.66Q103.68 21.1 105.29 23.84Q106.9 26.58 106.9 30.37V31.14Q106.9 34.93 105.29 37.64Q103.68 40.35 100.9 41.82Q98.11 43.28 94.56 43.28ZM94.56 38.38Q97.58 38.38 99.5 36.44Q101.42 34.5 101.42 30.99V30.51Q101.42 27.01 99.5 25.06Q97.58 23.12 94.56 23.12Q91.54 23.12 89.62 25.06Q87.7 27.01 87.7 30.51V30.99Q87.7 34.5 89.62 36.44Q91.54 38.38 94.56 38.38Z M121.92 43.28Q118.46 43.28 115.68 41.84Q112.9 40.4 111.29 37.66Q109.68 34.93 109.68 31.09V30.42Q109.68 26.58 111.29 23.84Q112.9 21.1 115.68 19.66Q118.46 18.22 121.92 18.22Q125.33 18.22 127.75 19.42Q130.18 20.62 131.66 22.71Q133.15 24.8 133.58 27.39L128.26 28.5Q128.06 27.01 127.34 25.78Q126.62 24.56 125.3 23.84Q123.98 23.12 122.06 23.12Q120.1 23.12 118.54 23.96Q116.98 24.8 116.09 26.48Q115.2 28.16 115.2 30.51V30.99Q115.2 33.34 116.09 35Q116.98 36.66 118.54 37.52Q120.1 38.38 122.06 38.38Q124.99 38.38 126.5 36.87Q128.02 35.36 128.4 32.96L133.73 34.21Q133.15 36.7 131.66 38.77Q130.18 40.83 127.75 42.06Q125.33 43.28 121.92 43.28Z M137.18 42.61V9.01H142.7V27.87H143.52L152.06 18.9H159.31L147.84 30.37L159.7 42.61H152.54L143.52 32.96H142.7V42.61Z M171.5 43.28Q167.95 43.28 165.24 41.77Q162.53 40.26 161.02 37.5Q159.5 34.74 159.5 31.04V30.46Q159.5 26.72 160.99 23.98Q162.48 21.25 165.17 19.74Q167.86 18.22 171.36 18.22Q174.82 18.22 177.41 19.74Q180 21.25 181.44 23.98Q182.88 26.72 182.88 30.37V32.34H165.07Q165.17 35.12 167.04 36.8Q168.91 38.48 171.65 38.48Q174.34 38.48 175.63 37.3Q176.93 36.13 177.6 34.64L182.16 36.99Q181.49 38.29 180.22 39.75Q178.94 41.22 176.83 42.25Q174.72 43.28 171.5 43.28ZM165.12 28.16H177.26Q177.07 25.81 175.46 24.42Q173.86 23.02 171.31 23.02Q168.67 23.02 167.09 24.42Q165.5 25.81 165.12 28.16Z M194.83 42.61Q192.53 42.61 191.16 41.24Q189.79 39.87 189.79 37.52V23.46H183.6V18.9H189.79V11.26H195.31V18.9H202.13V23.46H195.31V36.61Q195.31 38.05 196.66 38.05H201.41V42.61Z"/></g>
+<rect x="145.4" y="22.0" width="73.9" height="28" rx="7" fill="#E6EDF3" stroke="#E6EDF3"/>
+<text x="182.3" y="40.4" font-size="12.5" font-weight="500" fill="#1C1C1B" text-anchor="middle">Register</text>
+<rect x="227.2" y="22.0" width="46.6" height="28" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="250.5" y="40.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">Log</text>
+<rect x="281.8" y="22.0" width="96.5" height="28" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="330.0" y="40.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">DOCKET.md</text>
+<rect x="386.3" y="22.0" width="82.0" height="28" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="427.3" y="40.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">↻ Refresh</text>
+<text x="22.0" y="74.0" font-size="13" font-weight="600" fill="#E6EDF3">Open 5</text>
+<circle cx="87.699" cy="69.5" r="4.5" fill="none" stroke="#D29922" stroke-width="1.4"/>
+<text x="98.9" y="74.0" font-size="13" font-weight="400" fill="#D29922">Draft 1</text>
+<circle cx="160.47899999999998" cy="69.5" r="5.2" fill="#8EA2FF"/>
+<text x="171.7" y="74.0" font-size="13" font-weight="400" fill="#8EA2FF">Ready 3</text>
+<circle cx="240.279" cy="69.5" r="4.5" fill="none" stroke="#E08A67" stroke-width="1.4"/>
+<path d="M240.279 65.0A4.5 4.5 0 0 0 240.279 74.0Z" fill="#E08A67"/>
+<text x="251.5" y="74.0" font-size="13" font-weight="400" fill="#E08A67">In progress 1</text>
+<path d="M346.83900000000006 69.7L350.33900000000006 73.3L356.53900000000004 65.5" fill="none" stroke="#3FB950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="362.7" y="74.0" font-size="13" font-weight="400" fill="#3FB950">Done 3</text>
+<circle cx="424.319" cy="69.5" r="4.5" fill="none" stroke="#6E7681" stroke-width="1.4"/>
+<line x1="420.91900000000004" y1="72.9" x2="427.71900000000005" y2="66.1" stroke="#6E7681" stroke-width="1.4"/>
+<text x="435.5" y="74.0" font-size="13" font-weight="400" fill="#6E7681">Superseded 1</text>
+<rect x="22" y="90" width="536" height="40" rx="9" fill="#2B211C" stroke="#E08A67"/>
+<path d="M34 105L42 110L34 115Z" fill="#E08A67"/>
+<text x="47.0" y="114.5" font-size="13" font-weight="600" fill="#E08A67">Running</text>
+<text x="106.4" y="114.5" font-size="13" font-weight="600" fill="#E6EDF3">Password reset</text>
+<text x="215.5" y="114.5" font-size="13" font-weight="400" fill="#8B949E">3 of 5 points</text>
+<rect x="496.7" y="97.0" width="51.3" height="26" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="522.4" y="114.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">Stop</text>
+<rect x="22.0" y="147.0" width="83.3" height="28" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="63.7" y="165.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">Open only</text>
+<text x="22.0" y="196.0" font-size="11.5" font-weight="400" fill="#8B949E">The number before a spec is its position in the recommended order of</text>
+<text x="22.0" y="211.0" font-size="11.5" font-weight="400" fill="#8B949E">implementation: predecessors first, then by age.</text>
+<rect x="22" y="223" width="536" height="66" rx="9" fill="none" stroke="#8EA2FF"/>
+<text x="34.0" y="245.0" font-size="13" font-weight="400" fill="#E6EDF3">2 selected, in run order: Invoice export, VAT per country</text>
+<rect x="34.0" y="256.0" width="169.9" height="26" rx="7" fill="#E6EDF3" stroke="#E6EDF3"/>
+<text x="119.0" y="273.4" font-size="12.5" font-weight="500" fill="#1C1C1B" text-anchor="middle">Implement selection (2)</text>
+<rect x="211.9" y="256.0" width="247.6" height="26" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="335.8" y="273.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">Selection in a session of its own (2)</text>
+<text x="22.0" y="317.0" font-size="16" font-weight="600" fill="#E6EDF3">Accounts</text>
+<text x="103.2" y="317.0" font-size="13" font-weight="400" fill="#8B949E">agreed · 3 open</text>
+<rect x="22.0" y="329.0" width="167.6" height="28" rx="7" fill="#E6EDF3" stroke="#E6EDF3"/>
+<text x="105.8" y="347.4" font-size="12.5" font-weight="500" fill="#1C1C1B" text-anchor="middle">Implement all ready (1)</text>
+<rect x="197.6" y="329.0" width="245.3" height="28" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="320.2" y="347.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">All ready in a session of its own (1)</text>
+<text x="46.0" y="379.0" font-size="13" font-weight="400" fill="#8B949E">1.</text>
+<circle cx="69.2" cy="374.5" r="4.5" fill="none" stroke="#E08A67" stroke-width="1.4"/>
+<path d="M69.2 370.0A4.5 4.5 0 0 0 69.2 379.0Z" fill="#E08A67"/>
+<text x="80.4" y="379.0" font-size="13" font-weight="600" fill="#E6EDF3">Password reset</text>
+<path d="M186.49900000000002 369.5L194.49900000000002 374.5L186.49900000000002 379.5Z" fill="#E08A67"/>
+<rect x="22" y="394.0" width="13" height="13" rx="3" fill="none" stroke="#8B949E" stroke-width="1.2"/>
+<text x="46.0" y="405.0" font-size="13" font-weight="400" fill="#8B949E">2.</text>
+<circle cx="69.2" cy="400.5" r="5.2" fill="#8EA2FF"/>
+<text x="80.4" y="405.0" font-size="13" font-weight="400" fill="#E6EDF3">Sign-in with passkeys</text>
+<text x="558.0" y="405.0" font-size="11.5" font-weight="400" fill="#8B949E" text-anchor="end">Waits for #1</text>
+<text x="46.0" y="431.0" font-size="13" font-weight="400" fill="#8B949E">3.</text>
+<circle cx="69.2" cy="426.5" r="4.5" fill="none" stroke="#D29922" stroke-width="1.4"/>
+<text x="80.4" y="431.0" font-size="13" font-weight="400" fill="#E6EDF3">Account deletion</text>
+<text x="558.0" y="431.0" font-size="11.5" font-weight="400" fill="#8B949E" text-anchor="end">1 open decision</text>
+<text x="46.0" y="459.0" font-size="11.5" font-weight="400" fill="#8B949E">Finished (2)</text>
+<path d="M64.5 478.7L68 482.3L74.2 474.5" fill="none" stroke="#3FB950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+<text x="82.0" y="483.0" font-size="13" font-weight="400" fill="#E6EDF3" opacity="0.55">Email login</text>
+<text x="558.0" y="483.0" font-size="12.5" font-weight="400" fill="#8B949E" text-anchor="end" opacity="0.8">[Docket]</text>
+<circle cx="69.2" cy="504.5" r="4.5" fill="none" stroke="#6E7681" stroke-width="1.4" opacity="0.6"/>
+<line x1="65.8" y1="507.9" x2="72.6" y2="501.1" stroke="#6E7681" stroke-width="1.4" opacity="0.6"/>
+<text x="82.0" y="509.0" font-size="13" font-weight="400" fill="#E6EDF3" opacity="0.55">SMS login</text>
+<line x1="82.0" y1="504.8" x2="142.8" y2="504.8" stroke="#E6EDF3" stroke-width="1" opacity="0.55"/>
+<text x="22.0" y="553.0" font-size="16" font-weight="600" fill="#E6EDF3">Billing</text>
+<text x="79.7" y="553.0" font-size="13" font-weight="400" fill="#8B949E">agreed · 2 open</text>
+<rect x="22.0" y="565.0" width="167.6" height="28" rx="7" fill="#E6EDF3" stroke="#E6EDF3"/>
+<text x="105.8" y="583.4" font-size="12.5" font-weight="500" fill="#1C1C1B" text-anchor="middle">Implement all ready (2)</text>
+<rect x="197.6" y="565.0" width="245.3" height="28" rx="7" fill="#262626" stroke="#3D444D"/>
+<text x="320.2" y="583.4" font-size="12.5" font-weight="500" fill="#E6EDF3" text-anchor="middle">All ready in a session of its own (2)</text>
+<rect x="22" y="604.0" width="13" height="13" rx="3" fill="#8EA2FF" stroke="#8EA2FF" stroke-width="1.2"/>
+<path d="M25 610.5L27.6 613.1L32 607.9" fill="none" stroke="#1C1C1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="46.0" y="615.0" font-size="13" font-weight="400" fill="#8B949E">4.</text>
+<circle cx="69.2" cy="610.5" r="5.2" fill="#8EA2FF"/>
+<text x="80.4" y="615.0" font-size="13" font-weight="400" fill="#E6EDF3">Invoice export</text>
+<rect x="22" y="630.0" width="13" height="13" rx="3" fill="#8EA2FF" stroke="#8EA2FF" stroke-width="1.2"/>
+<path d="M25 636.5L27.6 639.1L32 633.9" fill="none" stroke="#1C1C1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="46.0" y="641.0" font-size="13" font-weight="400" fill="#8B949E">5.</text>
+<circle cx="69.2" cy="636.5" r="5.2" fill="#8EA2FF"/>
+<text x="80.4" y="641.0" font-size="13" font-weight="400" fill="#E6EDF3">VAT per country</text>
+<text x="46.0" y="669.0" font-size="11.5" font-weight="400" fill="#8B949E">Finished (2)</text>
+<path d="M64.5 688.7L68 692.3L74.2 684.5" fill="none" stroke="#3FB950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+<text x="82.0" y="693.0" font-size="13" font-weight="400" fill="#E6EDF3" opacity="0.55">Stripe checkout</text>
+<text x="558.0" y="693.0" font-size="12.5" font-weight="400" fill="#8B949E" text-anchor="end" opacity="0.8">[Docket]</text>
+<text x="493.0" y="693.0" font-size="11.5" font-weight="400" fill="#8B949E" text-anchor="end">~1</text>
+<path d="M64.5 714.7L68 718.3L74.2 710.5" fill="none" stroke="#3FB950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+<text x="82.0" y="719.0" font-size="13" font-weight="400" fill="#E6EDF3" opacity="0.55">Price table</text>
+<text x="558.0" y="719.0" font-size="12.5" font-weight="400" fill="#8B949E" text-anchor="end" opacity="0.8">[Docket]</text>
+</g>
+</svg>

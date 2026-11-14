@@ -115,7 +115,8 @@ or, in Claude Code Desktop, in a session of its own whose brief ends with the co
 (`docket_ui.py handoff`), and the started session takes it once within fifteen minutes. `docket_ui.py supersede`
 writes `state: superseded` with its LOG line; `docket_ui.py stop` records the stop request for a run of another
 session. The pane reads again after a prompt, at the end of a turn, at most every ten seconds while tools run and
-every fifteen while another session runs a spec. Tests: `claude plugin test .` (the pane, Python side mocked) and
+every fifteen while another session runs a spec. The line under the prompt is `docket <version>` from the
+installed `plugin.json`; the counts and the runs stand in the pane. Tests: `claude plugin test .` (the pane, Python side mocked) and
 `python hooks/test_hooks.py` (hooks and `docket_ui.py`).
 
 ## Footprint

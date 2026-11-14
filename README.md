@@ -81,6 +81,14 @@ titles instead of ids, one message when the agents are back. It is your choice (
   (`commit_records: no` turns it off).
 
 The pane beside the chat shows specs, their state and the run at work; its buttons run the same commands.
+The line under the prompt says `docket <version>` where docket is set up in the project.
+
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/pane-dark.svg">
+    <img alt="The docket pane with example data: a run at work, two specs selected as one series, specs by concept in implementation order" src="assets/pane-light.svg" width="580">
+  </picture>
+</p>
 
 The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<repo key>/` by default;
 `/docket:init` offers `docket/` inside the repo instead. docket adds no code to your repository.
