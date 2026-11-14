@@ -16,8 +16,11 @@ and `claude plugin update docket@docket` (restart needed).
 
 docket adds no code file to a user's repository.
 
-# Evals
+# Tests
 
-`evals/` is the project's comparison test, not `claude plugin eval`: `python evals/run.py --stand <stand>` runs each
-case headless (`claude -p`) in a fresh fixture repository on the committed plugin files, and `python evals/report.py`
-reads the result files under `evals/results/`.
+CI (`.github/workflows/test.yml`, Linux and Windows) runs `python hooks/test_hooks.py` (every hook as a process),
+`claude plugin validate .`, `claude plugin test` (the mod) and the install path (`claude plugin marketplace add`,
+`claude plugin install`); none of them needs a login or a model.
+
+`evals/` holds cases for `claude plugin eval` only. On native Windows it runs a case without a shell grant and without
+a scaffold script, in an empty folder (measured 2026-11-14, Claude Code 2.1.322).

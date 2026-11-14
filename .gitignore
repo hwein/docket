@@ -7,3 +7,4 @@ experiments/*/.claude/settings.local.json
 framework/
 experiments/
 .claude-plugin/types/
+evals/results/
