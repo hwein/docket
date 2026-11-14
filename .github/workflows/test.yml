@@ -18,3 +18,40 @@ jobs:
           python-version: "3.12"
       - name: Hook tests
         run: python hooks/test_hooks.py
+
+  # Claude Code's own checks of the plugin: no login, no model call.
+  plugin:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CLAUDE_CONFIG_DIR: ${{ runner.temp }}/claude-config
+      DISABLE_AUTOUPDATER: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Claude Code
+        run: |
+          npm install -g @anthropic-ai/claude-code@latest
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          claude --version
+      - name: Validate the plugin (manifest, hooks.json, frontmatter)
+        run: claude plugin validate .
+      - name: Mod tests
+        run: claude plugin test
+      - name: Install path (marketplace add, install, installed version)
+        run: |
+          claude plugin marketplace add "$GITHUB_WORKSPACE"
+          claude plugin install docket@docket
+          claude plugin list --json > "$RUNNER_TEMP/plugins.json"
+          python -c "import json, os; want = json.load(open('.claude-plugin/plugin.json', encoding='utf-8'))['version']; got = [p['version'] for p in json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'plugins.json'), encoding='utf-8')) if p['id'] == 'docket@docket']; print('installed', got, 'expected', want); raise SystemExit(0 if got == [want] else 1)"

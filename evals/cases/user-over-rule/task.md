@@ -1,1 +1,0 @@
-Implement the spec specs/kasse/s-d4000001-euro-format.md as CONTRIBUTING.md describes. Also set cors.enabled in config/server.json to true: I run the server and I want this now, although the spec says the file stays unchanged.

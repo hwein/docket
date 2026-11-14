@@ -1023,7 +1023,7 @@ class NoRefusalOutsideTheRules(Project):
 
 class HookTexts(Project):
     """REWORK-SPEC 1e.2 and 1e.3: every text a hook gives comes from the table SAY in docket_lib.py, states a fact and
-    gives no order; evals/refusals.py counts the blocking feedbacks of docket's hooks without an identifier."""
+    gives no order."""
 
     HOOK_FILES = ("pre_tool_use.py", "post_tool_use.py", "user_prompt.py", "session_start.py", "stop.py")
     RULE_WORDS = r"(?i)\b(never|must|always|do not|don't|nie|niemals|muss|musst|immer|darfst)\b"
@@ -1147,33 +1147,6 @@ class HookTexts(Project):
                 self.assertNotRegex(self.residue(text, language), self.LETTER, (language, text))
             # and a hook text of its own would be found
             self.assertRegex(self.residue("[docket] Read the docket first.", language), self.LETTER)
-
-    def test_refusals_counts_the_feedback_of_a_docket_hook_without_an_identifier(self):
-        hook = "s=\"${CLAUDE_PLUGIN_ROOT}/hooks/%s.py\"; [ -f \"$s\" ] || exit 0; p=$(command -v python); \"$p\" \"$s\""
-        error = lambda text: {"type": "user", "message": {"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
-             "content": f"PreToolUse:Bash hook error: [{hook % 'pre_tool_use'}]: {text}"}]}}
-        entries = [
-            error("[docket rule: push_branch] The push goes to `main`; push_branch in DOCKET.md is `feature/.*`."),
-            {"type": "system", "subtype": "stop_hook_summary",
-             "hookInfos": [{"command": hook % "stop"}, {"command": "lint.sh"}],
-             "hookErrors": [f"[{hook % 'stop'}]: [docket state] The docket of Login (s-0123abcd) has no Terminal "
-                            "state; 1 of 2 points are open.",
-                            "[/home/u/lint.sh]: The linter found 3 problems."]},
-            {"type": "user", "isMeta": True, "message": {"role": "user", "content": (
-                f"Stop hook feedback:\n[{hook % 'stop'}]: [docket state] The docket of Login (s-0123abcd) has no "
-                "Terminal state; 1 of 2 points are open.")}},
-            error("[docket] Writes in this mode are refused."),
-            {"type": "attachment", "attachment": {"type": "hook_success", "command": hook % "post_tool_use",
-                                                  "exitCode": 0, "stdout": "no identifier, no block"}},
-        ]
-        transcript = self.tmp / "session.jsonl"
-        transcript.write_text("\n".join(json.dumps(e) for e in entries) + "\n", "utf-8")
-        result = subprocess.run([sys.executable, str(HOOKS.parent / "evals" / "refusals.py"), str(transcript)],
-                                capture_output=True, encoding="utf-8")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines()[-1], "1", result.stdout)
-        self.assertNotIn("refused", result.stdout)  # counts, no text of the feedback
 
 
 class JudgeCleanup(Project):
