@@ -558,6 +558,26 @@ class SealedStop(Project):
         self.assertEqual(self.state()["mode"], "sealed")
         self.assertNotIn("stop-forced", self.log())
 
+    def test_a_notification_in_the_clients_queue_is_a_wait(self):
+        # closing-series-2 2026-11-14: two reviews ended 0.4 s apart. The model answered the first hand-back ("waiting
+        # for the other"), background_tasks was empty, the second notification stood in the client's queue as a
+        # `queue-operation` entry and became a queued_command attachment only after the run was halted.
+        def op(operation, content=None):
+            entry = {"type": "queue-operation", "operation": operation}
+            return dict(entry, content=content) if content else entry
+        said = {"type": "assistant", "message": {"content": [{"type": "text", "text": "Login: waiting for the other."}]}}
+        held = self.entries(*self.spawn(), op("enqueue"), op("dequeue"), op("enqueue", self.NOTE), said)
+        self.assertEqual(self.run_stop(transcript_path=held, background_tasks=[]), (0, "", ""))
+        self.assertEqual(self.run_stop(active=True, transcript_path=held, background_tasks=[]), (0, "", ""))
+        self.assertNotIn("stop-forced", self.log())
+        # Taken from the queue (the oldest by `dequeue`, by its content with `remove`), it is no wait any more.
+        for taken in ([op("enqueue"), op("enqueue", self.NOTE), op("dequeue"), op("dequeue")],
+                      [op("enqueue", self.NOTE), op("enqueue"), op("remove", self.NOTE)]):
+            self.set_state(mode="sealed", spec=SPEC, series=[SPEC])
+            code, err, _ = self.run_stop(transcript_path=self.entries(*self.spawn(), *taken, said), background_tasks=[])
+            self.assertEqual(code, 2)
+            self.assertTrue(err.startswith("[docket state]"), err)
+
     def test_a_second_stop_right_after_the_refusal_tells_the_user_the_run_stopped(self):
         self.assertEqual(self.run_stop()[0], 2)
         code, err, out = self.run_stop(active=True)

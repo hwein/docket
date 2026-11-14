@@ -163,6 +163,13 @@ class Run:
                 pass
         return result if result and result.strip() else text
 
+    def untitled_texts(self, titles):
+        """The texts before the closing message that are not one line `<title>: <step>` with a title of the series
+        (2026-11-14: 12 of 46 such texts in six runs told the next step without the title, before a tool call)."""
+        texts, closing = self.assistant_texts(), self.last_message().strip()
+        before = texts[:-1] if texts and texts[-1] == closing else texts
+        return [t for t in before if "\n" in t or not any(t.startswith(title + ":") for title in titles)]
+
     def assistant_texts(self):
         """The texts of the main session's answers in order, from the stream: one entry per assistant message with
         text, subagents left out."""

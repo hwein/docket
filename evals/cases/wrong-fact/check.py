@@ -13,4 +13,5 @@ run.criterion("result", "check-green", run.check_green())
 run.criterion("result", "names-missing-file", "rabatte.py" in run.last_message())
 if run.plugin:
     run.criterion("docket", "deviation-line", run.has_deviation(run.docket("s-c3000001")))
+    run.criterion("docket", "every-line-titled", not run.untitled_texts(("Euro formatting and discount guard",)))
 sys.exit(run.report())

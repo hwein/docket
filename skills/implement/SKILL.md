@@ -75,7 +75,9 @@ it ends with the same line. You write the closing message once, after docket's s
 from the dockets; until that statement there is no summary of the run, also where the client asks for a closing word,
 a recap or a status: the one line is the answer, and after the statement the closing message's first line. Otherwise
 you write only the answer to a message of the user, and a status line where the user or the client asks for a sign of
-life: one line, `<title>: <the step in everyday words>` ("Net price: checks running").
+life: one line, `<title>: <the step in everyday words>` ("Net price: checks running"). That holds before a tool call
+too: no text there, or that one line with the title; what you read, found or do next ("Diff read. Now the checks.",
+"Both reviews came back clean, pushing.") stands in the docket, not in the chat.
 
 ## 0. Start or resume
 The line `No run marked: <reason>` in the context: the turn ends with that reason to the user. Otherwise read

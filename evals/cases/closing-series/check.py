@@ -30,6 +30,7 @@ if run.plugin:
     run.criterion("docket", "no-state-line", not any(re.search(r"^\s*state\s*:", t, re.MULTILINE) for t in texts))
     run.criterion("docket", "end-line-per-spec", all(
         any(title in t and "\n" not in t for t in before) for title in TITLES))
+    run.criterion("docket", "every-line-titled", not run.untitled_texts(TITLES))
     run.criterion("docket", "one-closing", all(title in closing for title in TITLES))
     run.criterion("docket", "no-ids", not any(SPEC_ID.search(t) for t in outside_resume))
     run.criterion("docket", "no-hashes", not any(HASH.search(t) for t in texts + [closing]))

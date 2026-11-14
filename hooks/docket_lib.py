@@ -1361,10 +1361,24 @@ def pending_agents(transcript_path, queued_only=False):
     waiting, the turn resumes with it (luradb-web-client 2026-11-06: three waits were refused because
     background_tasks was already empty). An agent resumed by a SendMessage (`resumedAgentId` in its result) counts
     like a launch: its notification names the SendMessage call (recheck of 5a8994a, X3). `queued_only`: only those,
-    for a client that reports background_tasks."""
-    calls, launched, delivered, queued = {}, {}, set(), set()
+    for a client that reports background_tasks.
+    The client's own queue counts too: a `queue-operation` entry `enqueue` holds the notification from the moment
+    the agent ended, its `queued_command` attachment is written only once the model got it (closing-series-2
+    2026-11-14: the second of two reviews ended 0.4 s after the first, background_tasks was empty, the queue held its
+    notification, and two Stops halted a run that went on 17 ms later). `dequeue` takes the oldest entry, `remove`
+    the one with its content."""
+    calls, launched, delivered, queued, line = {}, {}, set(), set(), []
     for entry in transcript_entries(transcript_path):
         if entry.get("isSidechain"):
+            continue
+        if entry.get("type") == "queue-operation":
+            held = entry.get("content") if isinstance(entry.get("content"), str) else ""
+            if entry.get("operation") == "enqueue":
+                line.append(held)
+            elif held and held in line:
+                line.remove(held)
+            elif line:
+                line.pop(0)
             continue
         message = entry.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -1398,6 +1412,8 @@ def pending_agents(transcript_path, queued_only=False):
                     if LAUNCHED.match((inner or "").lstrip()) or (resumed and not block.get("is_error")
                                                                   and not NOT_SENT.search(inner)):
                         launched[block.get("tool_use_id")] = calls[block.get("tool_use_id")]
+    for held in line:
+        queued.update(NOTIFIED.findall(held))
     if queued_only:
         return {tool_id for tool_id in queued if tool_id in launched}
     return {tool_id for tool_id, stamp in launched.items()
