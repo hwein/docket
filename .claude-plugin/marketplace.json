@@ -3,6 +3,9 @@
   "owner": {
     "name": "Heiko Wein"
   },
+  "metadata": {
+    "description": "docket: spec-driven workflows for Claude Code. Specs with done criteria a command checks, autonomous runs that deliver a docket with their own acceptance lines, and hooks that hold your project's rules."
+  },
   "plugins": [
     {
       "name": "docket",
