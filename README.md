@@ -99,4 +99,4 @@ The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<
 
 ## Status
 
-0.6.3, early development. No warranty: use docket only where you can verify the result.
+0.6.4, early development. No warranty: use docket only where you can verify the result.
