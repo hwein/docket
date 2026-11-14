@@ -18,14 +18,15 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from docket_lib import (CONCEPT_ID, RUN_MODES, SPEC_ID, Paths, docket_counts, frontmatter, in_order, language_code,  # noqa: E402
-                        load_state, lock_holder, log_event, log_lines, norm, other_sessions, position, queued_elsewhere, read_text,
-                        save_handoff, save_state, section_text, session_live, set_spec_state, spec_records, spec_title,
-                        terminal_section, work_dir_dirty)
+from docket_lib import (CONCEPT_ID, RUN_MODES, SPEC_ID, Paths, absolute, concept_roots, docket_counts, frontmatter,  # noqa: E402
+                        in_order, language_code, load_state, lock_holder, log_event, log_lines, norm, other_sessions,
+                        position, queued_elsewhere, read_text, reference_roots, save_handoff, save_state, section_text,
+                        session_live, set_spec_state, spec_records, spec_title, terminal_section, under, work_dir_dirty)
 
 SPEC_STATES = ("draft", "ready", "in-progress", "done", "superseded")
 OPEN_STATES = ("draft", "ready", "in-progress")
 LOG_TAIL = 200
+DOCUMENT_TYPES = (".md", ".mdx", ".rst", ".adoc")
 
 
 def open_decisions(path, title):
@@ -41,7 +42,8 @@ def open_decisions(path, title):
 
 
 def concept_records(paths):
-    """Frontmatter of every concept (id, title, topic, state) and its file, by path."""
+    """Frontmatter of every concept (id, title, topic, state, source) and its file, by path. `source` is the
+    project's own concept document as the frontmatter names it, "" where the content stands in the docket file."""
     found = []
     if not os.path.isdir(paths.concepts):
         return found
@@ -55,8 +57,55 @@ def concept_records(paths):
             if CONCEPT_ID.fullmatch(fields.get("id", "")):
                 found.append({"id": fields["id"].lower(), "title": fields.get("title", ""),
                               "topic": fields.get("topic", "") or topic, "state": fields.get("state", "").lower(),
-                              "path": path, "decisions": open_decisions(path, "Open decisions")})
+                              "source": fields.get("source", ""), "path": path,
+                              "decisions": open_decisions(path, "Open decisions")})
     return found
+
+
+def same_file(path):
+    """A path as two spellings of one file compare equal: absolute, normalized, case-insensitive on Windows."""
+    return os.path.normcase(os.path.normpath(path))
+
+
+def repo_relative(paths, path):
+    """A path relative to the repository root in POSIX form (`../concepts/x.md` beside it); absolute where no
+    relative path reaches it (another drive)."""
+    try:
+        return norm(os.path.relpath(path, paths.root))
+    except ValueError:
+        return norm(path)
+
+
+def unregistered(paths, concepts):
+    """The documents in the `concept_roots` folders that no concept's `source` names, repo-relative and sorted:
+    what `/docket:concept` offers to take in. A README or INDEX file, a template and what lies in a hidden folder
+    or in docket's own work dir is no concept document. A document `reference_roots` names, itself or a folder at
+    or below the concept folder it lies in, is what IS (an ADR, or one the user put there); an entry above the
+    concept folder (`docs/` over `docs/rfcs/`) says nothing about the documents in it."""
+    roots = concept_roots(paths)
+    if not roots:
+        return []
+    known = {same_file(absolute(c["source"], paths.root)) for c in concepts if c.get("source")}
+    references = [absolute(entry, paths.root) for entry in reference_roots(paths)]
+    found = set()
+    for root in roots:
+        top = absolute(root, paths.root)
+        if not os.path.isdir(top) or under(top, paths.work):
+            continue
+        is_what_is = [ref for ref in references if under(ref, top)]
+        for folder, folders, names in os.walk(top):
+            folder = norm(folder)
+            folders[:] = sorted(f for f in folders if not f.startswith(".")
+                                and not under(posixpath.join(folder, f), paths.work))
+            for name in names:
+                lower = name.lower()
+                if (not lower.endswith(DOCUMENT_TYPES) or lower.startswith(("readme", "index"))
+                        or "template" in lower):
+                    continue
+                path = posixpath.join(folder, name)
+                if same_file(path) not in known and not any(under(path, ref) for ref in is_what_is):
+                    found.add(repo_relative(paths, path))
+    return sorted(found)
 
 
 def superseded_by(paths):
@@ -132,10 +181,11 @@ def overview(paths, session_id):
     counts = {state: sum(1 for s in specs if s["state"] == state) for state in SPEC_STATES}
     counts["open"] = sum(counts[state] for state in OPEN_STATES)
     counts["total"] = len(specs)
+    concepts = concept_records(paths)
     return {"ok": True, "initialized": True, "root": paths.root, "work": paths.work,
             "language": language_code(paths) or "en", "config": paths.config, "log_path": paths.log,
-            "counts": counts, "concepts": concept_records(paths), "specs": specs, "runs": live,
-            "log": log_lines(paths)[-LOG_TAIL:], "dirty": work_dir_dirty(paths)}
+            "counts": counts, "concepts": concepts, "unregistered": unregistered(paths, concepts), "specs": specs,
+            "runs": live, "log": log_lines(paths)[-LOG_TAIL:], "dirty": work_dir_dirty(paths)}
 
 
 def supersede(paths, session_id, spec_id, by_id):

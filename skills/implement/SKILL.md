@@ -54,7 +54,7 @@ the user). Each such answer begins with `[docket rule: <key>]`.
 ## Documents
 | Document | Who writes | When | Where (in the work dir) |
 |---|---|---|---|
-| Concept | `/docket:concept` | before the spec | `concepts/<topic>/` |
+| Concept | `/docket:concept` | before the spec | `concepts/<topic>/`; with `concept_roots` set, the content is the project's document in that folder, named by the concept's `source:`, and the work dir keeps only the reference file |
 | Spec; its `state:` | `/docket:spec`; the state docket | before the run; the state at start and end | `specs/<topic>/` |
 | Docket | you | skeleton before the first code, then as you go | `dockets/<topic>/<spec id>.md` |
 | LOG, lock, metrics | docket | at each event; while a spec runs; at its end | `LOG.md`, `locks/`, `metrics/` |

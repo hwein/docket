@@ -16,8 +16,10 @@ spec is `ready`.
 ## Start
 
 1. Resolve the argument: a concept id (derive the next spec from it), a spec id in `draft` (continue it), or a
-   title (new spec). Follow-up work from a finished docket the user names by its title or id: read that docket.
-   Topic from DOCKET.md; if the topic is new, that is one user question.
+   title (new spec). A concept whose `source:` is set is read together with the file it names (relative to the
+   repository root, or absolute), because its content stands there. Follow-up work from a finished docket the
+   user names by its title or id: read that docket. Topic from DOCKET.md; if the topic is new, that is one user
+   question.
 2. Create the id: eight hex digits of SHA-256 over `topic|title|<fetched ISO time>`, prefix `s-`.
    File: `specs/<topic>/s-<id>-<slug>.md` from `${CLAUDE_PLUGIN_ROOT}/templates/spec.md`.
 
@@ -67,8 +69,9 @@ Before `state: ready`, the spec is read three times and its commands run once. I
 1. Refiners: spawn three `refiner` agents (`docket:refiner`) together in the background, on your own model (no
    `model`), each in a fresh context with one angle: `feasibility` (the spec against the code), `spec` (the spec against its concept and the reference
    docs DOCKET.md names), and the project's angle, `third_refiner_angle` in DOCKET.md (unset: users and operators).
-   Briefing: the angle, the spec path, the concept path. Each finding is one line. While they run, a returning agent
-   gets no message: the turn ends without text, and the user gets one message when the last one is back.
+   Briefing: the angle, the spec path, the concept path and, when the concept's `source:` is set, the path of that
+   file. Each finding is one line. While they run, a returning agent gets no message: the turn ends without text,
+   and the user gets one message when the last one is back.
 2. Dry run, while they run: every precondition and every acceptance command of the spec runs once, in the shell
    its line is written for (PowerShell syntax in the PowerShell tool). An expectation in prose you weigh against the output
    and write down with an excerpt of the output. An acceptance command passes when it starts and either fails for the

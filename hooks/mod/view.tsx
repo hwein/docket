@@ -377,6 +377,7 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
   const hasFinished = specs.some(spec => FINISHED.includes(spec.state))
   const rank = ranks(data)
   const bar = pickBar(kit, t, data, s, act)
+  const unregistered = data.unregistered ?? []
 
   // The filter first, then the two lines that explain the rows, as one block with air above and below: a button
   // between two captions read as one cramped lump.
@@ -412,6 +413,12 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
         ),
       )}
       {loose.length > 0 && group(kit, t, data, undefined, loose, rank, concepts.length > 0, s, act)}
+      {/* Documents in the project's concept folders that no concept links: /docket:concept takes them in. */}
+      {unregistered.length > 0 && (
+        <Text dimColor size="caption">
+          {t.unregistered(unregistered.length)}
+        </Text>
+      )}
     </Box>
   )
 }

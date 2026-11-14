@@ -167,6 +167,26 @@ def language_code(paths):
     return "de" if name.startswith(("de", "ger")) else "en"
 
 
+def config_paths(paths, key):
+    """A comma-separated row of paths in DOCKET.md as written there (relative to the repository root, or absolute);
+    [] when unset. A part in parentheses is a note on the entry, not a path, and is taken out before the commas
+    split the entries, so a comma inside it splits nothing."""
+    value = re.sub(r"\([^)]*\)", "", config_values(paths).get(key, ""))
+    return [entry for entry in (part.strip().strip("`").strip() for part in value.split(",")) if entry]
+
+
+def concept_roots(paths):
+    """The folders where the project keeps its concept documents, DOCKET.md `concept_roots`; [] when unset, and new
+    concepts then stand in the work dir. An entry may name its format in parentheses (`docs/rfcs/ (RFC, template
+    docs/rfcs/0000-template.md)`): that is for the model writing a concept, not a folder."""
+    return config_paths(paths, "concept_roots")
+
+
+def reference_roots(paths):
+    """The files and folders that say what IS, DOCKET.md `reference_roots`; [] when unset."""
+    return config_paths(paths, "reference_roots")
+
+
 # Every text a hook gives to the model or the user, in DOCKET.md `user_language` (REWORK-SPEC 1e.2): a statement of
 # what holds now, no order and no rule; no hook prints a text of its own (test HookTexts).
 SAY = {

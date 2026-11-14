@@ -112,15 +112,19 @@ with its own git history every LOG line is a commit.
 `hooks/hooks.json` names one hooks module, `hooks/mod/register.tsx`: the pane, the line under the prompt and, where
 docket is not set up, the line above it. It reads no docket file's meaning itself: `hooks/docket_ui.py overview`
 answers register, runs and LOG as JSON with the functions the hooks use, so both read one project the same way.
-Every open spec shows its position in implementation order (after every `follows:` and `after:` predecessor, then
-by age). A button runs the command as typed (`/docket:implement …`, `/docket:stop`, `/docket:init`), in this session
-or, in Claude Code Desktop, in a session of its own whose brief ends with the command; the pane records it first
-(`docket_ui.py handoff`), and the started session takes it once within fifteen minutes. `docket_ui.py supersede`
-writes `state: superseded` with its LOG line; `docket_ui.py stop` records the stop request for a run of another
-session. The pane reads again after a prompt, at the end of a turn, at most every ten seconds while tools run and
-every fifteen while another session runs a spec. The line under the prompt is `docket <version>` from the
-installed `plugin.json`; the counts and the runs stand in the pane. Tests: `claude plugin test .` (the pane, Python side mocked) and
-`python hooks/test_hooks.py` (hooks and `docket_ui.py`).
+Each concept carries its `source` as the frontmatter writes it (`""` where the content stands in the docket file);
+`unregistered` lists the documents under `concept_roots` that no concept's `source` names and no `reference_roots`
+entry names, itself or a folder at or below their concept folder, leaving out docket's work dir (repo-relative,
+`/`, sorted; `[]` without `concept_roots`), and the register shows their count in one dim line that points to
+`/docket:concept`, which takes them in. Every open spec shows its position in implementation order (after every
+`follows:` and `after:` predecessor, then by age). A button runs the command as typed (`/docket:implement …`,
+`/docket:stop`, `/docket:init`), in this session or, in Claude Code Desktop, in a session of its own whose brief
+ends with the command; the pane records it first (`docket_ui.py handoff`), and the started session takes it once
+within fifteen minutes. `docket_ui.py supersede` writes `state: superseded` with its LOG line; `docket_ui.py stop`
+records the stop request for a run of another session. The pane reads again after a prompt, at the end of a turn,
+at most every ten seconds while tools run and every fifteen while another session runs a spec. The line under the
+prompt is `docket <version>` from the installed `plugin.json`; the counts and the runs stand in the pane. Tests:
+`claude plugin test .` (the pane, Python side mocked) and `python hooks/test_hooks.py` (hooks and `docket_ui.py`).
 
 ## Footprint
 

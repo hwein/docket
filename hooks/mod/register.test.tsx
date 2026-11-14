@@ -73,8 +73,17 @@ const overview = (more: Record<string, unknown> = {}) => ({
   log_path: '/work/LOG.md',
   counts: { draft: 1, ready: 2, 'in-progress': 0, done: 1, superseded: 0, open: 3, total: 4 },
   concepts: [
-    { id: 'c-11112222', title: 'Accounts', topic: 'core', state: 'agreed', path: '/work/c.md', decisions: 1 },
+    {
+      id: 'c-11112222',
+      title: 'Accounts',
+      topic: 'core',
+      state: 'agreed',
+      path: '/work/c.md',
+      source: '',
+      decisions: 1,
+    },
   ],
+  unregistered: [],
   specs: [
     spec('s-0123abcd', 'Login', 'ready', { concept: 'c-11112222', order: 0 }),
     spec('s-aaaa1111', 'Logout', 'ready', {
@@ -362,6 +371,76 @@ test('the positions are explained from two open specs on, and ten of them stay i
   specs = [done]
   ui = await reread(ui)
   expect(lead(await ui.find({ key: 'spec-s-cccc3333' }))).toBe('')
+  await ui.unmount()
+})
+
+test('documents in the concept folders that no concept links are counted in one dim line', async ($, on) => {
+  let unregistered: string[] | undefined = ['docs/rfcs/0007-sync.md']
+  let language = 'en'
+  const { clock } = world(on, () =>
+    overview({
+      concepts: [
+        {
+          id: 'c-11112222',
+          title: 'Accounts',
+          topic: 'core',
+          state: 'agreed',
+          path: '/work/c.md',
+          source: 'docs/rfcs/0003-accounts.md',
+          decisions: 0,
+        },
+      ],
+      unregistered,
+      language,
+    }),
+  )
+  const reread = async (ui: { press: (target: { key: string }) => Promise<unknown>; unmount: () => Promise<void> }) => {
+    await ui.press({ key: 'refresh' })
+    await ui.unmount()
+
+    return $.ui.mount({ ...PANE, surface: 'desktop' })
+  }
+  const line = /concept folders|Konzeptordnern/
+
+  await start($, clock)
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    expect((await ui.find({ type: 'Text', text: line }))?.text).toBe(
+      '1 document in the concept folders is not registered: /docket:concept',
+    )
+    await ui.unmount()
+  }
+
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  unregistered = ['docs/rfcs/0007-sync.md', 'docs/rfcs/0008-export.md', 'docs/rfcs/0009-import.md']
+  ui = await reread(ui)
+  expect((await ui.find({ type: 'Text', text: line }))?.text).toBe(
+    '3 documents in the concept folders are not registered: /docket:concept',
+  )
+
+  language = 'de'
+  ui = await reread(ui)
+  expect((await ui.find({ type: 'Text', text: line }))?.text).toBe(
+    '3 Dokumente in den Konzeptordnern sind nicht erfasst: /docket:concept',
+  )
+
+  unregistered = ['docs/rfcs/0007-sync.md']
+  ui = await reread(ui)
+  expect((await ui.find({ type: 'Text', text: line }))?.text).toBe(
+    '1 Dokument in den Konzeptordnern ist nicht erfasst: /docket:concept',
+  )
+
+  // Nothing unregistered, and a docket_ui.py of 0.6.6 that does not send the key: no line.
+  unregistered = []
+  ui = await reread(ui)
+  expect(await ui.find({ type: 'Text', text: line })).toBeUndefined()
+
+  unregistered = undefined
+  ui = await reread(ui)
+  expect(await ui.find({ type: 'Text', text: line })).toBeUndefined()
   await ui.unmount()
 })
 

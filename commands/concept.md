@@ -16,7 +16,18 @@ what IS. Neither concept nor spec nor docket is documentation.
 1. Read DOCKET.md (and CONTRIBUTING.md, AGENTS.md where present) completely: they hold what the project decided.
 2. Read the newest docket(s) under `dockets/` whose spec is not yet weighed (LOG.md shows `delivered` or `blocked`
    lines without a following `weighed` line), and the spec each belongs to.
-3. If an argument names a topic or concept, read that concept and its derived specs.
+3. If an argument names a topic or concept, read that concept and its derived specs. A concept whose `source:` is
+   set is read together with the file it names (relative to the repository root, or absolute), because its intent,
+   principles and shape stand there; its state stands in the concept file.
+4. If `concept_roots` in DOCKET.md is set, list the unregistered documents yourself: files ending in `.md`, `.mdx`,
+   `.rst` or `.adoc` under those folders (an entry's part in parentheses is its format, not a path), searched
+   recursively without hidden folders and without docket's work dir, leaving out names that start with `README` or
+   `INDEX` or contain `template` (case ignored), whose file no concept's `source:` names and no `reference_roots`
+   entry names, itself or a folder at or below the concept folder it lies in (`docs/` over `docs/rfcs/` names none
+   of them). The pane counts the same files. If there are any, the first message names their titles and asks the
+   one question: take them in as concepts (recommendation), or add their paths to `reference_roots` as what IS.
+   Taken in, each gets a reference concept file `concepts/<topic>/c-<id>-<slug>.md` (`state: agreed`, `source:`
+   its path); taking in changes no document, because a document is the project's file in the project's format.
 
 ## Weighing a docket
 
@@ -53,12 +64,24 @@ The docket output style shapes messages only where the user chose it, so the rul
   as a dialog, one click grants it once, the LOG records `ask` and `grant`. Run the command; asking for it in prose
   only doubles the dialog.
 - On `commit`, every change of the session goes in, plus the files the new content cites; changes in the working
-  tree that are not the session's are named in one line, never left out silently.
+  tree that are not the session's are named in one line, never left out silently. A concept's reference file lies
+  in the records folder like every concept and goes with the records; the document its `source:` names is a project
+  file and goes into the commit with the session's other changes.
 
 ## Writing
 
-- A feature too large for one spec: a concept file from `${CLAUDE_PLUGIN_ROOT}/templates/concept.md` under
-  `concepts/<topic>/c-<id>-<slug>.md`.
+- A feature too large for one spec, with `concept_roots` in DOCKET.md empty: a concept file from
+  `${CLAUDE_PLUGIN_ROOT}/templates/concept.md` under `concepts/<topic>/c-<id>-<slug>.md`.
+- The same with `concept_roots` set: the concept is a document in that folder (the first one, when it names several)
+  in the project's format, because the project's readers look for concepts there. The template is the format
+  `concept_roots` names in parentheses, else the document there with the newest commit. Beside it, a reference
+  concept file from the template under `concepts/<topic>/c-<id>-<slug>.md` with `source:` set to the document's path
+  relative to the repository root: it keeps the frontmatter, Open decisions and Specs derived, and Intent, Principles
+  and constraints and Shape stay empty. The state is set in the reference file, never in the document, so the
+  document keeps the project's format.
+- A concept with `source:` set changes where its content stands: when the conversation changes its intent,
+  principles or shape, write the change into the document its `source:` names, in that document's format, whether
+  you wrote it or took it in, because a second copy of the content in docket would drift from it.
 - Everything that will be implemented, and every order to write or rework specs: a spec, written by `docket:spec`.
   When the WHAT is agreed, invoke `docket:spec` yourself with the Skill tool, with the agreed WHAT as its argument.
 - Ids: `c-` or `s-` plus eight hex digits from SHA-256 over topic, title and creation time. In text to the user,

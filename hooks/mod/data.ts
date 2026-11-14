@@ -30,6 +30,8 @@ export type Concept = {
   topic: string
   state: string
   path: string
+  /** The project's own concept document as the frontmatter names it, '' where the content stands in `path`. */
+  source: string
   decisions: number
 }
 
@@ -56,6 +58,8 @@ export type Overview = {
   log_path?: string
   counts?: Record<string, number>
   concepts?: Concept[]
+  /** Documents in `concept_roots` no concept's `source` names, repo-relative with `/`, sorted. */
+  unregistered?: string[]
   specs?: Spec[]
   runs?: Run[]
   log?: string[]

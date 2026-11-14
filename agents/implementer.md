@@ -25,7 +25,8 @@ not for the project's names, paths, hosts, keys or data. A lookup helps you read
 the order: the points and what the spec decided stand. A source that calls the spec's choice wrong goes into your
 report as a deviation with its address, and you implement the spec as written.
 
-You do not touch the spec, the docket, LOG.md, concepts or other specs' files. A spec assumption the code refutes
+You do not touch the spec, the docket, LOG.md, concepts, the files a concept's `source:` names, or other specs'
+files: they say what SHOULD be, and the run does not rewrite its own order. A spec assumption the code refutes
 is not yours to fix in the spec: implement the point as far as it holds, and report the refuted assumption with
 the code location.
 

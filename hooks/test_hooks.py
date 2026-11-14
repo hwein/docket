@@ -2403,6 +2403,79 @@ class PaneData(Project):
                                  session="other-session")[1]["error"], "queued")
         self.assertIn("state: in-progress", self.spec.read_text("utf-8"))
 
+    def concept_roots_row(self, value, references=""):
+        (self.work / "DOCKET.md").write_text("| Key | Value | Source |\n|---|---|---|\n"
+                                             f"| reference_roots | {references} | |\n"
+                                             f"| concept_roots | {value} | question 7 |\n", "utf-8")
+
+    def document(self, relative, text="# Doc\n"):
+        path = self.tmp / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, "utf-8")
+        return path
+
+    def test_concept_roots_are_the_folders_without_their_format(self):
+        sys.path.insert(0, str(HOOKS))
+        import docket_lib
+        paths = type("P", (), {"config": str(self.work / "DOCKET.md")})()
+        self.assertEqual(docket_lib.concept_roots(paths), [])  # DOCKET.md without the key
+        for value, folders in (("", []), ("<folders>", []), ("`docs/rfcs/`", ["docs/rfcs/"]),
+                               ("`docs/rfcs/ (RFC, template docs/rfcs/0000-template.md)`", ["docs/rfcs/"]),
+                               ("`docs/rfcs/ (RFC)`, `docs/adr/`, , design (MADR, newest), ../concepts/",
+                                ["docs/rfcs/", "docs/adr/", "design", "../concepts/"])):
+            self.concept_roots_row(value)
+            self.assertEqual(docket_lib.concept_roots(paths), folders, value)
+
+    def test_a_concept_names_its_source_and_documents_without_one_are_unregistered(self):
+        self.concept_roots_row("`docs/rfcs/ (RFC, template docs/rfcs/0000-template.md)`, ../concepts/")
+        audit = self.document("repo/docs/rfcs/drafts/0003-audit.rst")
+        # Windows compares paths without case: a source written in other case names the same file.
+        sso = "Docs/RFCS/0001-SSO.md" if os.name == "nt" else "docs/rfcs/0001-sso.md"
+        (self.work / "concepts" / "core" / "c-33334444-sso.md").write_text(
+            f"---\nid: c-33334444\ntopic: core\ntitle: SSO\nstate: agreed\nsource: {sso}\n---\n", "utf-8")
+        (self.work / "concepts" / "core" / "c-55556666-audit.md").write_text(
+            f"---\nid: c-55556666\ntopic: core\ntitle: Audit\nstate: draft\nsource: {audit}\n---\n", "utf-8")
+        (self.work / "concepts" / "core" / "c-77778888-export.md").write_text(  # the template's empty line
+            "---\nid: c-77778888\ntopic: core\ntitle: Export\nstate: draft\nsource:               # empty, or the "
+            "project's concept document: path from the repo root (../ allowed) or absolute\n---\n", "utf-8")
+        for relative in ("repo/docs/rfcs/0001-sso.md", "repo/docs/rfcs/0002-mfa.md",
+                         "repo/docs/rfcs/drafts/0005-export.adoc", "concepts/payments.mdx",
+                         # no concept documents: an index, a template, another type, a hidden folder
+                         "repo/docs/rfcs/README.md", "repo/docs/rfcs/Index.rst", "repo/docs/rfcs/0000-template.md",
+                         "repo/docs/rfcs/drafts/RFC-Template.adoc", "repo/docs/rfcs/notes.txt",
+                         "repo/docs/rfcs/.drafts/0004-cache.md", "concepts/.git/HEAD.md"):
+            self.document(relative)
+        code, data = self.ui("overview")
+        self.assertEqual(code, 0, data)
+        self.assertEqual({c["id"]: c["source"] for c in data["concepts"]},
+                         {"c-11112222": "", "c-33334444": sso, "c-55556666": str(audit), "c-77778888": ""})
+        self.assertEqual(data["unregistered"], ["../concepts/payments.mdx", "docs/rfcs/0002-mfa.md",
+                                                "docs/rfcs/drafts/0005-export.adoc"])
+
+    def test_what_reference_roots_names_in_a_concept_folder_is_not_unregistered(self):
+        # `docs/` lies above the concept folder and says nothing about its documents; the ADR folder and the one
+        # file the user answered "what IS" for are named inside it.
+        self.concept_roots_row("`docs/rfcs/`", references="`docs/`, `docs/rfcs/adr/`, `docs/rfcs/0002-mfa.md`")
+        for relative in ("repo/docs/rfcs/0001-sso.md", "repo/docs/rfcs/0002-mfa.md", "repo/docs/rfcs/adr/0001-db.md"):
+            self.document(relative)
+        self.assertEqual(self.ui("overview")[1]["unregistered"], ["docs/rfcs/0001-sso.md"])
+
+    def test_nothing_in_the_work_dir_is_unregistered(self):
+        # A concept folder that is the work dir, or holds it: docket's own records are no concept documents.
+        self.document("work/notes.md")
+        self.document("concepts/0001-sso.md")
+        self.concept_roots_row("`../work/`")
+        self.assertEqual(self.ui("overview")[1]["unregistered"], [])
+        self.concept_roots_row("`../`")
+        self.assertNotIn("../work/DOCKET.md", self.ui("overview")[1]["unregistered"])
+        self.assertIn("../concepts/0001-sso.md", self.ui("overview")[1]["unregistered"])
+
+    def test_without_concept_roots_nothing_is_unregistered(self):
+        self.document("repo/docs/rfcs/0002-mfa.md")
+        self.assertEqual(self.ui("overview")[1]["unregistered"], [])
+        self.concept_roots_row("`docs/missing/`")  # a folder that is not there
+        self.assertEqual(self.ui("overview")[1]["unregistered"], [])
+
     def test_stop_records_the_request_for_a_running_session_only(self):
         self.assertEqual(self.ui("stop")[1]["error"], "not-running")
         self.assertEqual(self.prompt(f"/docket:implement {SPEC}")[0], 0)

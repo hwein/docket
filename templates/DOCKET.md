@@ -11,6 +11,7 @@ Framework rules live in the plugin, not here. This file holds only what this pro
 | topics | `<topic1>, <topic2>` | folders under specs/ |
 | check | `<first command of the project's check>` `<further commands, as many as the project has>` | <where the project runs them, e.g. the CI workflow> |
 | reference_roots | `<docs/, README.md, ...>` (what IS; specs say what SHOULD) | |
+| concept_roots | `<comma-separated folders, relative to the repo root, where the project keeps its concepts, each optionally followed by its format in parentheses, e.g. "docs/rfcs/ (RFC, template docs/rfcs/0000-template.md)"; empty: new concepts are docket concept files under concepts/<topic>/ in the work dir>` | question 7 |
 | model_ladder | fixer (small exact changes): haiku · implementer round 1: sonnet; complex from round 1 with opus: <the themes of this project that need it, or "none"> · round 2: opus · round 3: the orchestrator's model | |
 | third_refiner_angle | `<the project-specific angle, e.g. "operator impact", "game feel", "data migration">` | |
 | user_language | `<language of every message to the user, e.g. "Deutsch" or "English"; not the repo's language; docket's own lines follow it>` | question 12 |
@@ -32,7 +33,7 @@ Answers to the twelve questions, or a pointer to the project file that already a
 4. Who merges:
 5. Gate before merge:
 6. Release:
-7. Storage of specs and dockets:
+7. Storage of specs, dockets and concepts:
 8. Language of the repo (code, comments, docs, commits):
 9. Commenting:
 10. Forbidden paths and content:

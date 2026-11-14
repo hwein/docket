@@ -21,6 +21,10 @@ const en = {
   noConcept: 'Without a concept',
   noSpecs: 'No specs yet. /docket:concept or /docket:spec writes the first one.',
   noSpecsInConcept: 'No specs derived yet.',
+  unregistered: (n: number) =>
+    n === 1
+      ? '1 document in the concept folders is not registered: /docket:concept'
+      : `${n} documents in the concept folders are not registered: /docket:concept`,
   onlyOpen: 'Open only',
   showAll: 'Show all',
   hiddenDone: (n: number) => `${n} finished hidden`,
@@ -128,6 +132,10 @@ const de: typeof en = {
   noConcept: 'Ohne Konzept',
   noSpecs: 'Noch keine Specs. /docket:concept oder /docket:spec schreibt die erste.',
   noSpecsInConcept: 'Noch keine Specs abgeleitet.',
+  unregistered: n =>
+    n === 1
+      ? '1 Dokument in den Konzeptordnern ist nicht erfasst: /docket:concept'
+      : `${n} Dokumente in den Konzeptordnern sind nicht erfasst: /docket:concept`,
   onlyOpen: 'Nur offene',
   showAll: 'Alle zeigen',
   hiddenDone: n => `${n} abgeschlossene ausgeblendet`,

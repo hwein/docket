@@ -60,7 +60,10 @@ titles instead of ids, one message when the agents are back. It is your choice (
 
 ## Workflow
 
-1. `/docket:init`, once per project: audits the repo, asks only what it cannot answer, writes `DOCKET.md`.
+1. `/docket:init`, once per project: audits the repo, asks only what it cannot answer, writes `DOCKET.md`. It
+   finds the concept documents the project already has (ADRs, RFCs, design docs) and links them by reference: they
+   stay where they are, unchanged, and, where the project still writes concepts in such a folder, new concepts are
+   written there in the project's format.
 2. `/docket:concept`: agree the WHAT, one idea at a time.
 3. `/docket:spec`: points with done criteria a command checks. Three refiner agents read the spec and its commands
    run once before it is `ready`.
@@ -101,4 +104,4 @@ The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<
 
 ## Status
 
-0.6.6, early development. No warranty: use docket only where you can verify the result.
+0.6.7, early development. No warranty: use docket only where you can verify the result.
