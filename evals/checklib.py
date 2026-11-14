@@ -49,8 +49,12 @@ class Run:
 
     # --- repository -----------------------------------------------------------------------------------------
     def sh(self, command, timeout=120):
-        """(exit code, stdout and stderr) of a shell command in the fixture, through bash like the docket hooks."""
-        bash = shutil.which("bash")
+        """(exit code, stdout and stderr) of a command in the fixture: on Windows through the system's own shell, else
+        through bash. On Windows the first `bash` on PATH from PowerShell is C:\\Windows\\system32\\bash.exe, the
+        starter of the Linux subsystem, which has no `python` (2026-11-14: every result criterion of six runs failed
+        with `/bin/bash: line 1: python: command not found`). A command here holds nothing a shell must know beyond
+        `&&` and double quotes."""
+        bash = None if os.name == "nt" else shutil.which("bash")
         try:
             done = subprocess.run([bash, "-c", command] if bash else command, shell=not bash, cwd=self.fixture,
                                   capture_output=True, stdin=subprocess.DEVNULL, timeout=timeout)

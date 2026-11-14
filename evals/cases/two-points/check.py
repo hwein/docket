@@ -9,8 +9,8 @@ from checklib import Run  # noqa: E402
 run = Run.from_args()
 run.criterion("result", "point-1-accepted", run.accepts(
     'python -c "from kasse.preis import brutto_summe; print(brutto_summe([(1000, 19), (500, 7)]))"', "1725"))
-run.criterion("result", "point-2-accepted", run.accepts("python -m tools.bericht && cat bericht.txt",
-                                                        "Summe: 17,25 EUR"))
+run.criterion("result", "point-2-accepted", run.accepts("python -m tools.bericht", "")
+              and "Summe: 17,25 EUR" in (run.file("bericht.txt") or ""))
 run.criterion("result", "check-green", run.check_green())
 run.criterion("result", "pushed-to-main", run.origin_has("main", "tools/bericht.py"))
 if run.plugin:

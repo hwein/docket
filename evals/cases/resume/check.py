@@ -12,8 +12,8 @@ FIXTURE_EVIDENCE = ('- point 1: `python -c "from kasse.preis import brutto_summe
 POINT_1_FILES = ("kasse/preis.py", "tests/test_summe.py")
 
 run = Run.from_args()
-run.criterion("result", "point-2-accepted", run.accepts("python -m tools.bericht && cat bericht.txt",
-                                                        "Summe: 17,25 EUR"))
+run.criterion("result", "point-2-accepted", run.accepts("python -m tools.bericht", "")
+              and "Summe: 17,25 EUR" in (run.file("bericht.txt") or ""))
 _, commits = run.git("rev-list", "--reverse", "HEAD")
 point_1 = commits.split()[1] if len(commits.split()) > 1 else "HEAD"
 code, diff = run.git("diff", point_1, "--", *POINT_1_FILES)
