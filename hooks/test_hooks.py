@@ -199,7 +199,7 @@ class ModeSwitch(Project):
         self.assertEqual(self.state()["spec"], SPEC)
         self.assertEqual(self.state()["queue"], ["s-aaaa1111", "s-bbbb2222"])
         self.assertIn("Spec 1 of 3 is running", out)
-        self.assertIn("After it: s-aaaa1111, s-bbbb2222.", out)
+        self.assertIn("After it: “s-aaaa1111”, “s-bbbb2222”.", out)  # specs without a title go by their id
         self.assertIn("queued", self.log())
         self.assertEqual((self.work / "locks" / SPEC).read_text("utf-8"), SID)  # only the spec at work
         self.assertFalse((self.work / "locks" / "s-aaaa1111").exists())
@@ -1290,7 +1290,7 @@ class Series(Project):
         self.assertEqual(code, 0, err)
         self.assertEqual((self.state()["spec"], self.state()["queue"]), (SPEC, ["s-aaaa1111"]))
         self.assertIn("Spec 1 of 2 is running: Login (s-0123abcd)", out)
-        self.assertIn("After it: s-aaaa1111.", out)
+        self.assertIn("After it: “Logout”.", out)
 
     def test_all_runs_every_ready_spec_in_implementation_order(self):
         code, err, _ = self.prompt("/docket:implement --all")
@@ -1336,9 +1336,11 @@ class Series(Project):
         self.assertEqual(code, 2)
         self.assertEqual(out.strip(), "")  # no JSON, no systemMessage: nothing for the user
         # 1d.5: a state statement, no order.
-        self.assertTrue(err.startswith("[docket state] Spec 2 of 3 is running: Logout (s-aaaa1111); its docket is at "),
-                        err)
-        self.assertIn("After it: s-bbbb2222.", err)
+        # The user sees this one: the spec's id once, no path, no points, the rest of the series by title.
+        self.assertTrue(err.startswith("[docket state] Spec 2 of 3 is running: Logout (s-aaaa1111). After it: "), err)
+        self.assertIn("After it: “Profile”.", err)
+        self.assertNotIn("docket is at", err)
+        self.assertNotIn("s-bbbb2222", err)
         self.assertNotIn("step 0", err)
         state = self.state()
         self.assertEqual((state["mode"], state["spec"], state["queue"], state["series"]),
@@ -1590,6 +1592,23 @@ class AcceptanceCommands(Project):
         self.assertEqual(code, 2)
         self.assertIn("point 1 (`cargo test login`) failed in its last run (counted: `cd app; CI=1 cargo test login "
                       "2>&1`)", err)
+
+    def test_a_run_that_cuts_its_output_is_a_gap(self):
+        # luradb-web-client 2026-11-13, line 1160: `npm test 2>$null | Select-Object -Last 5` was red, counted as a
+        # run, and the failing test stayed unnamed in the closing message and the docket.
+        for cut in ("cargo test login 2>$null | Select-Object -Last 5", "cargo test login | tail -5",
+                    "cargo test login > /dev/null", "cargo test login | Out-Null; exit $LASTEXITCODE"):
+            code, err, _ = self.deliver("implementer", "reviewer", cut, "cargo test | grep ok")
+            self.assertEqual(code, 2, cut)
+            self.assertIn("point 1 (`cargo test login`) cut its output", err)
+            self.assertNotIn("point 2", err)  # the pipe of the registered command is part of it
+        for whole in ("cargo test login 2>&1 | Out-String", "cargo test login; npm test | tail -3",
+                      "cargo test login > out.txt; Get-Content out.txt"):
+            code, err, _ = self.deliver("implementer", "reviewer", whole, "cargo test | grep ok")
+            self.assertTrue(err.startswith("[docket state] The series is over: 1 delivered"), whole + ": " + err)
+        code, err, _ = self.deliver("implementer", "reviewer", "cargo test login", "cargo test | grep ok | head -3")
+        self.assertEqual(code, 2)
+        self.assertIn("point 2 (`cargo test | grep ok`) cut its output", err)
 
     def test_the_metrics_count_the_lines_of_the_deviations_section(self):
         # luradb-web-client 2026-11-12: three `[~]` lines under Deviations, every point `[x]`, metrics said 0.

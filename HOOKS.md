@@ -74,7 +74,9 @@ run's unchanged DELIVERED counts as written; the Stop right after its gate refus
   command of every `[x]` point (the part before the arrow in backticks) ran after the last agent returned and did
   not fail (in the background: by its notification, a gap until then), from the transcript; nothing is run. A command
 counts where a shell call runs it (at the start of the call or of a line, after `;`, `&`, `|`, `(` or `{`), not as
-text in a string or a here-document; a refusal names the call it counted. An agent
+text in a string or a here-document; a refusal names the call it counted. A last run that cut its output (a pipe into
+`Select-Object`, `Select-String`, `head`, `tail`, `grep`, `findstr` or `Out-Null`, or `2>$null`, `>/dev/null` behind
+the command; a pipe inside the registered command is part of it) is a gap: a red test would stand there unnamed. An agent
   returns per stop: at the stop's first delivery (tool result, notification, hand-back), or at its later hand-back;
   each form counts once per stop, a text seen since the last SendMessage never; a second delivery of a form, or a
   SendMessage that reached it (its notification names the SendMessage), starts the next stop. A spawn that never
@@ -86,7 +88,8 @@ text in a string or a here-document; a refusal names the call it counted. An age
   with where the run stands and the command that resumes it.
 
 A closed spec: lock released, the spec's state `done` (delivered) or back to `ready`, `metrics/<spec>.json`, LOG
-`delivered` or `blocked`. The series goes on with its next spec (`[docket state] Spec i of n is running …`): after
+`delivered` or `blocked`. The series goes on with its next spec (`[docket state] Spec i of n is running: <title>
+(<id>).`, the rest of the series by title, no path): after
 DELIVERED; after BLOCKED when the spec left the project as it found it or its work is pushed; a spec whose
 predecessor is open is passed over (LOG `passed-over`). Otherwise, or after `stop_requested`, or after the last spec,
 the series ends: run mark `none`, LOG `run-closed`, the records committed and that commit pushed where they lie

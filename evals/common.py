@@ -13,7 +13,8 @@ REPO = os.path.dirname(EVALS)
 CASES_DIR = os.path.join(EVALS, "cases")
 RESULTS_DIR = os.path.join(EVALS, "results")
 
-CASES = ("precondition-powershell", "two-points", "wrong-fact", "user-over-rule", "resume")
+CASES = ("precondition-powershell", "two-points", "wrong-fact", "user-over-rule", "resume",
+         "closing-series")
 STANDS = ("none", "0.5.11", "rework")
 BASE_COMMIT = "c7cf2b7"  # docket 0.5.11
 PLUGIN_PATHS = ("hooks", "commands", "agents", "templates", "output-styles", "skills", ".claude-plugin")

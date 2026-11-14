@@ -1,33 +1,45 @@
 # Closing message
 
 The one message of a run to the user, written by the orchestrator after docket's statement at the end of the
-series, from the dockets. In the user's language (DOCKET.md `user_language`), everyday words, no plan or account of
-the work. One block per spec of the series, in its order; a spec that did not start gets its line from docket's
-statement. Leave out a part that has nothing in it.
+series, from the dockets. Every word in the user's language (DOCKET.md `user_language`), the labels below included;
+everyday words. It says whether each spec was implemented as ordered, and what the user has to decide or look at: no
+plan, no account of the work, no proof of it. The proof is the docket.
 
 ```
-<title of the spec>: <delivered | blocked: the reason | not started: the reason>
-<what works now, one sentence (the docket's `result:` line)>
-Checked: <n> acceptance commands, `<check command>`, CI: green   (one line for all that is green)
-- `<command>` → <its result>                     (a line of its own only for a command that is not green)
-Deviations:
-- point <n>: <what differs from the spec and why>   (each `[~]` line)
-Unchecked:
-- <what the run did not check, and why>
+<one sentence on the run: how many specs implemented as ordered, with deviations, not implemented; how many items
+ wait for the user>                                         (only for a series of two or more specs)
+<title>: implemented as ordered.
+<title>: implemented with deviations:
+- <what differs from the order, in everyday words, and what it means for the user>
+<title>: not implemented: <the reason in everyday words>
+<title>: not started: <the reason>
+
 For you:
-- <each thing only you can decide or do: what, and where>
-- `<command>` was not run: it is on the list forbidden_commands in DOCKET.md   (one line per such command)
-Left open: <n> review findings, <m> proposals, in <path of the docket>
+- <a decision or a step only the user can take, done from this line alone> (<title>)
+Open:
+- <a finding or a proposal, one sentence>. Fault: yes | no | unclear. Recommendation: <do it | drop it | measure
+  first: how>. (<title>)
 
-<the next spec's block>
-
-Resume: `/docket:implement <ids>`   (the specs not started, the one ended `stopped by user` and each blocked spec
-                                     one of them waits for, in series order)
-Records: `<command>`                (only when docket's statement names one or two for the records)
+Resume: `/docket:implement <ids>`
+Records: `<command>`
 ```
 
-The first line of each block says the result. The message is short: a delivered spec without deviations is its
-first two lines and the `Checked:` line. Each thing stands once. A review finding that was not fixed and a
-`decision:` proposal are counted in `Left open:`, not listed: the docket holds each with its source. `For you:`
-holds only what the user alone can decide or do, each done from that line alone; without such a thing the part is
-left out. Every command counted under `Checked:` the orchestrator ran itself, with the result it saw.
+- Each spec gets the first form that fits, in this order: not started, not implemented (BLOCKED), with deviations, as
+  ordered. A deviation is a `[~]` line, a command that was not green, a red run even where a repeat was green, a point
+  not checked. A spec without a deviation is its one line.
+- Left out, also for a deviation: what the spec ordered and was done, how many commands ran, the check, test counts,
+  CI, commits, a count of review findings.
+- A red run names the test by its title and says whether its cause is known.
+- `For you:` holds every `user:` line, every `[~]` line that waits for the user and every command from
+  `forbidden_commands` that did not run. `Open:` holds every review finding the docket keeps as `reported` and every
+  `decision:` line, each written out with the fault and the recommendation the docket gives it. Never a count
+  instead of the item, never a path to it.
+- Across the series: one item from several specs is one line with all their titles; an item a later spec of the
+  series settled is left out (its docket and diff show it). `(<title>)` stands only in a series of two or more.
+- Not in the message: line numbers, file paths, code, hashes, run ids, spec and docket ids, links, "point n",
+  "spec n", role names (implementer, fixer, reviewer) and severity labels. A word that stands in the spec itself may
+  stand here (a file name the spec got wrong). Commands stand only where the user runs them: `Resume:`, `Records:`
+  and an item under `For you:`.
+- A part with nothing in it is left out. `Resume:` lists the specs not started, the one ended `stopped by user` and
+  each blocked spec one of them waits for, in series order; `Records:` stands only when docket's statement names one
+  or two commands for the records.

@@ -35,15 +35,18 @@ One line per precondition of the spec, run as the first step: `<command>` → <o
 ## Deviations
 
 `[~]` lines: what differs from the spec, or what only the user can decide or provide, and why; a command from
-`forbidden_commands` that was not run; an instruction of the user in the chat.
+`forbidden_commands` that was not run; an instruction of the user in the chat. A red run of a check or acceptance
+command, also one a repeat turned green: the test's title, its file, expected and received, the command and its start
+time, whether the cause is known, and the docket of an earlier spec (by its title) where the same test stood.
 
 - 
 
 ## Review
 
 One line per finding: `<angle> | <finding> | <source> | <severity> | <decision>`, the angle `code`, `spec` or
-`recheck`, the decision fixed or rejected with its source (`bug`, `unmet`, `rule`), or reported (every other
-severity); an angle without findings is `<angle> | no findings`.
+`recheck`, the decision fixed or rejected with its source (`bug`, `unmet`, `rule`), or
+`reported, fault: yes|no|unclear, <recommendation>` (every other severity; the recommendation do it, drop it or
+measure first: how); an angle without findings is `<angle> | no findings`.
 
 - 
 
@@ -57,7 +60,7 @@ For each file named in the spec: `updated <file>` or `<file>: not needed, <reaso
 
 Written when the spec ends, in the user's language: `state: DELIVERED` or `state: BLOCKED: <reason>` (after three
 rounds: the failed command and its output); `result:` what works now, one sentence; `user:` each step only the user
-can take; `decision:` each proposal for later, with why. A resumed spec gets its new `state:` line below the old
-block.
+can take; `decision:` each proposal for later, with why and a recommendation (do it, drop it, measure first: how).
+A resumed spec gets its new `state:` line below the old block.
 
 - 

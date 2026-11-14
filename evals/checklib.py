@@ -163,6 +163,29 @@ class Run:
                 pass
         return result if result and result.strip() else text
 
+    def assistant_texts(self):
+        """The texts of the main session's answers in order, from the stream: one entry per assistant message with
+        text, subagents left out."""
+        texts = []
+        if not self.stream:
+            return texts
+        try:
+            with open(self.stream, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if entry.get("type") != "assistant" or entry.get("parent_tool_use_id"):
+                        continue
+                    blocks = (entry.get("message") or {}).get("content") or []
+                    text = "\n".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+                    if text.strip():
+                        texts.append(text.strip())
+        except OSError:
+            pass
+        return texts
+
     def edited(self, *paths):
         """Whether an Edit or Write call of the session or an agent targeted one of the paths (relative)."""
         wanted = [p.replace("\\", "/").lower() for p in paths]

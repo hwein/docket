@@ -188,6 +188,10 @@ SAY = {
         "gate_point_failed": "der Akzeptanzbefehl von Punkt {point} (`{command}`) scheiterte in seinem letzten Lauf",
         "gate_point_running": ("der letzte Lauf des Akzeptanzbefehls von Punkt {point} (`{command}`) läuft im "
                                "Hintergrund und hat noch kein Ergebnis"),
+        "gate_check_cut": ("der letzte Lauf des Checks `{command}` hat seine Ausgabe gekürzt; ein roter Test stünde dort "
+                           "ohne Namen"),
+        "gate_point_cut": ("der letzte Lauf des Akzeptanzbefehls von Punkt {point} (`{command}`) hat seine Ausgabe "
+                           "gekürzt; ein roter Test stünde dort ohne Namen"),
         "gate_counted": " (gezählt: `{call}`)",
         "no_terminal": "Das Docket von {title} ({spec}) hat keinen Terminal state; {open} von {total} Punkten sind offen.",
         "no_terminal_old": ("Das Docket von {title} ({spec}) hat keinen Terminal state aus diesem Lauf: `state: {kind}` "
@@ -205,7 +209,9 @@ SAY = {
         "unstarted_held": "{title} hält eine andere Sitzung",
         # The run mark (mark_run) and the state lines of user_prompt.py and session_start.py: facts, no order.
         "run_line": "Spec {i} von {n} läuft: {title} ({spec}); ihr Docket liegt unter {docket} ({points}).",
+        "run_next": "Spec {i} von {n} läuft: {title} ({spec}).",
         "run_after": " Danach: {queue}.",
+        "run_more": " und {k} weitere",
         "points_summary": "{x} geliefert, {d} abweichend, {o} offen",
         "no_docket_yet": "noch kein Docket",
         "docket_unreadable": "Docket nicht lesbar",
@@ -270,6 +276,10 @@ SAY = {
         "gate_point_failed": "the acceptance command of point {point} (`{command}`) failed in its last run",
         "gate_point_running": ("the last run of the acceptance command of point {point} (`{command}`) runs in the "
                                "background and has no result yet"),
+        "gate_check_cut": ("the last run of the check `{command}` cut its output; a red test would stand there without "
+                           "its name"),
+        "gate_point_cut": ("the last run of the acceptance command of point {point} (`{command}`) cut its output; a red "
+                           "test would stand there without its name"),
         "gate_counted": " (counted: `{call}`)",
         "no_terminal": "The docket of {title} ({spec}) has no Terminal state; {open} of {total} points are open.",
         "no_terminal_old": ("The docket of {title} ({spec}) has no Terminal state from this run: `state: {kind}` stood "
@@ -286,7 +296,9 @@ SAY = {
         "unstarted_state": "{title} is in state {state}",
         "unstarted_held": "{title} is held by another session",
         "run_line": "Spec {i} of {n} is running: {title} ({spec}); its docket is at {docket} ({points}).",
+        "run_next": "Spec {i} of {n} is running: {title} ({spec}).",
         "run_after": " After it: {queue}.",
+        "run_more": " and {k} more",
         "points_summary": "{x} delivered, {d} deviations, {o} open",
         "no_docket_yet": "no docket yet",
         "docket_unreadable": "docket unreadable",
@@ -1284,6 +1296,8 @@ def gate_commands(paths, spec_id, body, transcript_path):
             problems.append(say(paths, key + "_before", **fields) + counted)
         elif outcome != "ok":
             problems.append(say(paths, key + "_" + outcome, **fields) + counted)
+        elif cuts_output(text, fields["command"]):
+            problems.append(say(paths, key + "_cut", **fields) + counted)
     return problems
 
 
@@ -1299,6 +1313,25 @@ def runs_command(text, command):
     `npm test` in an Evidence line, failed at a parser error and counted as the checks' failed last run, after a
     green one (luradb-web-client 2026-11-12, lines 446 and 504)."""
     return bool(re.search(COMMAND_PLACE + re.escape(command) + r"(?!\w)", HERE_TEXT.sub("\n", text)))
+
+
+# What cuts a command's output: a pipe into a filter that keeps only some lines, or the error stream or all output
+# thrown away. `2>&1 | Out-String` keeps everything.
+CUT_OUTPUT = re.compile(r"\|\s*(?:Select-Object|select|Select-String|sls|head|tail|grep|findstr|Out-Null)\b"
+                        r"|(?<![\w&])[12*]?>\s*(?:\$null|/dev/null)\b", re.IGNORECASE)
+COMMAND_END = re.compile(r"\r?\n|;|&&|\|\|")
+
+
+def cuts_output(text, command):
+    """Whether the call's last run of the command cuts its output: what follows the command up to the end of its line,
+    `;`, `&&` or `||` throws lines away. A pipe inside the registered command is part of it, not a cut. A red
+    `npm test 2>$null | Select-Object -Last 5` counted as a run and the failing test stayed unnamed, in the docket
+    too (luradb-web-client 2026-11-13, line 1160)."""
+    found = list(re.finditer(COMMAND_PLACE + re.escape(command) + r"(?!\w)", HERE_TEXT.sub("\n", text)))
+    if not found:
+        return False
+    rest = HERE_TEXT.sub("\n", text)[found[-1].end():]
+    return bool(CUT_OUTPUT.search(COMMAND_END.split(rest, 1)[0]))
 
 
 def review_stats(body):
@@ -1812,15 +1845,24 @@ def points_summary(paths, spec_id):
 
 
 def run_line(paths, state, mark="line"):
-    """The state line of a marked run: which spec of the series runs, where its docket lies, its points, the rest.
-    `mark`: `state` ([docket state]) where the Stop hook goes on with the next spec of the series."""
+    """The state line of a marked run: which spec of the series runs, where its docket lies, its points, the rest by
+    title. `mark`: `state` ([docket state]) where the Stop hook goes on with the next spec of the series; the user sees
+    that one, so it carries the spec's id once (the model's source after a compaction) and no path, no points
+    (luradb-web-client 2026-11-13: "ihr Docket liegt unter D:/… (noch kein Docket). Danach: s-…, s-…")."""
     spec_id = state.get("spec", "")
     i, n = position(state)
-    line = marked(paths, mark, say(paths, "run_line", i=i, n=n, title=spec_title(paths, spec_id) or spec_id,
-                                   spec=spec_id, docket=paths.docket_file(spec_id) or paths.dockets,
-                                   points=points_summary(paths, spec_id)))
-    if state.get("queue"):
-        line += say(paths, "run_after", queue=", ".join(state["queue"]))
+    title = spec_title(paths, spec_id) or spec_id
+    if mark == "state":
+        line = marked(paths, mark, say(paths, "run_next", i=i, n=n, title=title, spec=spec_id))
+    else:
+        line = marked(paths, mark, say(paths, "run_line", i=i, n=n, title=title, spec=spec_id,
+                                       docket=paths.docket_file(spec_id) or paths.dockets,
+                                       points=points_summary(paths, spec_id)))
+    queue = [s for s in (state.get("queue") or []) if s]
+    if queue:
+        names = ", ".join(quoted(paths, spec_title(paths, s) or s) for s in queue[:3])
+        more = say(paths, "run_more", k=len(queue) - 3) if len(queue) > 3 else ""
+        line += say(paths, "run_after", queue=names + more)
     return line
 
 

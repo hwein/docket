@@ -61,12 +61,21 @@ the user). Each such answer begins with `[docket rule: <key>]`.
 | Closing message | you, from the template | after docket's statement at the end of the series | the chat |
 
 ## Text in the run
-After every Terminal state the turn ends with one line, the docket's `state:` line, and nothing else: docket closes
-the spec at the end of that turn and answers it. A turn without any text does not reach docket, the client asks for a
-visible answer instead. You write the closing message once, after docket's statement at the end of the series, from
-the dockets; until that statement there is no summary of the run, also where the client asks for a closing word or a
-recap: the one line is the answer. Otherwise you write only the answer to a message of the user; a status line naming
-the step you are at is fine.
+Every text to the user in the run (a status line, the end line of a spec, the closing message, a recap or summary
+the client asks for) is in the user's language and in everyday words, and names a spec by its title. It holds no line
+numbers, file paths, code, hashes, run ids, spec or docket ids, links, "point n" or "spec n", no role names
+(implementer, fixer, reviewer, diagnoser) and no severity labels: these stand in the docket. A word that stands in the
+spec itself may stand in the text; a command only where the user runs it (`Resume:`, `Records:`, `For you:`).
+
+After every Terminal state the turn ends with one line and nothing else: `<title>: done, report at the end.` or, for
+BLOCKED, `<title>: stopped, report at the end.`, in the user's language. docket reads the Terminal state from the
+docket, not from this line; it closes the spec at the end of that turn and answers it. A turn without any text does
+not reach docket, the client asks for a visible answer instead; after a `[docket gate]` refusal the turn that settles
+it ends with the same line. You write the closing message once, after docket's statement at the end of the series,
+from the dockets; until that statement there is no summary of the run, also where the client asks for a closing word,
+a recap or a status: the one line is the answer, and after the statement the closing message's first line. Otherwise
+you write only the answer to a message of the user, and a status line where the user or the client asks for a sign of
+life: one line, `<title>: <the step in everyday words>` ("Net price: checks running").
 
 ## 0. Start or resume
 The line `No run marked: <reason>` in the context: the turn ends with that reason to the user. Otherwise read
@@ -106,7 +115,11 @@ work. While an agent runs, you change nothing in the repo.
 
 ## 3. Check
 After each return: read the diff completely (new files whole), run every acceptance command and every `check` command
-yourself, verbatim, and compare. Green: flip the point to `[x]` with its Evidence line (`point n: <command> →
+yourself, verbatim, and compare. Its whole output stays: no pipe into `Select-Object`, `Select-String`, `head`,
+`tail`, `grep` or `findstr`, no `2>$null`, `2>/dev/null` or `>$null` behind it (a long output goes to a file you then
+read); docket's gate counts no cut run. A red run, also one a repeat turns green, is a `[~]` line with the test's
+title, its file, expected and received, the command and its start time and whether the cause is known; look for the
+same test in the other dockets first and name the earlier spec by its title. It is never a `decision:` line instead. Green: flip the point to `[x]` with its Evidence line (`point n: <command> →
 <result>`, the commit in words). The Evidence section gets `round n: <model>, <findings>`. Not green: the next round,
 a fresh implementer on that round's model, briefed with the failed command and its output (at most 20 lines) and the
 commits of the round before as a range to read first. When two rounds failed at the same check, name the assumption
@@ -120,7 +133,8 @@ spec path, the base (`git diff <base>...HEAD`), for `spec` the points that ended
 is a line in the docket's Review section, `<angle> | <finding> | <source> | <severity> | <decision>`, an angle without
 findings `<angle> | no findings`. Findings of severity `bug`, `unmet` and `rule` are fixed (an implementer or a fixer,
 briefed with the line verbatim) or rejected with the source that refutes them; every other finding stays in the docket
-and is counted in the closing message. After a fix, one reviewer of angle `recheck` reads the fixed findings and the range
+as `reported, fault: yes|no|unclear, <recommendation>`, your judgement at the code, and is written out in the closing
+message. After a fix, one reviewer of angle `recheck` reads the fixed findings and the range
 since; one recheck per round, at most three rounds. Then every acceptance command and the `check` run once more: they
 count after the last agent.
 
@@ -133,8 +147,8 @@ count after the last agent.
    `CI: <state> <hash>`). A red run not shown locally is started again once; a shown fault is repaired in this run as
    a commit of its own, with a `recheck`; what stays red is a `[~]` line with its cause.
 3. Terminal state, in the user's language: `state: DELIVERED` or `state: BLOCKED: <reason>`, `result: <what works
-   now>`, a `user:` line per step only the user can take, a `decision:` line per proposal for later. Then the turn
-   ends with the `state:` line as its only text. docket closes the spec (state, lock, metrics, LOG) and answers with the next spec of the series
+   now>`, a `user:` line per step only the user can take, a `decision:` line per proposal for later with why and a
+   recommendation. Then the turn ends with the one end line (Text in the run) as its only text. docket closes the spec (state, lock, metrics, LOG) and answers with the next spec of the series
    (`[docket state] Spec i of n is running …`: start it at step 0) or with the end of the series.
 
 ## 6. Series
@@ -144,7 +158,9 @@ is open is passed over. docket does this and names the result.
 
 ## 7. Closing message
 After docket's statement at the end of the series (`[docket state] The series is over: …`), write the one message of
-the run from `${CLAUDE_PLUGIN_ROOT}/templates/closing-message.md`, from the dockets. When specs did not start or one
+the run from `${CLAUDE_PLUGIN_ROOT}/templates/closing-message.md`, from the dockets of the whole series: every
+`user:` and `decision:` line and every finding kept as `reported` written out, one item from several specs once, an
+item a later spec of the series settled left out. When specs did not start or one
 ended `stopped by user`, the message gives `/docket:implement <ids>`, the command that takes them up: those specs and
 each blocked spec one of them waits for, in series order (docket starts no spec before an undone predecessor). Where
 the statement names a command or two for the records, they stand at its end.
