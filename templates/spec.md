@@ -77,4 +77,4 @@ that stay open, the date.
 - spec: <findings, or none>
 - <third_refiner_angle>: <findings, or none>
 - `<command>` → <result of the dry run> (<output excerpt>)
-- open: <a finding that stays open, or none>
+- open: <a finding the team leaves open, with the reason, or none; what waits for the user is a User decision>

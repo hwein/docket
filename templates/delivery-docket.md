@@ -60,7 +60,8 @@ For each file named in the spec: `updated <file>` or `<file>: not needed, <reaso
 
 Written when the spec ends, in the user's language: `state: DELIVERED` or `state: BLOCKED: <reason>` (after three
 rounds: the failed command and its output); `result:` what works now, one sentence; `user:` each step only the user
-can take; `decision:` each proposal for later, with why and a recommendation (do it, drop it, measure first: how).
+can take; `decision:` each proposal beyond the spec's order, with why and a recommendation (do it: what is changed where,
+without a later time; drop it; measure first: how).
 Work the run can do itself is done before this block and is no line here.
 A resumed spec gets its new `state:` line below the old block.
 

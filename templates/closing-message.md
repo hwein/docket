@@ -17,8 +17,8 @@ plan, no account of the work, no proof of it. The proof is the docket.
 For you:
 - <a decision or a step only the user can take, done from this line alone> (<title>)
 Open:
-- <a finding or a proposal the user decides, one sentence>. Fault: yes | no | unclear. Recommendation: <do it |
-  measure first: how>. (<title>)
+- <a finding or a proposal the user decides, one sentence: what is so now and what it causes>. Fault: yes | no |
+  unclear. Recommendation: <do it: what the user's yes changes | measure first: how>. (<title>)
 
 Resume: `/docket:implement <ids>`
 Records: `<command>`
@@ -36,6 +36,8 @@ Records: `<command>`
   written out with the fault and the recommendation the docket gives it. Never a count instead of the item, never a
   path to it. An item with `drop it` stays in the docket: not in the message, not as a count. Work of the run itself
   (its records, a fix within the spec's order) is no item: the run did it.
+- The user answers an `Open:` item with one word: it says what is so now and what it causes, and `do it` says what
+  the user's yes changes. It names no later time ("at the next revision", "next time"): the user decides it now.
 - Across the series: one item from several specs is one line with all their titles; an item a later spec of the
   series settled is left out (its docket and diff show it). `(<title>)` stands only in a series of two or more.
 - Not in the message: line numbers, file paths, code, hashes, run ids, spec and docket ids, links, "point n",

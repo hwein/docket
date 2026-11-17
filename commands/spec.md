@@ -72,8 +72,9 @@ Before `state: ready`, the spec is read three times and its commands run once. I
    `model`), each in a fresh context with one angle: `feasibility` (the spec against the code), `spec` (the spec against its concept and the reference
    docs DOCKET.md names), and the project's angle, `third_refiner_angle` in DOCKET.md (unset: users and operators).
    Briefing: the angle, the spec path, the concept path and, when the concept's `source:` is set, the path of that
-   file. Each finding is one line. While they run, a returning agent gets no message: the turn ends without text,
-   and the user gets one message when the last one is back.
+   file. Each finding is one line. While they run, a turn ends with one line and nothing else, `<title>: check
+   running, <n> of three back`, in the user's language (after a turn without text the client asks for a visible
+   answer); what the refiners found goes to the user in one message when the last one is back.
 2. Dry run, while they run: every precondition and every acceptance command of the spec runs once, in the shell
    its line is written for (PowerShell syntax in the PowerShell tool). An expectation in prose you weigh against the output
    and write down with an excerpt of the output. An acceptance command passes when it starts and either fails for the
@@ -86,8 +87,11 @@ Before `state: ready`, the spec is read three times and its commands run once. I
    starts no run until `/docket:precheck` finds it met.
 3. Findings: fix in the spec only what would stop or falsify the run: a wrong fact, a criterion that cannot be met,
    a command that does not start. A criterion whose part before the arrow is not a command in backticks is such a
-   finding in a new spec. Every other finding stays a line in `## Ready check`. Only what the user alone can decide
-   goes to the user, one question at a time, with a recommendation (User decisions).
+   finding in a new spec. What the user alone can decide goes to the user, one question at a time, with a
+   recommendation (User decisions): a finding you would leave to the user (the user's file or configuration, a
+   matter of the author) is such a question, and so is an Out of scope line that rests on a decision of the user
+   which a refiner shows does not cover it. Every other finding stays a line in `## Ready check`, `open:` with the
+   reason the team leaves it: no `open:` line waits for the user.
 
 ## Setting ready
 

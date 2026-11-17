@@ -151,9 +151,10 @@ count after the last agent.
    `CI: <state> <hash>`). A red run not shown locally is started again once; a shown fault is repaired in this run as
    a commit of its own, with a `recheck`; what stays red is a `[~]` line with its cause.
 3. Terminal state, in the user's language: `state: DELIVERED` or `state: BLOCKED: <reason>`, `result: <what works
-   now>`, a `user:` line per step only the user can take, a `decision:` line per proposal for later with why and a
-   recommendation. Work of the run that is left (a record to bring up to date, a reference file, a fix within the
-   spec's order) is done before this step: it is never a `user:` line, a `decision:` line or a `reported` finding.
+   now>`, a `user:` line per step only the user can take, a `decision:` line per proposal beyond the spec's
+   order with why and a recommendation (`do it` says what is changed where, and names no later time). Work of the
+   run that is left (a record to bring up to date, a reference file, a fix within the spec's order) is done before
+   this step: it is never a `user:` line, a `decision:` line or a `reported` finding.
    Then the turn ends with the one end line (Text in the run) as its only text. docket closes the spec (state, lock, metrics, LOG) and answers with the next spec of the series
    (`[docket state] Spec i of n is running …`: start it at step 0) or with the end of the series.
 
