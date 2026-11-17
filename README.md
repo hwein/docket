@@ -23,15 +23,16 @@ the team and read by you.
   starts a run, here or in a session of its own. Example data.</sub>
 </p>
 
-## What it is for
+<p align="center">
+  <a href="https://github.com/hwein/docket/actions/workflows/test.yml"><img alt="tests" src="https://github.com/hwein/docket/actions/workflows/test.yml/badge.svg"></a>
+  <img alt="version" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fhwein%2Fdocket%2Fmain%2F.claude-plugin%2Fplugin.json&amp;query=%24.version&amp;label=version&amp;color=blue">
+  <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
 
-Long, autonomous implementation runs. You think with the model until the WHAT is agreed, write it down as a
-spec, then hand it over: one session runs for hours, spawns its own agents, verifies its own work and ends with
-one message. docket exists so that such a run can be trusted without watching it: the run checks its own work
-against commands written down before the first code, the docket shows what was done with evidence you can check,
-and hooks hold only the rules that have no exception (your project rules and the gate before delivered).
-
-It is not a chat assistant for quick edits. The modes before the run are short; the run itself is long.
+- **Agreed before built.** The spec and its done criteria are fixed before the first line of code.
+- **Checked, not claimed.** Every point is closed by a command the orchestrator ran itself, with its output.
+- **One message at the end.** The run asks nothing until it is over; deviations and open decisions come with a
+  recommendation.
 
 ## Install
 
@@ -51,29 +52,11 @@ claude plugin marketplace update docket
 claude plugin update docket@docket
 ```
 
-Claude Code keeps its own copy of each installed version, so a session never runs a half-updated plugin. Every
-push to this repository runs the hook tests on Linux and Windows (`.github/workflows/test.yml`); the badge on the
-latest commit shows whether they passed.
-
-The plugin ships an output style, `docket:docket`: the result first, at most one question with a recommendation,
-titles instead of ids, one message when the agents are back. It is your choice (`/config`); docket does not set it.
-
-## Workflow
-
-1. `/docket:init`, once per project: audits the repo, asks only what it cannot answer, writes `DOCKET.md`. It
-   finds the concept documents the project already has (ADRs, RFCs, design docs) and links them by reference: they
-   stay where they are, unchanged, and, where the project still writes concepts in such a folder, new concepts are
-   written there in the project's format.
-2. `/docket:concept`: agree the WHAT, one idea at a time.
-3. `/docket:spec`: points with done criteria a command checks. Three refiner agents read the spec and its commands
-   run once before it is `ready`.
-4. `/docket:implement <id>`: the run. A docket with one acceptance line per point before the first code,
-   implementer agents, checks the orchestrator runs itself, a review, push. Nothing asks you until it is over.
-5. One closing message for the whole series: per spec whether it was implemented as ordered, with deviations or
-   not, each deviation, decision and open finding written out with a recommendation; until then one line per spec.
-   The proof of the work is the docket. Deviations go back to step 2.
+Optional: the output style `docket:docket` (result first, at most one question), chosen in `/config`.
 
 ## Commands
+
+`init` once per project, then `concept → spec → implement → docket`.
 
 | Command | What happens |
 |---|---|
@@ -86,23 +69,54 @@ titles instead of ids, one message when the agents are back. It is your choice (
 | `/docket:status` | One line: mode, spec, open points, last LOG line. |
 | `/docket:stop` | Ends a run at the next checkpoint. |
 
+## What a run leaves
+
+A docket per spec, the proof of the work (excerpt, example data):
+
+```markdown
+## Points
+
+| # | Point                       | Acceptance line                              | State |
+|---|-----------------------------|----------------------------------------------|-------|
+| 1 | `--name Ada` greets by name | `python greet.py --name Ada` → `Hello, Ada!` | [x]   |
+| 2 | README describes `--name`   | `grep -c -F -- "--name Ada" README.md` → 1   | [x]   |
+
+## Evidence
+
+- point 1: `python greet.py --name Ada` → `Hello, Ada!`, exit 0; commit "feat: greet by name"
+- point 2: `grep -c -F -- "--name Ada" README.md` → `1`; commit "docs: describe --name"
+- CI: green fcb22fe
+
+## Terminal state
+
+- state: DELIVERED
+- result: `greet.py --name Ada` greets with "Hello, Ada!"; the README describes it.
+```
+
+And one closing message for the whole series (example data):
+
+```text
+Two specs: one implemented as ordered, one with a deviation. One item waits for you.
+Greeting by name: implemented as ordered.
+Farewell: implemented with deviations:
+- The farewell is "Bye!", the order said "Goodbye!": a test of the earlier spec expects "Bye!".
+
+Open:
+- A name with an emoji ends the program with an error in a Windows pipe. Fault: yes.
+  Recommendation: do it: your yes makes the output UTF-8 on every platform. (Greeting by name)
+```
+
 ## What you can rely on
 
 - Delivered means: no point open, and the project's check and every acceptance command ran after the last agent
   and passed.
 - docket enforces five things: `forbidden_paths`, `push_branch`, `commit_regex`, `forbidden_commands` in a run,
   and the gate before delivered. Details: [HOOKS.md](HOOKS.md).
-- Every command the docket counts as checked was run by the orchestrator, with its whole output and the result it
-  saw; a red test is named there by its title.
 - At the end of a run docket commits and pushes its own records where they lie in a repository
   (`commit_records: no` turns it off).
 
-The pane beside the chat shows specs, their state and the run at work; its buttons run the same commands.
-The line under the prompt says `docket <version>` where docket is set up in the project.
-
-The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<repo key>/` by default;
-`/docket:init` offers `docket/` inside the repo instead, or another folder such as a second repo, which it records
-in `.claude/docket.json` (`{"work_dir": "<path>"}`). docket adds no code to your repository.
+The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) is `~/.docket/<repo key>/` by default; `/docket:init`
+offers `docket/` in the repo or another folder. docket adds no code to your repository.
 
 ## Status
 
