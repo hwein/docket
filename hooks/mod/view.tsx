@@ -7,11 +7,13 @@ import type { Concept, Overview, Run, Spec } from './data'
 import type { Words } from './strings'
 
 // `Svg` is the graphical surfaces' alone: the terminal draws the name as text.
-export type Kit = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button' | 'Select' | 'Markdown'> &
+export type Kit = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button' | 'Input' | 'Select' | 'Markdown'> &
   Partial<Pick<Elements['desktop'], 'Svg'>>
 
 export type Tab = 'register' | 'log' | 'config'
 export type Detail = 'spec' | 'docket' | 'log'
+/** A column of the finished table that orders it. */
+export type SortKey = 'closed' | 'title' | 'concept'
 
 export type PaneState = {
   data: Overview | undefined
@@ -30,6 +32,11 @@ export type PaneState = {
   hasVectors: boolean
   /** Ready specs ticked in the register, to run together as one series. */
   picked: string[]
+  /** What the titles of the finished table are searched for, '' for every finished spec. */
+  search: string
+  /** The column the finished table is ordered by, and whether its largest value leads. */
+  sortBy: SortKey
+  isSortDescending: boolean
 }
 
 export type Actions = {
@@ -42,6 +49,9 @@ export type Actions = {
   toggleOnlyOpen: () => void
   togglePick: (id: string) => void
   clearPicks: () => void
+  setSearch: (text: string) => void
+  clearSearch: () => void
+  sortBy: (key: SortKey) => void
   implement: (target: string, label: string) => void
   implementInSession: (target: string, label: string) => void
   precheck: (target: string, label: string) => void
@@ -78,6 +88,15 @@ const DIGIT_BLANK = '\u2007'
 const STOP_BLANK = '\u2008'
 // The tick's slot in a row, in cells: wide enough for the glyph, and the same with and without one.
 const PICK_WIDTH = 3
+// The finished table draws at most this many rows, and the search reaches the others: the desktop app drops a tree
+// of 2,000 nodes or more (Claude 5.11492.5.0, ion-dist.asar: `e.nodes<2e3`), and a row is up to 21 of them.
+const TABLE_ROWS = 60
+// The table's fixed columns, in cells: the state glyph, the concept's title, the closing day under its head, the
+// docket's button.
+const GLYPH_WIDTH = 2
+const CONCEPT_WIDTH = 14
+const DAY_WIDTH = 12
+const DOCKET_WIDTH = 9
 
 const stateText = (t: Words, state: string): string => `${GLYPH[state] ?? '·'} ${t.states[state] ?? state}`
 
@@ -86,8 +105,46 @@ const isOpen = (spec: Spec): boolean => !FINISHED.includes(spec.state)
 /** When a finished spec was closed: the stamp of its LOG line, or the day it was written where the LOG has none. */
 const closedAt = (spec: Spec): string => spec.closed || spec.created
 
-const newestFirst = (specs: readonly Spec[]): Spec[] =>
-  [...specs].sort((a, b) => closedAt(b).localeCompare(closedAt(a)) || a.id.localeCompare(b.id))
+/**
+ * The day a finished spec was closed, as the person's own calendar counts it: the LOG stamps in UTC, and its day is
+ * another one around midnight. '' where no line of the LOG closed the spec: the day it was written is not that day.
+ */
+const closedDay = (spec: Spec): string => {
+  const at = new Date(spec.closed)
+
+  if (spec.closed === '' || Number.isNaN(at.getTime())) {
+    return ''
+  }
+
+  const two = (part: number): string => String(part).padStart(2, '0')
+
+  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}`
+}
+
+/**
+ * The finished specs whose title holds the search text, in the table's order: by the stamp they were closed at, by
+ * title or by their concept's title. Specs of one value stand by id in both directions.
+ */
+const finishedRows = (
+  specs: readonly Spec[],
+  concepts: ReadonlyMap<string, string>,
+  search: string,
+  by: SortKey,
+  isDescending: boolean,
+): Spec[] => {
+  const wanted = search.trim().toLowerCase()
+  const value = (spec: Spec): string =>
+    by === 'title'
+      ? spec.title.toLowerCase()
+      : by === 'concept'
+        ? (concepts.get(spec.concept) ?? '').toLowerCase()
+        : closedAt(spec)
+  const sign = isDescending ? -1 : 1
+
+  return specs
+    .filter(spec => !isOpen(spec) && spec.title.toLowerCase().includes(wanted))
+    .sort((a, b) => sign * value(a).localeCompare(value(b)) || a.id.localeCompare(b.id))
+}
 
 const byOrder = (a: Spec, b: Spec): number =>
   a.order - b.order || a.created.localeCompare(b.created) || a.id.localeCompare(b.id)
@@ -117,15 +174,9 @@ export const ranks = (data: Overview): Map<string, number> => {
   )
 }
 
-/** A group's rows: the open specs, a predecessor before what waits for it, then the finished ones, the one closed last first. */
-const listed = (specs: readonly Spec[]): Spec[] => [
-  ...specs.filter(isOpen).sort(byOrder),
-  ...newestFirst(specs.filter(spec => !isOpen(spec))),
-]
-
 /**
- * A spec's number as its row shows it, right-aligned to the largest one; a blank of that width for a spec without
- * one, and nothing while no spec has a number.
+ * An open spec's number as its row shows it, right-aligned to the largest one; a blank of that width for a spec
+ * without one, and nothing while no spec has a number.
  */
 const positionText = (rank: ReadonlyMap<string, number>, spec: Spec): string => {
   const width = String(rank.size).length
@@ -238,9 +289,7 @@ const specRow = (
   // stood between the position and the title.
   const parts = [
     <Text color={COLOR[spec.state] ?? 'text'}>{`${GLYPH[spec.state] ?? '·'} `}</Text>,
-    <Text weight={spec.state === 'in-progress' ? 'semibold' : 'regular'} strikethrough={spec.state === 'superseded'}>
-      {spec.title}
-    </Text>,
+    <Text weight={spec.state === 'in-progress' ? 'semibold' : 'regular'}>{spec.title}</Text>,
   ]
 
   if (position) {
@@ -256,7 +305,7 @@ const specRow = (
   }
 
   // Three columns: the tick in a slot of one width whether a row has one or not, so every position starts at the
-  // same place; the row itself, which takes the room; the note and the docket at the right edge.
+  // same place; the row itself, which takes the room; the note at the right edge.
   return (
     <Box flexDirection="row" gap="sm" alignItems="center">
       <Box width={PICK_WIDTH} flexShrink={0}>
@@ -270,12 +319,7 @@ const specRow = (
         )}
       </Box>
       <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-        <Button
-          key={`spec-${spec.id}`}
-          plain
-          dimColor={FINISHED.includes(spec.state)}
-          onPress={() => act.openSpec(spec.id)}
-        >
+        <Button key={`spec-${spec.id}`} plain onPress={() => act.openSpec(spec.id)}>
           {parts}
         </Button>
       </Box>
@@ -286,8 +330,157 @@ const specRow = (
           </Text>
         </Box>
       )}
-      {spec.state === 'done' && spec.docket !== '' && (
-        <Button key={`docket-${spec.id}`} plain dimColor label={`[${t.docket}]`} onPress={() => act.openDocket(spec.id)} />
+    </Box>
+  )
+}
+
+/**
+ * A finished spec's row in the table. The state glyph is a text of its own beside the title's Button: the desktop
+ * app draws a Button as its label in one color and drops what its children say about theirs (Claude 5.11492.5.0,
+ * ion-dist.asar), which left the tick of a done spec grey inside the row's Button.
+ */
+const finishedRow = (
+  kit: Kit,
+  t: Words,
+  data: Overview,
+  spec: Spec,
+  rank: ReadonlyMap<string, number>,
+  concepts: ReadonlyMap<string, string>,
+  act: Actions,
+) => {
+  const { Box, Button, Text } = kit
+  const note = marks(t, data, spec, rank)
+  const concept = concepts.get(spec.concept) ?? ''
+  const day = closedDay(spec)
+  const isSuperseded = spec.state === 'superseded'
+  const parts = [<Text strikethrough={isSuperseded}>{spec.title}</Text>]
+
+  // A run names the spec until its last line is written, a moment after the state says done.
+  if (spec.running) {
+    parts.push(<Text color="claude">{' ▶'}</Text>)
+  }
+
+  return (
+    <Box flexDirection="row" gap="sm" alignItems="center">
+      <Box width={GLYPH_WIDTH} flexShrink={0}>
+        <Text color={COLOR[spec.state] ?? 'text'}>{GLYPH[spec.state] ?? '·'}</Text>
+      </Box>
+      <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+        {/* Dim where the line through the title is not drawn: the desktop app's Button. */}
+        <Button key={`spec-${spec.id}`} plain dimColor={isSuperseded} onPress={() => act.openSpec(spec.id)}>
+          {parts}
+        </Button>
+      </Box>
+      {note !== '' && (
+        <Box flexShrink={0}>
+          <Text dimColor size="caption">
+            {note}
+          </Text>
+        </Box>
+      )}
+      {/* The rows stood under their concept's heading before they stood in one table. */}
+      {concepts.size > 0 && (
+        <Box width={CONCEPT_WIDTH} flexShrink={0} overflow="hidden">
+          {concept !== '' && (
+            <Text dimColor wrap="truncate-end">
+              {concept}
+            </Text>
+          )}
+        </Box>
+      )}
+      <Box width={DAY_WIDTH} flexShrink={0}>
+        {day !== '' && (
+          <Text dimColor tabular>
+            {day}
+          </Text>
+        )}
+      </Box>
+      <Box width={DOCKET_WIDTH} flexShrink={0}>
+        {spec.state === 'done' && spec.docket !== '' && (
+          <Button
+            key={`docket-${spec.id}`}
+            plain
+            dimColor
+            label={`[${t.docket}]`}
+            onPress={() => act.openDocket(spec.id)}
+          />
+        )}
+      </Box>
+    </Box>
+  )
+}
+
+/**
+ * The finished specs of the whole project as one table: state, title, note, concept where the project has any, the
+ * day closed, docket. A column's head orders by it and a second press turns the order round; the field searches the
+ * titles on Enter.
+ */
+const finishedTable = (
+  kit: Kit,
+  t: Words,
+  data: Overview,
+  rank: ReadonlyMap<string, number>,
+  s: PaneState,
+  act: Actions,
+) => {
+  const { Box, Button, Input, Text } = kit
+  const specs = data.specs ?? []
+  const all = specs.filter(spec => !isOpen(spec)).length
+  const concepts = new Map((data.concepts ?? []).map(concept => [concept.id, concept.title || concept.id]))
+  const found = finishedRows(specs, concepts, s.search, s.sortBy, s.isSortDescending)
+  const rows = found.slice(0, TABLE_ROWS)
+  const columnHead = (key: SortKey, label: string) => (
+    <Button
+      key={`sort-${key}`}
+      plain
+      dimColor
+      label={s.sortBy === key ? `${label} ${s.isSortDescending ? '▼' : '▲'}` : label}
+      onPress={() => act.sortBy(key)}
+    />
+  )
+
+  return (
+    <Box flexDirection="column" gap="xs" marginTop="xs">
+      <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
+        <Text weight="semibold" size="heading">
+          {t.finished(all)}
+        </Text>
+        {/* The search text stands here too: the terminal empties its field on Enter while the drawn value stays. */}
+        {s.search !== '' && <Text dimColor>{t.matches(found.length, all, s.search)}</Text>}
+      </Box>
+      {/* On Enter, not on every key: the desktop app puts typed text back after a redraw only while the drawn
+          value stays the same, so a value that follows the typing would write over the keys typed since. */}
+      <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
+        <Input
+          key="finished-search"
+          label={t.search}
+          value={s.search}
+          submitLabel={t.searchSubmit}
+          onSubmit={act.setSearch}
+        />
+        {s.search !== '' && <Button key="finished-clear" label={t.clearSearch} onPress={act.clearSearch} />}
+      </Box>
+      <Box flexDirection="row" gap="sm" alignItems="center">
+        <Box width={GLYPH_WIDTH} flexShrink={0} />
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+          {columnHead('title', t.columnTitle)}
+        </Box>
+        {concepts.size > 0 && (
+          <Box width={CONCEPT_WIDTH} flexShrink={0}>
+            {columnHead('concept', t.concept)}
+          </Box>
+        )}
+        <Box width={DAY_WIDTH} flexShrink={0}>
+          {columnHead('closed', t.columnClosed)}
+        </Box>
+        <Box width={DOCKET_WIDTH} flexShrink={0} />
+      </Box>
+      {rows.map(spec => finishedRow(kit, t, data, spec, rank, concepts, act))}
+      {found.length === 0 && <Text dimColor>{t.noMatch}</Text>}
+      {found.length > rows.length && (
+        <Text dimColor size="caption">
+          {t.tableCut(rows.length, found.length)}
+        </Text>
       )}
     </Box>
   )
@@ -350,22 +543,19 @@ const group = (
   act: Actions,
 ) => {
   const { Box, Button, Text } = kit
-  const shown = listed(s.isOnlyOpen ? specs.filter(isOpen) : specs)
-  const openRows = shown.filter(isOpen)
-  const finishedRows = shown.filter(spec => !isOpen(spec))
-  const hidden = specs.length - shown.length
+  // The open specs, a predecessor before what waits for it; the finished ones stand in the table below the groups.
+  const openRows = specs.filter(isOpen).sort(byOrder)
+  const finished = specs.length - openRows.length
   // What a run of the concept takes: docket leaves a held spec out.
   const ready = specs.filter(spec => spec.state === 'ready' && !spec.held).length
-  const open = specs.filter(isOpen).length
-  const meta = concept
-    ? [
-        t.conceptStates[concept.state] ?? concept.state,
-        `${open} ${t.open.toLowerCase()}`,
-        concept.decisions > 0 ? t.decisions(concept.decisions) : '',
-      ]
-        .filter(Boolean)
-        .join(' · ')
-    : `${open} ${t.open.toLowerCase()}`
+  const meta = [
+    concept ? (t.conceptStates[concept.state] ?? concept.state) : '',
+    `${openRows.length} ${t.open.toLowerCase()}`,
+    finished > 0 ? t.finishedCount(finished) : '',
+    concept && concept.decisions > 0 ? t.decisions(concept.decisions) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <Box flexDirection="column" gap="xs">
@@ -394,15 +584,6 @@ const group = (
       )}
       {specs.length === 0 && <Text dimColor>{t.noSpecsInConcept}</Text>}
       {openRows.map(spec => specRow(kit, t, data, spec, rank, s, act))}
-      {openRows.length > 0 && finishedRows.length > 0 && (
-        <Box marginTop="xs">
-          <Text dimColor size="caption">
-            {t.finished(finishedRows.length)}
-          </Text>
-        </Box>
-      )}
-      {finishedRows.map(spec => specRow(kit, t, data, spec, rank, s, act))}
-      {hidden > 0 && <Text dimColor>{t.hiddenDone(hidden)}</Text>}
     </Box>
   )
 }
@@ -413,7 +594,8 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
   const concepts = data.concepts ?? []
   const known = new Set(concepts.map(concept => concept.id))
   const loose = specs.filter(spec => !known.has(spec.concept))
-  const hasFinished = specs.some(spec => FINISHED.includes(spec.state))
+  const finished = specs.filter(spec => !isOpen(spec)).length
+  const hasFinished = finished > 0
   const rank = ranks(data)
   const bar = pickBar(kit, t, data, s, act)
   const unregistered = data.unregistered ?? []
@@ -451,7 +633,14 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
           act,
         ),
       )}
-      {loose.length > 0 && group(kit, t, data, undefined, loose, rank, concepts.length > 0, s, act)}
+      {/* A group without a concept has no heading of its own to keep: without an open spec it has nothing to show. */}
+      {loose.some(isOpen) && group(kit, t, data, undefined, loose, rank, concepts.length > 0, s, act)}
+      {hasFinished &&
+        (s.isOnlyOpen ? (
+          <Text dimColor>{t.hiddenDone(finished)}</Text>
+        ) : (
+          finishedTable(kit, t, data, rank, s, act)
+        ))}
       {/* Documents in the project's concept folders that no concept links: /docket:concept takes them in. */}
       {unregistered.length > 0 && (
         <Text dimColor size="caption">

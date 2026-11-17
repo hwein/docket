@@ -122,7 +122,11 @@ entry names, itself or a folder at or below their concept folder, leaving out do
 `/`, sorted; `[]` without `concept_roots`), and the register shows their count in one dim line that points to
 `/docket:concept`, which takes them in. An open spec in a dependency (it waits for an open spec through `follows:`
 or `after:`, or one waits for it) shows a number, the predecessor the smaller one; a spec nothing ties shows none,
-and the pane states no order for it. Each spec carries `preconditions` (how many its section names, the last
+and the pane states no order for it. The finished specs (done, superseded) of every concept stand below the groups
+in one table: state glyph, title, note, the concept where the project has concepts, the day closed in the person's
+own time, docket. A column's head orders by it and a second press turns the order round, the field searches the
+titles on Enter, and the table draws at most sixty rows, the search reaching the others. The state glyph is a text of its own beside the title's button: the desktop app draws a button as its
+label in one color. Each spec carries `preconditions` (how many its section names, the last
 check's date, verdict and detail) and `held` (its last check says not met, or it comes after such a spec): a held
 spec shows what it waits for and can go into no run from the pane. A button runs the command as typed
 (`/docket:implement …`, `/docket:precheck <spec>`, `/docket:stop`, `/docket:init`), in this session or, in Claude Code Desktop, in a session of its own whose brief

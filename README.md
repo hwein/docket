@@ -15,12 +15,12 @@ the team and read by you.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/pane-dark.svg">
-    <img alt="The docket pane with example data: a run at work, two specs selected as one series, specs by concept in implementation order" src="assets/pane-light.svg" width="580">
+    <img alt="The docket pane with example data: a run at work, two specs selected as one series, open specs by concept in implementation order, finished specs in a table" src="assets/pane-light.svg" width="580">
   </picture>
   <br>
-  <sub>The docket pane beside the chat: the run at work, the specs by concept, a predecessor before what waits
-  for it, two ready specs ticked to run as one series. One click starts a run, here or in a session of its own.
-  Example data.</sub>
+  <sub>The docket pane beside the chat: the run at work, the open specs by concept, a predecessor before what waits
+  for it, two ready specs ticked to run as one series, the finished specs in a table to sort and search. One click
+  starts a run, here or in a session of its own. Example data.</sub>
 </p>
 
 ## What it is for
@@ -105,4 +105,4 @@ The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<
 
 ## Status
 
-0.6.9, early development. No warranty: use docket only where you can verify the result.
+0.6.10, early development. No warranty: use docket only where you can verify the result.

@@ -244,7 +244,7 @@ test('a docket project opens the pane, sets the status line and lists specs unde
     expect((await ui.find({ key: 'spec-s-aaaa1111' }))?.text).toBe('2. ● Logout')
     expect(await ui.find({ type: 'Text', text: /^Waits for #1$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^2 open decisions$/ })).toBeDefined()
-    // The finished specs of a group stand under a line of their own, below the open ones.
+    // The finished specs stand in a table of their own, below the groups.
     expect(await ui.find({ type: 'Text', text: /^Finished \(1\)$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Without a concept/ })).toBeDefined()
     expect((await ui.find({ key: 'all-c-11112222' }))?.text).toBe('Implement all ready (2)')
@@ -314,27 +314,22 @@ test('only a spec in a dependency carries a number, counted across concepts', as
     const ui = await $.ui.mount({ ...PANE, surface })
     const rows = (await ui.findAll({ type: 'Button' })).filter(found => found.key?.startsWith('spec-'))
 
-    // Open specs, a predecessor before what waits for it, the finished ones after them, the one closed last first.
+    // Open specs under their concept, a predecessor before what waits for it; the finished ones of every concept in
+    // the table below, the one closed last first.
     expect(rows.map(row => row.key)).toEqual([
       'spec-s-0123abcd',
       'spec-s-aaaa1111',
+      'spec-s-dddd4444',
+      'spec-s-eeee5555',
       'spec-s-ffff6666',
       'spec-s-cccc3333',
       'spec-s-9999eeee',
-      'spec-s-dddd4444',
-      'spec-s-eeee5555',
     ])
     // Login and Logout are tied by `follows:` and numbered; Invoice and Tariff wait for nothing and nothing waits for
-    // them: a blank of a number's width, like a finished spec.
-    expect(rows.map(lead)).toEqual([
-      '1. ',
-      '2. ',
-      '\u2007\u2008 ',
-      '\u2007\u2008 ',
-      '\u2007\u2008 ',
-      '\u2007\u2008 ',
-      '\u2007\u2008 ',
-    ])
+    // them: a blank of a number's width.
+    expect(rows.slice(0, 4).map(lead)).toEqual(['1. ', '2. ', '\u2007\u2008 ', '\u2007\u2008 '])
+    // A finished row's Button is the title alone: position it has none, and its state glyph stands beside it.
+    expect(rows.slice(4).map(row => row.text)).toEqual(['Guest', 'Signup', 'Reset'])
     expect((await ui.find({ type: 'Text', text: /Waits for #1/ }))?.text).toBe('Waits for #1')
     await ui.unmount()
   }
@@ -389,17 +384,23 @@ test('the numbers are explained where a dependency is, and ten of them stay in o
     'Eine Zahl kennzeichnet eine Spec in einer Abhängigkeit: „Wartet auf #n“ nennt die Spec mit dieser Zahl. Specs ohne Zahl sind in beliebiger Reihenfolge wählbar.',
   )
 
-  // Two digits: the shorter numbers and the finished spec's blank take the width of the longest.
+  // Two digits: the shorter numbers take the width of the longest. The finished spec stands in the table, where no
+  // row has a position.
   specs = [done, ...Array.from({ length: 10 }, (_, i) => chain(i))]
   ui = await reread(ui)
   expect(lead(await ui.find({ key: 'spec-s-00000000' }))).toBe('\u20071. ')
   expect(lead(await ui.find({ key: 'spec-s-00000009' }))).toBe('10. ')
-  expect(lead(await ui.find({ key: 'spec-s-cccc3333' }))).toBe('\u2007\u2007\u2008 ')
+  expect((await ui.find({ key: 'spec-s-cccc3333' }))?.text).toBe('Signup')
+  // The table speaks the project's language.
+  expect(await ui.find({ type: 'Text', text: /^Abgeschlossen \(1\)$/ })).toBeDefined()
+  expect((await ui.find({ key: 'sort-closed' }))?.text).toBe('Abschluss ▼')
+  expect((await ui.find({ key: 'sort-title' }))?.text).toBe('Titel')
 
-  // No open spec: no column.
+  // No open spec: the table alone, and no hint about numbers.
   specs = [done]
   ui = await reread(ui)
-  expect(lead(await ui.find({ key: 'spec-s-cccc3333' }))).toBe('')
+  expect((await ui.find({ key: 'spec-s-cccc3333' }))?.text).toBe('Signup')
+  expect(await ui.find({ type: 'Text', text: /beliebiger Reihenfolge/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -786,6 +787,174 @@ test('the LOG and DOCKET.md have their tabs', async ($, on) => {
   await ui.unmount()
   ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^# Heading of the file/)
+  await ui.unmount()
+})
+
+/** The keys of the finished table's rows in the order drawn: every spec row but the open ones named. */
+const tableRows = async (
+  ui: { findAll: (query: { type: string }) => Promise<{ key?: string }[]> },
+  open: readonly string[] = [],
+): Promise<string[]> =>
+  (await ui.findAll({ type: 'Button' }))
+    .map(found => found.key ?? '')
+    .filter(key => key.startsWith('spec-') && !open.includes(key))
+
+test('finished specs stand in one table: a green tick beside the title, heads that sort, a search of the titles', async ($, on) => {
+  const specs = [
+    spec('s-0123abcd', 'Login', 'ready', { concept: 'c-11112222', order: 0 }),
+    spec('s-cccc3333', 'Signup', 'done', {
+      concept: 'c-11112222',
+      closed: '2026-11-07T16:00:00Z',
+      docket: '/work/dockets/core/s-cccc3333.md',
+      points: { done: 2, deviating: 1, open: 0 },
+    }),
+    spec('s-ffff6666', 'Guest login', 'superseded', { closed: '2026-11-09T08:00:00Z', superseded_by: 's-0123abcd' }),
+    spec('s-9999eeee', 'Account reset', 'done', {
+      closed: '2026-11-08T09:30:00Z',
+      docket: '/work/dockets/core/s-9999eeee.md',
+    }),
+  ]
+  const open = ['spec-s-0123abcd']
+  let root = '/project'
+  const { seen, clock } = world(on, () => overview({ specs, root }))
+
+  await start($, clock)
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    // The tick is a text of its own in the success color: the desktop app draws a Button in one color, so inside
+    // the title's Button it was grey (2026-11-17).
+    expect((await ui.find({ type: 'Text', text: /^✔$/ }))?.props.color).toBe('success')
+    expect((await ui.find({ type: 'Text', text: /^⊘$/ }))?.props.color).toBe('inactive')
+    expect((await ui.find({ key: 'spec-s-cccc3333' }))?.text).toBe('Signup')
+    // One table for every concept and for the specs without one, the spec closed last first.
+    expect(await ui.find({ type: 'Text', text: /^Finished \(3\)$/ })).toBeDefined()
+    expect(await tableRows(ui, open)).toEqual(['spec-s-ffff6666', 'spec-s-9999eeee', 'spec-s-cccc3333'])
+    expect((await ui.find({ key: 'sort-closed' }))?.text).toBe('Closed ▼')
+    expect((await ui.find({ key: 'sort-title' }))?.text).toBe('Title')
+    expect((await ui.find({ key: 'sort-concept' }))?.text).toBe('Concept')
+    // A row keeps what the list said: the concept it stood under (the heading and the row name it), the note, the
+    // docket of a done spec; the day closed is new.
+    expect((await ui.findAll({ type: 'Text', text: /^Accounts$/ })).length).toBe(2)
+    expect(await ui.find({ type: 'Text', text: /^2026-11-07$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^~1$/ })).toBeDefined()
+    expect(await ui.find({ key: 'docket-s-cccc3333' })).toBeDefined()
+    expect(await ui.find({ key: 'docket-s-ffff6666' })).toBeUndefined()
+    // The concept counts its finished specs; a group without a concept and without an open spec is not drawn.
+    expect(await ui.find({ type: 'Text', text: /^agreed · 1 open · 1 finished · 1 open decision$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Without a concept/ })).toBeUndefined()
+    await ui.unmount()
+  }
+
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const again = async () => {
+    await ui.unmount()
+    ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  }
+
+  // A head orders by its column, a second press turns the order round.
+  await ui.press({ key: 'sort-title' })
+  await again()
+  expect((await ui.find({ key: 'sort-title' }))?.text).toBe('Title ▲')
+  expect((await ui.find({ key: 'sort-closed' }))?.text).toBe('Closed')
+  expect(await tableRows(ui, open)).toEqual(['spec-s-9999eeee', 'spec-s-ffff6666', 'spec-s-cccc3333'])
+  await ui.press({ key: 'sort-title' })
+  await again()
+  expect((await ui.find({ key: 'sort-title' }))?.text).toBe('Title ▼')
+  expect(await tableRows(ui, open)).toEqual(['spec-s-cccc3333', 'spec-s-ffff6666', 'spec-s-9999eeee'])
+  // By concept: the specs without one first, by id; turned round, the concept's spec leads.
+  await ui.press({ key: 'sort-concept' })
+  await again()
+  expect((await ui.find({ key: 'sort-concept' }))?.text).toBe('Concept ▲')
+  expect((await ui.find({ key: 'sort-title' }))?.text).toBe('Title')
+  expect(await tableRows(ui, open)).toEqual(['spec-s-9999eeee', 'spec-s-ffff6666', 'spec-s-cccc3333'])
+  await ui.press({ key: 'sort-concept' })
+  await again()
+  expect((await ui.find({ key: 'sort-concept' }))?.text).toBe('Concept ▼')
+  expect(await tableRows(ui, open)).toEqual(['spec-s-cccc3333', 'spec-s-9999eeee', 'spec-s-ffff6666'])
+  await ui.press({ key: 'sort-closed' })
+  await again()
+  expect(await tableRows(ui, open)).toEqual(['spec-s-ffff6666', 'spec-s-9999eeee', 'spec-s-cccc3333'])
+  await ui.press({ key: 'sort-closed' })
+  await again()
+  expect((await ui.find({ key: 'sort-closed' }))?.text).toBe('Closed ▲')
+  expect(await tableRows(ui, open)).toEqual(['spec-s-cccc3333', 'spec-s-9999eeee', 'spec-s-ffff6666'])
+
+  // Enter searches the titles of the finished specs, whatever the case; the open rows stay.
+  await ui.input({ key: 'finished-search', text: ' LOGIN ' })
+  await again()
+  expect(await tableRows(ui, open)).toEqual(['spec-s-ffff6666'])
+  expect(await ui.find({ key: 'spec-s-0123abcd' })).toBeDefined()
+  // The text stands beside the count too: the terminal empties its field on Enter.
+  expect(await ui.find({ type: 'Text', text: /^“LOGIN”: 1 of 3$/ })).toBeDefined()
+  expect((await ui.find({ key: 'finished-search' }))?.props.value).toBe('LOGIN')
+
+  // A pasted control character or half a surrogate pair never reaches the field's value: the engine refuses such a
+  // tree, and the pane would close.
+  await ui.input({ key: 'finished-search', text: 'log\u001b[0m\u0085in\ud83d' })
+  await again()
+  expect((await ui.find({ key: 'finished-search' }))?.props.value).toBe('log [0m in')
+
+  // A search and an order belong to the project they were set in: another root starts with every finished spec,
+  // the one closed last first.
+  await ui.input({ key: 'finished-search', text: 'login' })
+  root = '/other'
+  seen.root = '/other'
+  await $.classic.SessionStart({ source: 'startup' })
+  await clock.settle()
+  await again()
+  expect((await ui.find({ key: 'finished-search' }))?.props.value).toBe('')
+  expect((await ui.find({ key: 'sort-closed' }))?.text).toBe('Closed ▼')
+  expect(await tableRows(ui, open)).toEqual(['spec-s-ffff6666', 'spec-s-9999eeee', 'spec-s-cccc3333'])
+
+  await ui.input({ key: 'finished-search', text: 'invoice' })
+  await again()
+  expect(await tableRows(ui, open)).toEqual([])
+  expect(await ui.find({ type: 'Text', text: /^No finished spec has this in its title\.$/ })).toBeDefined()
+
+  await ui.press({ key: 'finished-clear' })
+  await again()
+  expect((await tableRows(ui, open)).length).toBe(3)
+  expect(await ui.find({ key: 'finished-clear' })).toBeUndefined()
+
+  // "Open only" folds the table into one line.
+  await ui.press({ key: 'only-open' })
+  await again()
+  expect(await tableRows(ui, open)).toEqual([])
+  expect(await ui.find({ key: 'finished-search' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^3 finished hidden$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the table draws sixty finished specs and says so, and the search reaches the others', async ($, on) => {
+  const specs = Array.from({ length: 70 }, (_, i) =>
+    spec(`s-${String(i).padStart(8, '0')}`, `Step ${i}`, 'done', { docket: `/work/dockets/core/${i}.md` }),
+  )
+  const { clock } = world(on, () => overview({ concepts: [], specs }))
+
+  await start($, clock)
+
+  // Every surface takes the tree of sixty rows.
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+
+    expect((await tableRows(ui)).length).toBe(60)
+    expect(await ui.find({ type: 'Text', text: /^60 of 70 shown: the search reaches the others\.$/ })).toBeDefined()
+    // A project without concepts has no column for them, and a spec no line of the LOG closed shows no day.
+    expect(await ui.find({ key: 'sort-concept' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^2026-11-01$/ })).toBeUndefined()
+    await ui.unmount()
+  }
+
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  expect(await ui.find({ key: 'spec-s-00000069' })).toBeUndefined()
+  await ui.input({ key: 'finished-search', text: 'step 69' })
+  await ui.unmount()
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ key: 'spec-s-00000069' }))?.text).toBe('Step 69')
+  expect(await ui.find({ type: 'Text', text: /shown/ })).toBeUndefined()
   await ui.unmount()
 })
 

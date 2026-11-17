@@ -17,6 +17,10 @@ const SOON = 2000
 const TOOL_PACE = 10000
 // A run of another session changes files this session hears nothing of.
 const FOREIGN_PACE = 15000
+// What a search text keeps: a title's worth of characters, and none the engine refuses in an Input's value
+// (Claude Code 2.1.325: controls, lone surrogates, U+10EEEE, U+2800).
+const SEARCH_LENGTH = 200
+const UNDRAWABLE = /[\p{Cc}\p{Cs}\u{10eeee}⠀]/gu
 
 const S: PaneState = {
   data: undefined,
@@ -32,6 +36,9 @@ const S: PaneState = {
   logo: '',
   hasVectors: false,
   picked: [],
+  search: '',
+  sortBy: 'closed',
+  isSortDescending: true,
 }
 
 const bodies = new Map<string, string | undefined>()
@@ -117,6 +124,13 @@ const refresh = async ($: EngineInterface): Promise<void> => {
     S.loadedAt = new Date(now).toTimeString().slice(0, 5)
 
     if (reply.ok) {
+      // A search and an order belong to the project they were set in: another one may have no concept to order by.
+      if (before !== undefined && before.root !== reply.root) {
+        S.search = ''
+        S.sortBy = 'closed'
+        S.isSortDescending = true
+      }
+
       S.data = reply
       S.error = ''
       // A tick stays only while its spec can still run.
@@ -362,6 +376,22 @@ const actions = ($: EngineInterface): Actions => {
     clearPicks: show(() => {
       S.picked = []
     }),
+    // The text comes back as the field's drawn value, and the engine refuses a tree whose Input value holds a
+    // control character or half a surrogate pair: the pane would close and not open again while the text stood.
+    setSearch: text =>
+      show(() => {
+        S.search = text.slice(0, SEARCH_LENGTH).replace(UNDRAWABLE, ' ').trim()
+      })(),
+    clearSearch: show(() => {
+      S.search = ''
+    }),
+    // A second press on a column turns its order round; another column starts with its own first order: the day
+    // closed last, the first title.
+    sortBy: key =>
+      show(() => {
+        S.isSortDescending = S.sortBy === key ? !S.isSortDescending : key === 'closed'
+        S.sortBy = key
+      })(),
     implement: (target, label) => void implement($, target, label),
     implementInSession: (target, label) => void implementInSession($, target, label),
     precheck: (target, label) => void precheck($, target, label),
