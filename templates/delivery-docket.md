@@ -45,8 +45,8 @@ time, whether the cause is known, and the docket of an earlier spec (by its titl
 
 One line per finding: `<angle> | <finding> | <source> | <severity> | <decision>`, the angle `code`, `spec` or
 `recheck`, the decision fixed or rejected with its source (`bug`, `unmet`, `rule`), or
-`reported, fault: yes|no|unclear, <recommendation>` (every other severity; the recommendation do it, drop it or
-measure first: how); an angle without findings is `<angle> | no findings`.
+`reported, fault: yes|no|unclear, <recommendation>` (every other severity that the run does not fix itself; the
+recommendation do it, drop it or measure first: how; the closing message carries do it and measure first); an angle without findings is `<angle> | no findings`.
 
 - 
 
@@ -61,6 +61,7 @@ For each file named in the spec: `updated <file>` or `<file>: not needed, <reaso
 Written when the spec ends, in the user's language: `state: DELIVERED` or `state: BLOCKED: <reason>` (after three
 rounds: the failed command and its output); `result:` what works now, one sentence; `user:` each step only the user
 can take; `decision:` each proposal for later, with why and a recommendation (do it, drop it, measure first: how).
+Work the run can do itself is done before this block and is no line here.
 A resumed spec gets its new `state:` line below the old block.
 
 - 

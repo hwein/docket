@@ -134,9 +134,11 @@ Spawn two fresh `reviewer` agents (`docket:reviewer`) together, angles `code` an
 spec path, the base (`git diff <base>...HEAD`), for `spec` the points that ended `[~]`; not the docket. Each finding
 is a line in the docket's Review section, `<angle> | <finding> | <source> | <severity> | <decision>`, an angle without
 findings `<angle> | no findings`. Findings of severity `bug`, `unmet` and `rule` are fixed (an implementer or a fixer,
-briefed with the line verbatim) or rejected with the source that refutes them; every other finding stays in the docket
-as `reported, fault: yes|no|unclear, <recommendation>`, your judgement at the code, and is written out in the closing
-message. After a fix, one reviewer of angle `recheck` reads the fixed findings and the range
+briefed with the line verbatim) or rejected with the source that refutes them. Every other finding gets your
+judgement at the code: one you recommend to do and the run can do within the spec's order is fixed the same way; the
+rest stays in the docket as `reported, fault: yes|no|unclear, <recommendation>`. The closing message writes out those
+that wait for the user's decision (`do it` beyond the spec's order, `measure first`); a `drop it` stays in the docket.
+After a fix, one reviewer of angle `recheck` reads the fixed findings and the range
 since; one recheck per round, at most three rounds. Then every acceptance command and the `check` run once more: they
 count after the last agent.
 
@@ -150,7 +152,9 @@ count after the last agent.
    a commit of its own, with a `recheck`; what stays red is a `[~]` line with its cause.
 3. Terminal state, in the user's language: `state: DELIVERED` or `state: BLOCKED: <reason>`, `result: <what works
    now>`, a `user:` line per step only the user can take, a `decision:` line per proposal for later with why and a
-   recommendation. Then the turn ends with the one end line (Text in the run) as its only text. docket closes the spec (state, lock, metrics, LOG) and answers with the next spec of the series
+   recommendation. Work of the run that is left (a record to bring up to date, a reference file, a fix within the
+   spec's order) is done before this step: it is never a `user:` line, a `decision:` line or a `reported` finding.
+   Then the turn ends with the one end line (Text in the run) as its only text. docket closes the spec (state, lock, metrics, LOG) and answers with the next spec of the series
    (`[docket state] Spec i of n is running …`: start it at step 0) or with the end of the series.
 
 ## 6. Series
@@ -161,7 +165,8 @@ is open is passed over. docket does this and names the result.
 ## 7. Closing message
 After docket's statement at the end of the series (`[docket state] The series is over: …`), write the one message of
 the run from `${CLAUDE_PLUGIN_ROOT}/templates/closing-message.md`, from the dockets of the whole series: every
-`user:` and `decision:` line and every finding kept as `reported` written out, one item from several specs once, an
+`user:` line written out, and every `decision:` line and every finding kept as `reported` whose recommendation is
+`do it` or `measure first` (one with `drop it` stays in the docket), one item from several specs once, an
 item a later spec of the series settled left out. When specs did not start or one
 ended `stopped by user`, the message gives `/docket:implement <ids>`, the command that takes them up: those specs and
 each blocked spec one of them waits for, in series order (docket starts no spec before an undone predecessor). Where

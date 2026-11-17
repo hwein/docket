@@ -17,8 +17,8 @@ plan, no account of the work, no proof of it. The proof is the docket.
 For you:
 - <a decision or a step only the user can take, done from this line alone> (<title>)
 Open:
-- <a finding or a proposal, one sentence>. Fault: yes | no | unclear. Recommendation: <do it | drop it | measure
-  first: how>. (<title>)
+- <a finding or a proposal the user decides, one sentence>. Fault: yes | no | unclear. Recommendation: <do it |
+  measure first: how>. (<title>)
 
 Resume: `/docket:implement <ids>`
 Records: `<command>`
@@ -31,9 +31,11 @@ Records: `<command>`
   CI, commits, a count of review findings.
 - A red run names the test by its title and says whether its cause is known.
 - `For you:` holds every `user:` line, every `[~]` line that waits for the user and every command from
-  `forbidden_commands` that did not run. `Open:` holds every review finding the docket keeps as `reported` and every
-  `decision:` line, each written out with the fault and the recommendation the docket gives it. Never a count
-  instead of the item, never a path to it.
+  `forbidden_commands` that did not run. `Open:` holds what waits for the user's decision: every review finding the
+  docket keeps as `reported` and every `decision:` line whose recommendation is `do it` or `measure first`, each
+  written out with the fault and the recommendation the docket gives it. Never a count instead of the item, never a
+  path to it. An item with `drop it` stays in the docket: not in the message, not as a count. Work of the run itself
+  (its records, a fix within the spec's order) is no item: the run did it.
 - Across the series: one item from several specs is one line with all their titles; an item a later spec of the
   series settled is left out (its docket and diff show it). `(<title>)` stands only in a series of two or more.
 - Not in the message: line numbers, file paths, code, hashes, run ids, spec and docket ids, links, "point n",
