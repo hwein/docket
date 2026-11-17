@@ -35,7 +35,10 @@ No matcher. Refuses no prompt. `/docket:implement` marks the run (`mark_run`): r
 the series in the state, LOG `sealed` and `queued`, the spec's state `in-progress`. It takes a spec, a list of specs,
 a concept (its ready specs), `--all` or nothing (the next ready spec). It marks nothing for an unknown spec, no ready
 spec, a predecessor not done, a spec another live session holds or has queued, or another spec at work in this
-session, and says why in a state line. `/docket:stop` in a run records `stop_requested` and LOG `stop-requested`.
+session, and says why in a state line. A spec whose last precondition check says not met (the bullet
+`checked: <date> not met: …` in its Preconditions section, written by `/docket:precheck` or the Ready check) is
+held, and so is every open spec that comes after it: named by id it is the reason no run is marked; a concept,
+`--all` and no argument leave held specs out. The hook runs no precondition; the last verdict written counts. `/docket:stop` in a run records `stop_requested` and LOG `stop-requested`.
 `/docket:status` and `/docket:register` get the series of this session and the interrupted ones. Every typed
 `/docket:` command gets the work dir line; in a project without DOCKET.md, the line that it is not set up. Every
 prompt in a run gets the run line. Every prompt clears the Stop hook's fields `refused` and `halted`.
@@ -60,7 +63,8 @@ Each refusal names the key, its value and the path of DOCKET.md. An invalid rege
 
 No matcher, also for PostToolUseFailure. Refuses nothing, says nothing to the model. Side effects: in a run, a write
 on a docket that turns more points `[x]` or `[~]` than the LOG has counted gets the LOG line `point-delivered` or
-`deviation`; a spec written with `state: ready` gets LOG `ready` once; a command that matched `forbidden_commands`
+`deviation`; a spec written with `state: ready` gets LOG `ready` once; a spec written with the verdict of a
+precondition check gets LOG `preconditions` (`met` or `unmet`, `checked=<date>`) once per verdict; a command that matched `forbidden_commands`
 and ran gets LOG `grant`. The life sign: in a run, every tool call (orchestrator and agents) renews the state file's
 time, and the orchestrator's next tool call clears `refused`. Without the run mark it writes no state.
 
@@ -116,9 +120,12 @@ Each concept carries its `source` as the frontmatter writes it (`""` where the c
 `unregistered` lists the documents under `concept_roots` that no concept's `source` names and no `reference_roots`
 entry names, itself or a folder at or below their concept folder, leaving out docket's work dir (repo-relative,
 `/`, sorted; `[]` without `concept_roots`), and the register shows their count in one dim line that points to
-`/docket:concept`, which takes them in. Every open spec shows its position in implementation order (after every
-`follows:` and `after:` predecessor, then by age). A button runs the command as typed (`/docket:implement …`,
-`/docket:stop`, `/docket:init`), in this session or, in Claude Code Desktop, in a session of its own whose brief
+`/docket:concept`, which takes them in. An open spec in a dependency (it waits for an open spec through `follows:`
+or `after:`, or one waits for it) shows a number, the predecessor the smaller one; a spec nothing ties shows none,
+and the pane states no order for it. Each spec carries `preconditions` (how many its section names, the last
+check's date, verdict and detail) and `held` (its last check says not met, or it comes after such a spec): a held
+spec shows what it waits for and can go into no run from the pane. A button runs the command as typed
+(`/docket:implement …`, `/docket:precheck <spec>`, `/docket:stop`, `/docket:init`), in this session or, in Claude Code Desktop, in a session of its own whose brief
 ends with the command; the pane records it first (`docket_ui.py handoff`), and the started session takes it once
 within fifteen minutes. `docket_ui.py supersede` writes `state: superseded` with its LOG line; `docket_ui.py stop`
 records the stop request for a run of another session. The pane reads again after a prompt, at the end of a turn,

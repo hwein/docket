@@ -37,7 +37,9 @@ What only the user can provide before the run (a key, a running server, an accou
 `<command>` → `<expected output>`. A line in PowerShell syntax runs in PowerShell, any other line in Bash.
 `/docket:spec` runs each line once in its Ready check; the run runs them as the first step of the spec, and a spec
 whose precondition is not met ends there. What the run can make itself is a point, not a precondition.
-`none` when there is nothing.
+`none` when there is nothing. The last bullet is the verdict of the last check outside a run, written by
+`/docket:spec` and `/docket:precheck`: `checked: YYYY-MM-DD met` or `checked: YYYY-MM-DD not met: <what>`; after
+`not met` no run starts this spec or one that comes after it.
 
 - none
 

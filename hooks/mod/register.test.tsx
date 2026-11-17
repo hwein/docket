@@ -58,6 +58,8 @@ const spec = (id: string, title: string, state: string, more: Record<string, unk
   result: null,
   decisions: 0,
   waits_for: [],
+  preconditions: { lines: 0, checked: '', met: null, detail: '' },
+  held: false,
   running: '',
   superseded_by: '',
   ...more,
@@ -268,7 +270,7 @@ test('a docket project opens the pane, sets the status line and lists specs unde
 const lead = (row: { text: string } | undefined): string | undefined =>
   row?.text.slice(0, row.text.search(/[○●◐✔⊘]/))
 
-test('an open spec carries its position in the order of implementation, counted across concepts', async ($, on) => {
+test('only a spec in a dependency carries a number, counted across concepts', async ($, on) => {
   const { clock } = world(on, () =>
     overview({
       concepts: [
@@ -312,8 +314,7 @@ test('an open spec carries its position in the order of implementation, counted 
     const ui = await $.ui.mount({ ...PANE, surface })
     const rows = (await ui.findAll({ type: 'Button' })).filter(found => found.key?.startsWith('spec-'))
 
-    // Open specs by position, the finished ones after them, the one closed last first; a finished spec counts for
-    // no position.
+    // Open specs, a predecessor before what waits for it, the finished ones after them, the one closed last first.
     expect(rows.map(row => row.key)).toEqual([
       'spec-s-0123abcd',
       'spec-s-aaaa1111',
@@ -323,15 +324,27 @@ test('an open spec carries its position in the order of implementation, counted 
       'spec-s-dddd4444',
       'spec-s-eeee5555',
     ])
-    // One count over both concepts; a finished spec has a blank of a position's width.
-    expect(rows.map(lead)).toEqual(['2. ', '3. ', '\u2007\u2008 ', '\u2007\u2008 ', '\u2007\u2008 ', '1. ', '4. '])
+    // Login and Logout are tied by `follows:` and numbered; Invoice and Tariff wait for nothing and nothing waits for
+    // them: a blank of a number's width, like a finished spec.
+    expect(rows.map(lead)).toEqual([
+      '1. ',
+      '2. ',
+      '\u2007\u2008 ',
+      '\u2007\u2008 ',
+      '\u2007\u2008 ',
+      '\u2007\u2008 ',
+      '\u2007\u2008 ',
+    ])
+    expect((await ui.find({ type: 'Text', text: /Waits for #1/ }))?.text).toBe('Waits for #1')
     await ui.unmount()
   }
 })
 
-test('the positions are explained from two open specs on, and ten of them stay in one column', async ($, on) => {
+test('the numbers are explained where a dependency is, and ten of them stay in one column', async ($, on) => {
   const done = spec('s-cccc3333', 'Signup', 'done', { order: 0 })
   let specs = [done, spec('s-0123abcd', 'Login', 'ready', { order: 1 })]
+  const chain = (i: number) =>
+    spec(`s-0000000${i}`, `Step ${i}`, 'draft', { order: i + 1, waits_for: i === 0 ? [] : [`s-0000000${i - 1}`] })
   let language = 'en'
   const { clock } = world(on, () => overview({ concepts: [], specs, language }))
   const reread = async (ui: { press: (target: { key: string }) => Promise<unknown>; unmount: () => Promise<void> }) => {
@@ -344,24 +357,40 @@ test('the positions are explained from two open specs on, and ten of them stay i
   await start($, clock)
   let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
 
-  // One open spec has its number, and nothing to be ordered against.
-  expect(lead(await ui.find({ key: 'spec-s-0123abcd' }))).toBe('1. ')
-  expect(await ui.find({ type: 'Text', text: /recommended order/ })).toBeUndefined()
+  // One open spec: no number and no column.
+  expect(lead(await ui.find({ key: 'spec-s-0123abcd' }))).toBe('')
+  expect(await ui.find({ type: 'Text', text: /any order/ })).toBeUndefined()
 
+  // Two open specs that nothing ties: the specs say no order, and the pane states none.
   specs = [...specs, spec('s-aaaa1111', 'Logout', 'draft', { order: 2 })]
   ui = await reread(ui)
-  expect((await ui.find({ type: 'Text', text: /recommended order/ }))?.text).toBe(
-    'The number before a spec is its position in the recommended order of implementation: predecessors first, then by age.',
+  expect(lead(await ui.find({ key: 'spec-s-0123abcd' }))).toBe('')
+  expect(lead(await ui.find({ key: 'spec-s-aaaa1111' }))).toBe('')
+  expect(await ui.find({ type: 'Text', text: /any order/ })).toBeUndefined()
+
+  // Logout waits for Login: both carry a number, a third spec beside them a blank of that width.
+  specs = [
+    done,
+    spec('s-0123abcd', 'Login', 'ready', { order: 1 }),
+    spec('s-aaaa1111', 'Logout', 'draft', { order: 2, waits_for: ['s-0123abcd'] }),
+    spec('s-bbbb2222', 'Profile', 'ready', { order: 3 }),
+  ]
+  ui = await reread(ui)
+  expect(lead(await ui.find({ key: 'spec-s-0123abcd' }))).toBe('1. ')
+  expect(lead(await ui.find({ key: 'spec-s-aaaa1111' }))).toBe('2. ')
+  expect(lead(await ui.find({ key: 'spec-s-bbbb2222' }))).toBe('   ')
+  expect((await ui.find({ type: 'Text', text: /any order/ }))?.text).toBe(
+    'A number marks a spec in a dependency: “Waits for #n” names the spec with that number. Specs without a number can be taken in any order.',
   )
 
   language = 'de'
   ui = await reread(ui)
-  expect((await ui.find({ type: 'Text', text: /Umsetzungsreihenfolge/ }))?.text).toBe(
-    'Die Zahl vor einer Spec ist ihre Position in der empfohlenen Umsetzungsreihenfolge: Vorgänger zuerst, dann nach Alter.',
+  expect((await ui.find({ type: 'Text', text: /beliebiger Reihenfolge/ }))?.text).toBe(
+    'Eine Zahl kennzeichnet eine Spec in einer Abhängigkeit: „Wartet auf #n“ nennt die Spec mit dieser Zahl. Specs ohne Zahl sind in beliebiger Reihenfolge wählbar.',
   )
 
-  // Two digits: the shorter positions and the finished spec's blank take the width of the longest.
-  specs = [done, ...Array.from({ length: 10 }, (_, i) => spec(`s-0000000${i}`, `Step ${i}`, 'draft', { order: i + 1 }))]
+  // Two digits: the shorter numbers and the finished spec's blank take the width of the longest.
+  specs = [done, ...Array.from({ length: 10 }, (_, i) => chain(i))]
   ui = await reread(ui)
   expect(lead(await ui.find({ key: 'spec-s-00000000' }))).toBe('\u20071. ')
   expect(lead(await ui.find({ key: 'spec-s-00000009' }))).toBe('10. ')
@@ -468,6 +497,72 @@ test('a spec opens to its text, and its button starts the run in this session', 
   await ui.press({ key: 'all-c-11112222' })
   expect(seen.commands.length).toBe(2)
   expect(seen.prompts).toEqual(['From the docket pane, on my button:\n/docket:implement c-11112222'])
+  await ui.unmount()
+})
+
+test('a spec whose precondition check says not met starts no run, and its button has them checked again', async ($, on) => {
+  let check: Record<string, unknown> = {
+    lines: 1,
+    checked: '2026-11-17',
+    met: false,
+    detail: '`curl localhost:8080` gave no answer',
+  }
+  const { seen, clock } = world(on, () =>
+    overview({
+      specs: [
+        spec('s-0123abcd', 'Login', 'ready', { concept: 'c-11112222', order: 0, preconditions: check, held: check.met === false }),
+        // Held with the spec it follows.
+        spec('s-aaaa1111', 'Logout', 'ready', {
+          concept: 'c-11112222',
+          follows: ['s-0123abcd'],
+          waits_for: ['s-0123abcd'],
+          order: 1,
+          held: check.met === false,
+        }),
+        spec('s-bbbb2222', 'Profile', 'ready', { concept: 'c-11112222', order: 2 }),
+      ],
+    }),
+  )
+
+  seen.listed.push('docket:precheck')
+  await start($, clock)
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  // The row says what holds it; neither held spec can be ticked, and the concept's run counts the free one alone.
+  expect(await ui.find({ type: 'Text', text: /^Waits for a precondition$/ })).toBeDefined()
+  expect(await ui.find({ key: 'pick-s-0123abcd' })).toBeUndefined()
+  expect(await ui.find({ key: 'pick-s-aaaa1111' })).toBeUndefined()
+  expect(await ui.find({ key: 'pick-s-bbbb2222' })).toBeDefined()
+  expect((await ui.find({ key: 'all-c-11112222' }))?.text).toBe('Implement all ready (1)')
+
+  await ui.press({ key: 'spec-s-0123abcd' })
+  await ui.unmount()
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(
+    await ui.find({ type: 'Text', text: /^not met \(checked 2026-11-17\): `curl localhost:8080` gave no answer$/ }),
+  ).toBeDefined()
+  expect(await ui.find({ key: 'implement' })).toBeUndefined()
+  await ui.press({ key: 'precheck' })
+  expect(seen.commands).toEqual(['/docket:precheck s-0123abcd'])
+
+  // The check run again says met: the spec can run, and the button stays for the next check.
+  check = { lines: 1, checked: '2026-11-18', met: true, detail: '' }
+  await ui.press({ key: 'refresh' })
+  await ui.unmount()
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /^met \(checked 2026-11-18\)$/ })).toBeDefined()
+  expect(await ui.find({ key: 'implement' })).toBeDefined()
+  expect(await ui.find({ key: 'precheck' })).toBeDefined()
+
+  // A spec without preconditions has nothing to check.
+  await ui.press({ key: 'back' })
+  await ui.unmount()
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'spec-s-bbbb2222' })
+  await ui.unmount()
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ key: 'precheck' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^Preconditions$/ })).toBeUndefined()
   await ui.unmount()
 })
 

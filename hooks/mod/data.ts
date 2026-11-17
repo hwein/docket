@@ -20,6 +20,10 @@ export type Spec = {
   result: { kind: string; text: string } | null
   decisions: number
   waits_for: string[]
+  /** The spec's preconditions: how many it names, and the last check outside a run (`met` null: none written). */
+  preconditions: { lines: number; checked: string; met: boolean | null; detail: string }
+  /** No run starts it: its last precondition check says not met, or it comes after such a spec. */
+  held: boolean
   running: string
   superseded_by: string
 }

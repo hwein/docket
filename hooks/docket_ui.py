@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from docket_lib import (CONCEPT_ID, RUN_MODES, SPEC_ID, Paths, absolute, concept_roots, docket_counts, frontmatter,  # noqa: E402
-                        in_order, language_code, load_state, lock_holder, log_event, log_lines, norm, other_sessions,
+                        held_specs, in_order, language_code, load_state, lock_holder, log_event, log_lines, norm, other_sessions,
                         position, queued_elsewhere, read_text, reference_roots, save_handoff, save_state, section_text,
                         session_live, set_spec_state, spec_records, spec_title, terminal_section, under, work_dir_dirty)
 
@@ -157,6 +157,8 @@ def overview(paths, session_id):
     closed = closed_at(paths)
     # Where a spec stands in implementation order: a selection of several runs as a series in that order.
     order = {r["id"]: index for index, r in enumerate(in_order(records))}
+    # No run starts a held spec: its last precondition check says not met, or it comes after such a spec.
+    _, held = held_specs(records)
     live = runs(paths, session_id)
     running = {run["spec"]: run["session"] for run in live}
     specs = []
@@ -175,6 +177,8 @@ def overview(paths, session_id):
             "decisions": open_decisions(record["path"], "User decisions") if record["state"] == "draft" else 0,
             "waits_for": [f for f in record["predecessors"]
                           if f in by_id and by_id[f]["state"] not in ("done", "superseded")],
+            # What the Preconditions section says: how many it names, and the last check outside a run.
+            "preconditions": record["preconditions"], "held": spec_id in held,
             "running": running.get(spec_id, ""),
             "superseded_by": replaced.get(spec_id, "") if record["state"] == "superseded" else "",
         })

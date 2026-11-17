@@ -40,9 +40,16 @@ const en = {
   pickHint: '☐ selects a ready spec; several run as one series.',
   picksBlocked: (title: string, before: string) => `“${title}” waits for “${before}”: select that one too.`,
   orderHint:
-    'The number before a spec is its position in the recommended order of implementation: predecessors first, then by age.',
+    'A number marks a spec in a dependency: “Waits for #n” names the spec with that number. Specs without a number can be taken in any order.',
   back: '← Register',
   waitsFor: 'Waits for',
+  waitsPrecondition: 'Waits for a precondition',
+  preconditions: 'Preconditions',
+  preconditionsMet: (date: string) => `met (checked ${date})`,
+  preconditionsUnmet: (date: string, detail: string) =>
+    detail ? `not met (checked ${date}): ${detail}` : `not met (checked ${date})`,
+  preconditionsUnchecked: (n: number) => (n === 1 ? '1, not checked yet' : `${n}, not checked yet`),
+  precheck: 'Check preconditions',
   decisions: (n: number) => (n === 1 ? '1 open decision' : `${n} open decisions`),
   points: (done: number, deviating: number, open: number) =>
     `${done} done, ${deviating} deviating, ${open} open`,
@@ -151,9 +158,16 @@ const de: typeof en = {
   pickHint: '☐ wählt eine bereite Spec aus; mehrere laufen als eine Serie.',
   picksBlocked: (title, before) => `„${title}“ wartet auf „${before}“: diese mit auswählen.`,
   orderHint:
-    'Die Zahl vor einer Spec ist ihre Position in der empfohlenen Umsetzungsreihenfolge: Vorgänger zuerst, dann nach Alter.',
+    'Eine Zahl kennzeichnet eine Spec in einer Abhängigkeit: „Wartet auf #n“ nennt die Spec mit dieser Zahl. Specs ohne Zahl sind in beliebiger Reihenfolge wählbar.',
   back: '← Register',
   waitsFor: 'Wartet auf',
+  waitsPrecondition: 'Wartet auf Vorbedingung',
+  preconditions: 'Vorbedingungen',
+  preconditionsMet: date => `erfüllt (geprüft ${date})`,
+  preconditionsUnmet: (date, detail) =>
+    detail ? `nicht erfüllt (geprüft ${date}): ${detail}` : `nicht erfüllt (geprüft ${date})`,
+  preconditionsUnchecked: n => (n === 1 ? '1, noch nicht geprüft' : `${n}, noch nicht geprüft`),
+  precheck: 'Vorbedingungen prüfen',
   decisions: n => (n === 1 ? '1 offene Entscheidung' : `${n} offene Entscheidungen`),
   points: (done, deviating, open) => `${done} erledigt, ${deviating} abweichend, ${open} offen`,
   pointsLabel: 'Punkte',

@@ -38,6 +38,8 @@ spec is `ready`.
 - Dependencies: `follows:` for rework of an earlier spec; `after: <id>` in the goal paragraph when another spec must
   land first, once per such spec. docket reads both: the order of implementation, the pane, and the start of a run,
   which does not mark a spec whose predecessor is not done. A dependency written any other way holds nothing up.
+  Write one only where the content needs it: this spec builds on what the other delivers, or waits for a function
+  of it (also of a spec of another concept). Where nothing of that kind holds, write none: the user picks the order.
 - Cite the current state from the reference docs by file; do not restate it.
 
 ## User decisions
@@ -78,7 +80,10 @@ Before `state: ready`, the spec is read three times and its commands run once. I
    reason its point has yet to make true, or already passes and is meant to keep passing (a guard criterion). A line
    without a command (`<file>` contains `<text>`) is read, not run. A command that writes outside the project, is
    visible to others or runs longer than two minutes is only checked for starting: the tool exists, the syntax is
-   the shell's.
+   the shell's. What the preconditions gave is written as the last bullet of the spec's `Preconditions (user only)`
+   section, in place of an older one: `- checked: YYYY-MM-DD met`, or `- checked: YYYY-MM-DD not met: <the command,
+   and in a few words what its output said instead>`. docket reads that bullet: a spec whose last check says not met
+   starts no run until `/docket:precheck` finds it met.
 3. Findings: fix in the spec only what would stop or falsify the run: a wrong fact, a criterion that cannot be met,
    a command that does not start. A criterion whose part before the arrow is not a command in backticks is such a
    finding in a new spec. Every other finding stays a line in `## Ready check`. Only what the user alone can decide

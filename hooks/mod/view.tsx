@@ -44,6 +44,7 @@ export type Actions = {
   clearPicks: () => void
   implement: (target: string, label: string) => void
   implementInSession: (target: string, label: string) => void
+  precheck: (target: string, label: string) => void
   supersedeOpen: () => void
   supersedePick: (id: string) => void
   supersedeCancel: () => void
@@ -88,27 +89,43 @@ const closedAt = (spec: Spec): string => spec.closed || spec.created
 const newestFirst = (specs: readonly Spec[]): Spec[] =>
   [...specs].sort((a, b) => closedAt(b).localeCompare(closedAt(a)) || a.id.localeCompare(b.id))
 
+const byOrder = (a: Spec, b: Spec): number =>
+  a.order - b.order || a.created.localeCompare(b.created) || a.id.localeCompare(b.id)
+
 /**
- * Every open spec's position in the recommended order of implementation, from 1. It counts over the whole project,
- * not per concept: a series runs across concepts in that order.
+ * The number of every open spec that stands in a dependency: it waits for an open spec, or an open spec waits for
+ * it. A predecessor has the smaller number; the count runs over the whole project, since a dependency crosses
+ * concepts. A spec nothing ties has no number: where the specs say no order, the pane states none.
  */
-export const ranks = (data: Overview): Map<string, number> =>
-  new Map(
-    (data.specs ?? [])
-      .filter(isOpen)
-      .sort((a, b) => a.order - b.order || a.created.localeCompare(b.created) || a.id.localeCompare(b.id))
+export const ranks = (data: Overview): Map<string, number> => {
+  const open = (data.specs ?? []).filter(isOpen)
+  const ids = new Set(open.map(spec => spec.id))
+  const tied = new Set<string>()
+
+  for (const spec of open) {
+    for (const before of spec.waits_for.filter(id => ids.has(id))) {
+      tied.add(spec.id)
+      tied.add(before)
+    }
+  }
+
+  return new Map(
+    open
+      .filter(spec => tied.has(spec.id))
+      .sort(byOrder)
       .map((spec, index): [string, number] => [spec.id, index + 1]),
   )
+}
 
-/** A group's rows: the open specs by their position, then the finished ones, the one closed last first. */
-const listed = (specs: readonly Spec[], rank: ReadonlyMap<string, number>): Spec[] => [
-  ...specs.filter(isOpen).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0)),
+/** A group's rows: the open specs, a predecessor before what waits for it, then the finished ones, the one closed last first. */
+const listed = (specs: readonly Spec[]): Spec[] => [
+  ...specs.filter(isOpen).sort(byOrder),
   ...newestFirst(specs.filter(spec => !isOpen(spec))),
 ]
 
 /**
- * A spec's position as its row shows it, right-aligned to the largest one; a blank of that width for a finished
- * spec, and nothing while no spec is open.
+ * A spec's number as its row shows it, right-aligned to the largest one; a blank of that width for a spec without
+ * one, and nothing while no spec has a number.
  */
 const positionText = (rank: ReadonlyMap<string, number>, spec: Spec): string => {
   const width = String(rank.size).length
@@ -147,6 +164,10 @@ const marks = (t: Words, data: Overview, spec: Spec, rank: ReadonlyMap<string, n
     found.push(`${t.waitsFor} ${before.join(', ')}`)
   }
 
+  if (isOpen(spec) && spec.preconditions?.met === false) {
+    found.push(t.waitsPrecondition)
+  }
+
   if (spec.decisions > 0) {
     found.push(t.decisions(spec.decisions))
   }
@@ -162,8 +183,25 @@ const marks = (t: Words, data: Overview, spec: Spec, rank: ReadonlyMap<string, n
   return found.join(' · ')
 }
 
-/** A spec that can go into a run now: ready, and not running anywhere. */
-export const canRun = (spec: Spec): boolean => spec.state === 'ready' && !spec.running
+/**
+ * A spec that can go into a run now: ready, not running anywhere, and not held (its last precondition check says
+ * not met, or it comes after such a spec).
+ */
+export const canRun = (spec: Spec): boolean => spec.state === 'ready' && !spec.running && !spec.held
+
+/** A spec whose preconditions can be checked now: it names some, and is neither at work nor finished. */
+const canPrecheck = (spec: Spec): boolean =>
+  (spec.state === 'ready' || spec.state === 'draft') && !spec.running && (spec.preconditions?.lines ?? 0) > 0
+
+const preconditionText = (t: Words, spec: Spec): string => {
+  const check = spec.preconditions
+
+  return check.met === null
+    ? t.preconditionsUnchecked(check.lines)
+    : check.met
+      ? t.preconditionsMet(check.checked)
+      : t.preconditionsUnmet(check.checked, check.detail)
+}
 
 /** The ticked specs that can still run, in implementation order: the order a series of them runs in. */
 export const pickedSpecs = (data: Overview, picked: readonly string[]): Spec[] =>
@@ -312,11 +350,12 @@ const group = (
   act: Actions,
 ) => {
   const { Box, Button, Text } = kit
-  const shown = listed(s.isOnlyOpen ? specs.filter(isOpen) : specs, rank)
+  const shown = listed(s.isOnlyOpen ? specs.filter(isOpen) : specs)
   const openRows = shown.filter(isOpen)
   const finishedRows = shown.filter(spec => !isOpen(spec))
   const hidden = specs.length - shown.length
-  const ready = specs.filter(spec => spec.state === 'ready').length
+  // What a run of the concept takes: docket leaves a held spec out.
+  const ready = specs.filter(spec => spec.state === 'ready' && !spec.held).length
   const open = specs.filter(isOpen).length
   const meta = concept
     ? [
@@ -388,9 +427,9 @@ const registerView = (kit: Kit, t: Words, data: Overview, s: PaneState, act: Act
           <Button key="only-open" label={s.isOnlyOpen ? t.showAll : t.onlyOpen} onPress={act.toggleOnlyOpen} />
         </Box>
       )}
-      {(rank.size > 1 || bar !== false) && (
+      {(rank.size > 0 || bar !== false) && (
         <Box flexDirection="column" gap="xs">
-          {rank.size > 1 && (
+          {rank.size > 0 && (
             <Text dimColor size="caption">
               {t.orderHint}
             </Text>
@@ -555,6 +594,15 @@ const specView = (
       {spec.waits_for.length > 0 &&
         fact(kit, t.waitsFor, spec.waits_for.map(id => titleOf(data, id)).join(', '), 'warning')}
       {spec.decisions > 0 && fact(kit, t.decisionsLabel, String(spec.decisions), 'warning')}
+      {isOpen(spec) &&
+        spec.preconditions !== undefined &&
+        (spec.preconditions.lines > 0 || spec.preconditions.met !== null) &&
+        fact(
+          kit,
+          t.preconditions,
+          preconditionText(t, spec),
+          spec.preconditions.met === false ? 'warning' : spec.preconditions.met ? 'success' : undefined,
+        )}
       {spec.points !== null &&
         fact(kit, t.pointsLabel, t.points(spec.points.done, spec.points.deviating, spec.points.open))}
       {spec.result !== null &&
@@ -574,19 +622,26 @@ const specView = (
             : t.runningIn(spec.running.slice(0, 8)),
           'claude',
         )}
-      {isRunnable && !s.isSuperseding && (
+      {(isRunnable || canPrecheck(spec)) && !s.isSuperseding && (
         <Box flexDirection="row" gap="sm" flexWrap="wrap" marginTop="xs">
-          <Button
-            key="implement"
-            variant="primary"
-            label={t.implement}
-            onPress={() => act.implement(spec.id, spec.title)}
-          />
-          <Button
-            key="implement-session"
-            label={t.inSession}
-            onPress={() => act.implementInSession(spec.id, spec.title)}
-          />
+          {isRunnable && (
+            <Button
+              key="implement"
+              variant="primary"
+              label={t.implement}
+              onPress={() => act.implement(spec.id, spec.title)}
+            />
+          )}
+          {isRunnable && (
+            <Button
+              key="implement-session"
+              label={t.inSession}
+              onPress={() => act.implementInSession(spec.id, spec.title)}
+            />
+          )}
+          {canPrecheck(spec) && (
+            <Button key="precheck" label={t.precheck} onPress={() => act.precheck(spec.id, spec.title)} />
+          )}
         </Box>
       )}
       </Box>

@@ -244,6 +244,9 @@ SAY = {
                       "(c-xxxxxxxx: seine ready-Specs), --all (jede ready-Spec) oder nichts (die nächste ready-Spec)."),
         "run_order": "{pairs} (`follows:` oder `after:` in der Spec).",
         "run_order_pair": "{spec} braucht zuerst {predecessor}, und das ist nicht erledigt",
+        "run_unmet": "{items}. `/docket:precheck {specs}` prüft die Vorbedingungen erneut.",
+        "run_unmet_item": "{spec} wartet auf eine Vorbedingung, die letzte Prüfung vom {date} sagt nicht erfüllt{detail}",
+        "run_unmet_detail": " ({detail})",
         "run_held": "„{title}“ läuft in einer anderen Sitzung (Sitzung {session}).",
         "run_queued": "„{title}“ wartet in der Reihe einer anderen Sitzung (Sitzung {session}).",
         "run_other": "diese Sitzung arbeitet an „{title}“.",
@@ -331,6 +334,9 @@ SAY = {
                       "ready specs), --all (every ready spec) or nothing (the next ready spec)."),
         "run_order": "{pairs} (`follows:` or `after:` in the spec).",
         "run_order_pair": "{spec} needs {predecessor} first, which is not done",
+        "run_unmet": "{items}. `/docket:precheck {specs}` checks the preconditions again.",
+        "run_unmet_item": "{spec} waits for a precondition, the last check of {date} says not met{detail}",
+        "run_unmet_detail": " ({detail})",
         "run_held": "“{title}” runs in another session (session {session}).",
         "run_queued": "“{title}” waits in another session's series (session {session}).",
         "run_other": "this session works on “{title}”.",
@@ -399,9 +405,45 @@ def after_ids(path, own=""):
     return [s for s in dict.fromkeys(found) if s != own]
 
 
+# The verdict of the last check of a spec's preconditions outside a run (commands/precheck.md, the Ready check of
+# commands/spec.md): a bullet of its Preconditions section, `checked: 2026-11-17 met` or
+# `checked: 2026-11-17 not met: <what was missing>`.
+CHECKED = re.compile(r"[`*]*checked:[`*\s]*(\d{4}-\d{2}-\d{2})[`*\s,:]*(not met|met)\b[\s:.,\-–—]*(.*?)\s*$",
+                     re.IGNORECASE)
+
+
+def precondition_state(path):
+    """What a spec's `Preconditions (user only)` section says: `lines`, how many preconditions it names (a bullet
+    with a command in backticks), and the last check: its date `checked`, `met` (True, False, None where no check
+    is written) and the `detail` behind a `not met`. The world may have changed since: the run runs them again."""
+    found = {"lines": 0, "checked": "", "met": None, "detail": ""}
+    for bullet in bullets(section_text(read_text(path), "Preconditions")):
+        verdict = CHECKED.match(bullet)
+        if verdict:
+            met = verdict.group(2).lower() == "met"
+            found.update(checked=verdict.group(1), met=met, detail="" if met else verdict.group(3))
+        elif "`" in bullet:
+            found["lines"] += 1
+    return found
+
+
+def held_specs(records):
+    """(unmet, held): the open specs whose last precondition check says not met, and those plus every open spec that
+    comes after one of them (`follows:`, `after:`). No run starts a held spec; the check run again lifts it."""
+    is_open = lambda r: r["state"] not in ("done", "superseded")
+    unmet = {r["id"] for r in records if is_open(r) and r["preconditions"]["met"] is False}
+    held, grew = set(unmet), True
+    while grew:
+        more = {r["id"] for r in records if is_open(r) and r["id"] not in held
+                and any(p in held for p in r["predecessors"])}
+        held, grew = held | more, bool(more)
+    return unmet, held
+
+
 def spec_records(paths):
     """Frontmatter of every spec (id, title, topic, state, follows, concept, created) and its file, by path, with
-    the specs it names as `after:` and its predecessors: both kinds, `follows:` and `after:`."""
+    the specs it names as `after:`, its predecessors (both kinds, `follows:` and `after:`) and what its
+    Preconditions section says (precondition_state)."""
     found = []
     if not os.path.isdir(paths.specs):
         return found
@@ -423,6 +465,7 @@ def spec_records(paths):
                     record = found[-1]
                     record["after"] = after_ids(record["path"], record["id"])
                     record["predecessors"] = list(dict.fromkeys(record["follows"] + record["after"]))
+                    record["preconditions"] = precondition_state(record["path"])
     return found
 
 
@@ -446,6 +489,20 @@ def ready_specs(paths, concept=""):
     records = [r for r in spec_records(paths) if r["state"] == "ready"
                and (not concept or r["concept"].lower() == concept.lower())]
     return [(r["id"], r["title"]) for r in in_order(records)]
+
+
+def unmet_line(paths, spec_ids):
+    """The state line for specs whose last precondition check says not met, "" where none of them is."""
+    records = {r["id"]: r for r in spec_records(paths)}
+    unmet = [s for s in spec_ids if s in records and s in held_specs(list(records.values()))[0]]
+    if not unmet:
+        return ""
+    items = []
+    for spec_id in unmet:
+        check = records[spec_id]["preconditions"]
+        items.append(say(paths, "run_unmet_item", spec=spec_id, date=check["checked"],
+                         detail=check["detail"] and say(paths, "run_unmet_detail", detail=check["detail"])))
+    return say(paths, "run_unmet", items="; ".join(items), specs=" ".join(unmet))
 
 
 def open_predecessors(paths, spec_ids):
@@ -1830,10 +1887,15 @@ def run_specs(paths, rest):
     `/docket:implement c-xxxxxxxx` every ready spec of that concept, in implementation order
     `/docket:implement s-a, s-b`   exactly these, in the given order
     `/docket:implement --all`      every ready spec of the project, in implementation order
+
+    A spec whose last precondition check says not met starts no run: named by id it is the reason no run is marked;
+    a concept, `--all` and no argument leave it out, and with it every spec that comes after it (held_specs).
     """
     rest = (rest or "").strip()
     ids = list(dict.fromkeys(s.lower() for s in SPEC_ID.findall(rest)))
     concept = CONCEPT_ID.search(rest)
+    unmet, held = held_specs(spec_records(paths))
+    free = lambda ready: [s for s, _ in ready if s not in held]
     if ids:
         # A named spec is a spec of this project (docket 2026-11-10: ids pasted from another project sealed a session).
         unknown = [s for s in ids if not paths.spec_file(s)]
@@ -1841,23 +1903,32 @@ def run_specs(paths, rest):
             return [], say(paths, "run_unknown", ids=", ".join(unknown))
         chosen = ids
     elif concept:
-        chosen = [s for s, _ in ready_specs(paths, concept.group(0))]
-        if not chosen:
+        ready = ready_specs(paths, concept.group(0))
+        if not ready:
             return [], say(paths, "run_no_ready_concept", concept=concept.group(0))
+        chosen = free(ready)
     elif re.search(r"(^|\s)--all\b", rest):
-        chosen = [s for s, _ in ready_specs(paths)]
-        if not chosen:
+        ready = ready_specs(paths)
+        if not ready:
             return [], say(paths, "run_no_ready")
+        chosen = free(ready)
     elif not rest:
-        chosen = [s for s, _ in ready_specs(paths) if not open_predecessors(paths, [s])][:1]
-        if not chosen:
+        ready = ready_specs(paths)
+        chosen = [s for s in free(ready) if not open_predecessors(paths, [s])][:1]
+        if not chosen and not any(s in unmet for s, _ in ready):
             return [], say(paths, "run_no_runnable")
     else:
         return [], say(paths, "run_forms")
+    if not chosen:
+        # Every ready spec asked for is held: the ones whose own check says not met are the reason.
+        return [], unmet_line(paths, [s for s, _ in ready]) or say(paths, "run_no_runnable")
     missing = open_predecessors(paths, chosen)
     if missing:
         pairs = "; ".join(say(paths, "run_order_pair", spec=s, predecessor=p) for s, p in missing)
         return [], say(paths, "run_order", pairs=pairs)
+    waiting = unmet_line(paths, chosen)
+    if waiting:
+        return [], waiting
     return chosen, ""
 
 

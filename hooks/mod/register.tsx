@@ -212,6 +212,19 @@ const implement = async ($: EngineInterface, target: string, label: string): Pro
   schedule($, SOON)
 }
 
+/** Has the session check a spec's preconditions: the verdict stands in the spec, and the pane reads it after the turn. */
+const precheck = async ($: EngineInterface, target: string, label: string): Promise<void> => {
+  S.notice = t().started(`${t().precheck}: ${label}`)
+  redraw($)
+
+  if (!(await runCommand($, 'docket:precheck', target))) {
+    S.notice = t().notStarted
+    redraw($)
+  }
+
+  schedule($, SOON)
+}
+
 /**
  * Puts a request into the empty prompt box for the person to send: the app starts a session only on a turn the
  * person began, and refuses it on a prompt this plugin submits (luradb-web-client 2026-11-10: the pane's request
@@ -351,6 +364,7 @@ const actions = ($: EngineInterface): Actions => {
     }),
     implement: (target, label) => void implement($, target, label),
     implementInSession: (target, label) => void implementInSession($, target, label),
+    precheck: (target, label) => void precheck($, target, label),
     supersedeOpen: show(() => {
       S.isSuperseding = true
     }),

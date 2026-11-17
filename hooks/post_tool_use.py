@@ -8,6 +8,8 @@ What it keeps, as side effects:
   `[x]` and `[~]`; what exceeds the `count=` sum of the spec's LOG lines of that kind becomes one LOG line. The spec id
   comes from the file name.
 - LOG `ready`: a spec written with `state: ready`, once per spec.
+- LOG `preconditions`: a spec written with the verdict of a precondition check (`checked: <date> met` or
+  `not met`), once per verdict.
 - LOG `grant`: a shell command that matched forbidden_commands ran, so the user allowed it in the dialog (M1).
 - The life sign: in a session with the run mark, a tool call of the orchestrator clears the Stop hook's refusal
   marker `refused` where it is set (the next Stop is a first pass again), else it renews the state file's time; an
@@ -21,7 +23,7 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (RUN_MODES, SPEC_ID, Paths, absolute, config_values, frontmatter, load_state, log_event,
-                        log_has, log_lines, read_input, save_state, touch_state, under)
+                        log_has, log_lines, precondition_state, read_input, save_state, touch_state, under)
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 POINT_EVENTS = {"x": "point-delivered", "~": "deviation"}
@@ -44,6 +46,7 @@ def main():
                 log_points(path, paths, session_id)
         elif under(path, paths.specs):
             log_ready(path, paths, session_id)
+            log_preconditions(path, paths, session_id)
     elif tool in ("Bash", "PowerShell"):
         log_grant(tool_input, paths, session_id)
     if in_run:
@@ -122,6 +125,19 @@ def log_ready(path, paths, session_id):
     spec_id = fields.get("id", "")
     if fields.get("state", "").lower() == "ready" and spec_id and not log_has(paths, spec_id, "ready"):
         log_event(paths, session_id, spec_id, "ready")
+
+
+def log_preconditions(path, paths, session_id):
+    """A spec written with a verdict of a precondition check (`checked: <date> met` or `not met`): LOG
+    `preconditions` with the verdict and its date, once per verdict."""
+    spec_id = frontmatter(path).get("id", "")
+    check = precondition_state(path)
+    if not spec_id or check["met"] is None:
+        return
+    note = f"{'met' if check['met'] else 'unmet'} checked={check['checked']}"
+    logged = [line for line in log_lines(paths, spec_id) if line.split()[2:3] == ["preconditions"]]
+    if not logged or not logged[-1].endswith(note):
+        log_event(paths, session_id, spec_id, "preconditions", note)
 
 
 if __name__ == "__main__":

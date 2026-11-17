@@ -6,7 +6,9 @@ description: "The docket register: every concept, spec and docket with title, to
 
 Render the register from the files, never from memory: every concept, spec and docket under the work dir with
 title, topic, state and dependencies (`concept:`, `follows:`, `after`), per concept its `source:` where set, plus the
-last ten LOG lines in words. Group by topic. Dependencies give a rough order, nothing more: never present the
+last ten LOG lines in words. Group by topic. A spec whose Preconditions section ends in `checked: … not met` is
+shown as waiting for that precondition, and a spec that comes after it as waiting for that spec. Dependencies say
+which spec comes before which, nothing more: state no order for specs no dependency ties, never present the
 register as a roadmap and make no promises about what comes next. Ids are shown in the table only.
 
 After the concepts, a list "not registered", when `concept_roots` in DOCKET.md is set: the files ending in `.md`,

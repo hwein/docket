@@ -1322,6 +1322,57 @@ class Series(Project):
         self.assertFalse(os.path.exists(marker))
         self.assertNotIn("precondition", self.log())
 
+    def unmet(self, path, verdict="- checked: 2026-11-17 not met: `curl localhost:8080` gave no answer"):
+        path.write_text(path.read_text("utf-8") + "\n## Preconditions (user only)\n\n- `curl localhost:8080` → ok\n"
+                        + verdict + "\n", "utf-8")
+
+    def test_a_spec_whose_last_precondition_check_says_not_met_starts_no_run(self):
+        self.unmet(self.spec)
+        code, err, out = self.prompt(f"/docket:implement {SPEC}")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"No run marked: {SPEC} waits for a precondition, the last check of 2026-11-17 says not met "
+                      "(`curl localhost:8080` gave no answer).", out)
+        self.assertIn(f"`/docket:precheck {SPEC}` checks the preconditions again.", out)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.assertFalse((self.work / "locks" / SPEC).exists())
+        # The check run again with another verdict lifts it: the last verdict counts.
+        self.spec.write_text(self.spec.read_text("utf-8") + "- checked: 2026-11-18 met\n", "utf-8")
+        self.prompt(f"/docket:implement {SPEC}")
+        self.assertEqual((self.state()["mode"], self.state()["spec"]), ("sealed", SPEC))
+
+    def test_a_series_leaves_out_a_held_spec_and_what_comes_after_it(self):
+        self.unmet(self.spec)
+        # Login is held, Logout follows it: --all runs Profile alone, the concept of the two has nothing to run.
+        code, err, out = self.prompt("/docket:implement c-11112222")
+        self.assertIn(f"No run marked: {SPEC} waits for a precondition", out)
+        self.assertEqual(self.state().get("mode", "none"), "none")
+        self.prompt("/docket:implement --all")
+        self.assertEqual((self.state()["spec"], self.state()["queue"]), ("s-bbbb2222", []))
+
+    def test_no_argument_passes_over_a_held_spec(self):
+        self.unmet(self.spec)
+        self.prompt("/docket:implement")
+        self.assertEqual(self.state()["spec"], "s-bbbb2222")
+
+    def test_a_verdict_met_and_a_spec_without_a_verdict_hold_nothing(self):
+        self.unmet(self.spec, "- checked: 2026-11-17 met")
+        self.prompt("/docket:implement c-11112222")
+        self.assertEqual((self.state()["spec"], self.state()["queue"]), (SPEC, ["s-aaaa1111"]))
+
+    def test_a_written_verdict_is_a_log_line_once(self):
+        self.unmet(self.spec)
+        write = {"session_id": SID, "cwd": self.p, "tool_name": "Edit",
+                 "tool_input": {"file_path": str(self.spec).replace("\\", "/")}}
+        run_hook("post_tool_use.py", write, self.p)
+        run_hook("post_tool_use.py", write, self.p)
+        lines = [line for line in self.log().splitlines() if " preconditions " in line]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn(f"{SPEC} ", lines[0])
+        self.assertTrue(lines[0].endswith("unmet checked=2026-11-17"), lines[0])
+        self.spec.write_text(self.spec.read_text("utf-8") + "- checked: 2026-11-18 met\n", "utf-8")
+        run_hook("post_tool_use.py", write, self.p)
+        self.assertTrue(self.log().splitlines()[-1].endswith("met checked=2026-11-18"), self.log())
+
     def test_delivered_seals_the_next_spec_and_hands_over_on_stderr(self):
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111, s-bbbb2222")
         self.deliver(SPEC, "Login")
@@ -2363,6 +2414,29 @@ class PaneData(Project):
         self.assertEqual([(c["id"], c["title"], c["state"], c["decisions"]) for c in data["concepts"]],
                          [("c-11112222", "Accounts", "agreed", 1)])
         self.assertEqual(data["runs"], [])
+
+    def test_overview_names_the_preconditions_their_last_check_and_what_is_held(self):
+        specs = {s["id"]: s for s in self.ui("overview")[1]["specs"]}
+        self.assertEqual(specs[SPEC]["preconditions"], {"lines": 0, "checked": "", "met": None, "detail": ""})
+        self.assertFalse(specs[SPEC]["held"])
+        self.spec.write_text(self.spec.read_text("utf-8") + "\n## Preconditions (user only)\n\nOne line each: "
+                             "`<command>` → `<expected output>`.\n\n- `curl localhost:8080` → ok\n"
+                             "- `gh auth status` → logged in\n", "utf-8")
+        specs = {s["id"]: s for s in self.ui("overview")[1]["specs"]}
+        self.assertEqual(specs[SPEC]["preconditions"], {"lines": 2, "checked": "", "met": None, "detail": ""})
+        self.assertFalse(specs[SPEC]["held"])
+        self.spec.write_text(self.spec.read_text("utf-8") + "- checked: 2026-11-17 not met: `gh auth status` says "
+                             "not logged in\n", "utf-8")
+        specs = {s["id"]: s for s in self.ui("overview")[1]["specs"]}
+        self.assertEqual(specs[SPEC]["preconditions"], {"lines": 2, "checked": "2026-11-17", "met": False,
+                                                        "detail": "`gh auth status` says not logged in"})
+        # Logout follows Login: held with it. The draft and the finished spec are not.
+        self.assertEqual({spec_id: s["held"] for spec_id, s in specs.items()},
+                         {SPEC: True, "s-aaaa1111": True, "s-bbbb2222": False, "s-cccc3333": False})
+        self.spec.write_text(self.spec.read_text("utf-8") + "- checked: 2026-11-18 met\n", "utf-8")
+        specs = {s["id"]: s for s in self.ui("overview")[1]["specs"]}
+        self.assertEqual((specs[SPEC]["preconditions"]["met"], specs[SPEC]["preconditions"]["checked"],
+                          specs[SPEC]["held"], specs["s-aaaa1111"]["held"]), (True, "2026-11-18", False, False))
 
     def test_overview_of_a_project_without_docket_md_says_so(self):
         (self.work / "DOCKET.md").unlink()

@@ -23,7 +23,7 @@ from docket_lib import (RUN_MODES, Paths, load_state, log_event, logged_series, 
                         run_line, save_state, say, series_line, strip_harness_blocks, take_handoff, work_dir_line)
 
 COMMAND = re.compile(r"^/(?P<namespace>docket:)?(?P<name>[a-z]+)\b(?P<rest>.*)$", re.IGNORECASE | re.DOTALL)
-COMMANDS = ("concept", "spec", "implement", "init", "stop", "status", "register")
+COMMANDS = ("concept", "spec", "implement", "init", "stop", "status", "register", "precheck")
 # Claude Code has no built-in of these names, so they also count without the namespace; /init and /status do not.
 BARE = ("concept", "spec", "implement")
 

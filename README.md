@@ -18,8 +18,8 @@ the team and read by you.
     <img alt="The docket pane with example data: a run at work, two specs selected as one series, specs by concept in implementation order" src="assets/pane-light.svg" width="580">
   </picture>
   <br>
-  <sub>The docket pane beside the chat: the run at work, every spec by concept in the order it will be built,
-  two ready specs ticked to run as one series. One click starts a run, here or in a session of its own.
+  <sub>The docket pane beside the chat: the run at work, the specs by concept, a predecessor before what waits
+  for it, two ready specs ticked to run as one series. One click starts a run, here or in a session of its own.
   Example data.</sub>
 </p>
 
@@ -81,6 +81,7 @@ titles instead of ids, one message when the agents are back. It is your choice (
 | `/docket:concept` | Thinks with you until the WHAT is agreed. |
 | `/docket:spec` | Turns it into a spec with checkable done criteria, then `ready`. |
 | `/docket:implement` | Runs the next ready spec, a spec id, a list of ids, a concept id or `--all`, in order. |
+| `/docket:precheck` | Runs the preconditions of ready specs and records whether they are met; a spec that waits for one starts no run. |
 | `/docket:register` | Concepts, specs, dockets, last LOG lines. |
 | `/docket:status` | One line: mode, spec, open points, last LOG line. |
 | `/docket:stop` | Ends a run at the next checkpoint. |
@@ -104,4 +105,4 @@ The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<
 
 ## Status
 
-0.6.7, early development. No warranty: use docket only where you can verify the result.
+0.6.8, early development. No warranty: use docket only where you can verify the result.
