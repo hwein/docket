@@ -1029,7 +1029,7 @@ class HookTexts(Project):
     RULE_WORDS = r"(?i)\b(never|must|always|do not|don't|nie|niemals|muss|musst|immer|darfst)\b"
     ORDERS = ("Continue", "Start", "Read", "Send", "Answer", "Write", "Work", "Run", "Beginne", "Lies", "Sende",
               "Arbeite", "Schreibe", "Antworte", "Führe")
-    PROTOCOL = ("PreToolUse", "ask")  # values of the hook output's JSON fields, no text
+    PROTOCOL = ("PreToolUse", "PostToolUse", "ask")  # values of the hook output's JSON fields, no text
     LETTER = r"[A-Za-zÄÖÜäöüß]"
 
     @staticmethod
@@ -2794,6 +2794,58 @@ class NeverInItsOwnWay(Project):
             self.assertEqual(self.state()["mode"], "sealed")
             self.worked()
         self.assertNotIn(" waived ", self.log())
+
+
+class WorkDirElsewhere(Project):
+    """/docket:init wrote DOCKET.md into a second repo below the project and no pointer; docket looked in the home
+    default, and neither a hook nor the pane saw the project as set up."""
+
+    POINTER = {"work_dir": "other/docket"}
+
+    def setUp(self):
+        super().setUp()
+        self.pointer = self.root / ".claude" / "docket.json"
+        self.pointer.unlink()
+        self.elsewhere = self.root / "other" / "docket"
+        self.elsewhere.mkdir(parents=True)
+        self.config = self.elsewhere / "DOCKET.md"
+        self.config.write_text("# DOCKET\n", "utf-8")
+
+    def post(self, path, **extra):
+        payload = {"session_id": SID, "cwd": self.p, "tool_name": "Write", "tool_input": {"file_path": str(path)}}
+        payload.update(extra)
+        return run_hook("post_tool_use.py", payload, self.p)
+
+    def overview(self):
+        result = subprocess.run([sys.executable, str(HOOKS / "docket_ui.py"), "overview", "--root", self.p],
+                                capture_output=True,
+                                env={k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"})
+        return json.loads(result.stdout.decode("utf-8"))
+
+    def test_a_docket_md_written_where_docket_does_not_look_names_both_places_and_the_pointer(self):
+        code, err, out = self.post(self.config)
+        self.assertEqual((code, err), (0, ""))
+        answer = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(answer["hookEventName"], "PostToolUse")
+        line = answer["additionalContext"]
+        self.assertTrue(line.startswith("[docket] "), line)
+        self.assertIn(f"{self.p}/other/docket/DOCKET.md", line)
+        self.assertIn(self.overview()["work"] + "/DOCKET.md", line)  # where docket looks: the home default
+        self.assertIn(f"`{json.dumps(self.POINTER)}`", line)
+        # A failed write, another file and a project docket finds get no line.
+        self.assertEqual(self.post(self.config, hook_event_name="PostToolUseFailure"), (0, "", ""))
+        self.assertEqual(self.post(self.elsewhere / "notes.md"), (0, "", ""))
+        self.pointer.write_text(json.dumps(self.POINTER), "utf-8")
+        self.assertEqual(self.post(self.config), (0, "", ""))
+
+    def test_a_relative_pointer_is_read_against_the_project_root(self):
+        self.assertFalse(self.overview()["initialized"])
+        self.pointer.write_text(json.dumps(self.POINTER), "utf-8")
+        reply = self.overview()
+        self.assertEqual((reply["initialized"], reply["work"]), (True, f"{self.p}/other/docket"))
+        code, err, out = self.prompt("/docket:status")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"{self.p}/other/docket/DOCKET.md", out)
 
 
 class RecordsInAnotherRepository(Project):

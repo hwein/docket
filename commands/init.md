@@ -57,7 +57,10 @@ diff changes files the project owns.
    the folder rule of step 2.
 4. Diff: `DOCKET.md` in the work dir (configuration, repository behaviour or pointers to where the project already
    answers, deviations, audit fingerprints), `.gitignore` lines, the permission rule `Edit(~/.docket/**)` in user
-   settings when the work dir is the home default. Existing CLAUDE.md, AGENTS.md or CONTRIBUTING.md receive the
+   settings when the work dir is the home default, and the pointer `.claude/docket.json` in the repo root with
+   `{"work_dir": "<path relative to the repo root>"}` when the work dir is neither the home default nor `docket/`
+   in the repo root, because the hooks and the pane find only those two without it: a work dir in a second
+   repo without the pointer reads as not set up. Existing CLAUDE.md, AGENTS.md or CONTRIBUTING.md receive the
    decisions where they already treat the topic, otherwise as a marked section; no existing sentence changes before
    the user decided the contradiction. Missing files of those three are created only on explicit wish.
    The `check` row lists those commands, each in backticks, in the order the project runs them, with their source
@@ -87,6 +90,10 @@ diff changes files the project owns.
    The plugin ships the output style `docket:docket` (result first, one question with a recommendation, titles
    instead of ids, one message when the agents are back); name it once as a choice the user makes in `/config`,
    because a style docket set would override the one the user chose. The diff does not set it.
-5. Show the diff and ask for the go. Write DOCKET.md, the reference concepts, CONTRIBUTING.md, CLAUDE.md, AGENTS.md,
-   .gitignore and settings files only after the user answered with the one word `go` (or ok, yes, ja), because they
-   are the project's files (see above). Then write. Re-runs show only findings whose fingerprint moved.
+5. Show the diff and ask for the go. Write DOCKET.md, the pointer, the reference concepts, CONTRIBUTING.md, CLAUDE.md,
+   AGENTS.md, .gitignore and settings files only after the user answered with the one word `go` (or ok, yes, ja),
+   because they are the project's files (see above). Then write. Re-runs show only findings whose fingerprint moved.
+6. After the write, ask docket where it looks: `python "${CLAUDE_PLUGIN_ROOT}/hooks/docket_ui.py" overview --root
+   <repo root>`. `"initialized": true` with `"work"` equal to the work dir of the diff says the hooks and the pane
+   find DOCKET.md. Any other answer is a blocker: report the command, its answer and the folder docket looks in
+   instead, because a project docket does not find gets no pane, no state line and no run.

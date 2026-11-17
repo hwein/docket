@@ -61,7 +61,9 @@ Each refusal names the key, its value and the path of DOCKET.md. An invalid rege
 
 ## PostToolUse
 
-No matcher, also for PostToolUseFailure. Refuses nothing, says nothing to the model. Side effects: in a run, a write
+No matcher, also for PostToolUseFailure. Refuses nothing. It gives the model one line, as context: in a project
+without DOCKET.md, a write of a `DOCKET.md` where docket does not look names the written path, the path docket looks
+at and the pointer `.claude/docket.json` that makes the written folder the work dir. Side effects: in a run, a write
 on a docket that turns more points `[x]` or `[~]` than the LOG has counted gets the LOG line `point-delivered` or
 `deviation`; a spec written with `state: ready` gets LOG `ready` once; a spec written with the verdict of a
 precondition check gets LOG `preconditions` (`met` or `unmet`, `checked=<date>`) once per verdict; a command that matched `forbidden_commands`
@@ -140,4 +142,7 @@ prompt is `docket <version>` from the installed `plugin.json`; the counts and th
 ## Footprint
 
 docket adds no code to a repository. In a project it writes `.claude/docket/` (session state, ignored by git) and,
-after `/docket:init`, its work dir.
+after `/docket:init`, its work dir. docket finds the work dir in this order (`work_dir` in `hooks/docket_lib.py`):
+the pointer `.claude/docket.json` (`{"work_dir": "<path>"}`, relative to the repo root or absolute), `docket/` in
+the repo root where it holds a DOCKET.md, `~/.docket/<repo key>/`. `/docket:init` writes the pointer for a work dir
+that is neither of the last two.

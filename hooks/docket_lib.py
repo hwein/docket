@@ -252,6 +252,10 @@ SAY = {
         "run_other": "diese Sitzung arbeitet an „{title}“.",
         "not_set_up": ("Unter {work} gibt es kein DOCKET.md: Das Projekt ist für docket nicht eingerichtet, "
                        "`/docket:init` richtet es ein; bis dahin beobachten die docket-Hooks nur."),
+        "config_elsewhere": ("DOCKET.md liegt jetzt unter {written}; docket sucht es unter {config}, deshalb gilt das "
+                             "Projekt für die Hooks und die Pane als nicht eingerichtet. Eine Datei "
+                             "`.claude/docket.json` im Projektstamm mit dem Inhalt `{pointer}` macht {folder} zum "
+                             "Arbeitsordner."),
         "work_dir": "Arbeitsordner: {work}; DOCKET.md: {config}; user_language: {language}.",
         "session_state": "Sitzungszustand: {mode}{spec}.",
         "runs_open": ("Versiegelte Läufe ohne Terminal state: {ids}. `/docket:implement <id>` nimmt einen aus seinem "
@@ -342,6 +346,9 @@ SAY = {
         "run_other": "this session works on “{title}”.",
         "not_set_up": ("There is no DOCKET.md at {work}: the project is not set up for docket, and `/docket:init` sets "
                        "it up; until then the docket hooks only observe."),
+        "config_elsewhere": ("DOCKET.md is now at {written}; docket looks for it at {config}, so the hooks and the "
+                             "pane see the project as not set up. A file `.claude/docket.json` in the project root "
+                             "with the content `{pointer}` makes {folder} the work dir."),
         "work_dir": "This project's work dir: {work}; DOCKET.md: {config}; user_language: {language}.",
         "session_state": "Session state: {mode}{spec}.",
         "runs_open": ("Sealed runs without a terminal state: {ids}. `/docket:implement <id>` resumes one from its "

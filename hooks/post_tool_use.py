@@ -1,7 +1,10 @@
 """PostToolUse hook, every tool, also registered for PostToolUseFailure: Claude Code runs PostToolUse only after a
 call that succeeded, a failed one (a shell command with an exit code other than 0) runs PostToolUseFailure (hooks docs;
-none of 59 failed Bash/PowerShell calls in the eval transcripts carries a PostToolUse attachment). It refuses nothing,
-undoes nothing and says nothing to the model.
+none of 59 failed Bash/PowerShell calls in the eval transcripts carries a PostToolUse attachment). It refuses nothing
+and undoes nothing.
+
+The one line it gives the model, as additionalContext: in a project that is not set up, a DOCKET.md written where
+docket does not look (config_elsewhere).
 
 What it keeps, as side effects:
 - LOG `point-delivered` and `deviation`: in a session with the run mark, a write on a docket counts the file's
@@ -15,6 +18,7 @@ What it keeps, as side effects:
   marker `refused` where it is set (the next Stop is a first pass again), else it renews the state file's time; an
   agent's tool call only renews the time. Without the run mark the hook writes nothing into the state.
 """
+import json
 import os
 import posixpath
 import re
@@ -23,9 +27,11 @@ import sys
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 from docket_lib import (RUN_MODES, SPEC_ID, Paths, absolute, config_values, frontmatter, load_state, log_event,
-                        log_has, log_lines, precondition_state, read_input, save_state, touch_state, under)
+                        log_has, log_lines, marked, precondition_state, read_input, save_state, say, touch_state,
+                        under)
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+CONFIG_NAME = "DOCKET.md"
 POINT_EVENTS = {"x": "point-delivered", "~": "deviation"}
 
 
@@ -41,6 +47,8 @@ def main():
     file_path = tool_input.get("file_path") or tool_input.get("notebook_path")
     if tool in WRITE_TOOLS and isinstance(file_path, str) and file_path:
         path = absolute(file_path, paths.cwd)
+        if not configured and hook_input.get("hook_event_name") != "PostToolUseFailure":
+            config_elsewhere(path, paths)
         if under(path, paths.dockets):
             if in_run:
                 log_points(path, paths, session_id)
@@ -52,6 +60,19 @@ def main():
     if in_run:
         live(hook_input, paths, session_id, state)
     return 0
+
+
+def config_elsewhere(path, paths):
+    """A DOCKET.md written where docket does not look, in a project that is not set up: the line names both places
+    and the pointer file that makes the written folder the work dir (/docket:init wrote DOCKET.md into a second
+    repo and no pointer, and neither a hook nor the pane saw the project as set up)."""
+    if posixpath.basename(path) != CONFIG_NAME or not os.path.isfile(path):
+        return
+    folder = posixpath.dirname(path)
+    relative = folder[len(paths.root):].lstrip("/") or "." if under(folder, paths.root) else folder
+    line = marked(paths, "line", say(paths, "config_elsewhere", written=path, config=paths.config, folder=folder,
+                                     pointer=json.dumps({"work_dir": relative})))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}}))
 
 
 def live(hook_input, paths, session_id, state):

@@ -101,8 +101,9 @@ The pane beside the chat shows specs, their state and the run at work; its butto
 The line under the prompt says `docket <version>` where docket is set up in the project.
 
 The work dir (`DOCKET.md`, `specs/`, `dockets/`, `LOG.md`) lives in `~/.docket/<repo key>/` by default;
-`/docket:init` offers `docket/` inside the repo instead. docket adds no code to your repository.
+`/docket:init` offers `docket/` inside the repo instead, or another folder such as a second repo, which it records
+in `.claude/docket.json` (`{"work_dir": "<path>"}`). docket adds no code to your repository.
 
 ## Status
 
-0.6.11, early development. No warranty: use docket only where you can verify the result.
+0.6.12, early development. No warranty: use docket only where you can verify the result.
