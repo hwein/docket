@@ -69,43 +69,6 @@ Optional: the output style `docket:docket` (result first, at most one question),
 | `/docket:status` | One line: mode, spec, open points, last LOG line. |
 | `/docket:stop` | Ends a run at the next checkpoint. |
 
-## What a run leaves
-
-A docket per spec, the proof of the work (excerpt, example data):
-
-```markdown
-## Points
-
-| # | Point                       | Acceptance line                              | State |
-|---|-----------------------------|----------------------------------------------|-------|
-| 1 | `--name Ada` greets by name | `python greet.py --name Ada` → `Hello, Ada!` | [x]   |
-| 2 | README describes `--name`   | `grep -c -F -- "--name Ada" README.md` → 1   | [x]   |
-
-## Evidence
-
-- point 1: `python greet.py --name Ada` → `Hello, Ada!`, exit 0; commit "feat: greet by name"
-- point 2: `grep -c -F -- "--name Ada" README.md` → `1`; commit "docs: describe --name"
-- CI: green fcb22fe
-
-## Terminal state
-
-- state: DELIVERED
-- result: `greet.py --name Ada` greets with "Hello, Ada!"; the README describes it.
-```
-
-And one closing message for the whole series (example data):
-
-```text
-Two specs: one implemented as ordered, one with a deviation. One item waits for you.
-Greeting by name: implemented as ordered.
-Farewell: implemented with deviations:
-- The farewell is "Bye!", the order said "Goodbye!": a test of the earlier spec expects "Bye!".
-
-Open:
-- A name with an emoji ends the program with an error in a Windows pipe. Fault: yes.
-  Recommendation: do it: your yes makes the output UTF-8 on every platform. (Greeting by name)
-```
-
 ## What you can rely on
 
 - Delivered means: no point open, and the project's check and every acceptance command ran after the last agent
