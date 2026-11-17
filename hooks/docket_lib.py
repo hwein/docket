@@ -406,7 +406,7 @@ AFTER = re.compile(r"\bafter:((?:[\s`*,]*\bs-[0-9a-f]{8}\b)+)", re.IGNORECASE)
 
 def after_ids(path, own=""):
     """The specs a spec names as `after: <id>` in its Goal section (commands/spec.md: another spec must land
-    first). Only there: a Rewrite section quotes an `after:` it removed (luradb-web-client 2026-11-10)."""
+    first). Only there: a Rewrite section quotes an `after:` it removed (2026-11-10)."""
     goal = section_text(read_text(path), "Goal")
     found = [s.lower() for run in AFTER.findall(goal) for s in SPEC_ID.findall(run)]
     return [s for s in dict.fromkeys(found) if s != own]
@@ -514,7 +514,7 @@ def unmet_line(paths, spec_ids):
 
 def open_predecessors(paths, spec_ids):
     """For a run of the given specs in that order: every predecessor (`follows:` or `after:`) that is neither done
-    nor earlier in the run, as (spec, predecessor). luradb-web-client 2026-11-10: a spec whose goal said `after:`
+    nor earlier in the run, as (spec, predecessor). 2026-11-10: a spec whose goal said `after:`
     two undone specs stood first in the pane's order, was sealed in a series and blocked at 0 points."""
     states = {r["id"]: r for r in spec_records(paths)}
     missing, earlier = [], set()
@@ -616,7 +616,7 @@ def state_path(paths, session_id):
 # the same second, every tool call of every agent runs two more. Each hook used to read the whole state, change a
 # field and write the whole state back, and a read that failed on Windows (the file open in another process, or
 # just being replaced) counted as "no state": mode none went back to disk and a spec session lost its mode
-# (luradb-web-client 2026-11-10: 15 conceptors worked 10-25 minutes, every Write was refused).
+# (2026-11-10: 15 conceptors worked 10-25 minutes, every Write was refused).
 # So: a read is retried and never answered with a default while the file exists; a save takes a lock, reads the
 # file again and writes back only the fields this hook changed.
 READ_WAIT = 2.0
@@ -893,15 +893,15 @@ def command_line(text):
     """The line of a prompt that can be a command: its first line (typed), or its last (the pane and the brief of a
     session started by another put the command below a preamble). A line that starts with a slash anywhere else is
     text - a paste, a quoted transcript, a request that names a command (docket 2026-11-10: a pasted
-    `/docket:implement` line sealed the session that was to find out why another one was sealed; luradb-web-client
-    2026-11-10: the pane's request to start a session for a command sealed the session it asked)."""
+    `/docket:implement` line sealed the session that was to find out why another one was sealed; and the
+    pane's request to start a session for a command sealed the session it asked)."""
     lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
     return next((line for line in lines[:1] + lines[-1:] if line.startswith("/")), "")
 
 
 # --- a command the pane hands to a session of its own -----------------------------
 # The app wraps the brief of a session it starts: a heading above it, the background, and below it lines of its own
-# (luradb-web-client 2026-11-10: "Shared notes folder for this group of sessions (...)" followed the command, the
+# (2026-11-10: "Shared notes folder for this group of sessions (...)" followed the command, the
 # command was neither the first nor the last line, the session stayed unsealed, called the command as a skill, was
 # refused and ended on "type the command yourself"). The pane therefore records the command before it asks for the
 # session; the session whose prompt carries exactly that line takes it, once. A line in a paste matches no record.
@@ -953,7 +953,7 @@ def take_handoff(paths, session_id, text):
 HARNESS_BLOCK = re.compile(r"<(system-reminder|task-notification|side-sessions-event|cross-session-message|"
                            r"agent-message)\b[^>]*>.*?</\1>", re.DOTALL)
 # An agent's report handed back to the session arrives in the user role, framed by a line before the block and a
-# paragraph after it (luradb-web-client 2026-11-10: 14 reports of the run's own agents were booked as messages of
+# paragraph after it (2026-11-10: 14 reports of the run's own agents were booked as messages of
 # the user, answered on the screen and listed in the closing message as "your message ... not handled yet").
 AGENT_MESSAGE = re.compile(r"<agent-message\b")
 AGENT_FRAME = re.compile(r"^[ \t]*(?:Another Claude session sent a message:[ \t]*|"
@@ -1395,7 +1395,7 @@ def runs_command(text, command):
     after `;`, `&`, `|`, `(` or `{`; variable assignments before it are fine), outside a here-string or
     here-document. The same words as prose are no run: a call that wrote the docket carried `npm run check` and
     `npm test` in an Evidence line, failed at a parser error and counted as the checks' failed last run, after a
-    green one (luradb-web-client 2026-11-12, lines 446 and 504)."""
+    green one (2026-11-12)."""
     return bool(re.search(COMMAND_PLACE + re.escape(command) + r"(?!\w)", HERE_TEXT.sub("\n", text)))
 
 
@@ -1410,7 +1410,7 @@ def cuts_output(text, command):
     """Whether the call's last run of the command cuts its output: what follows the command up to the end of its line,
     `;`, `&&` or `||` throws lines away. A pipe inside the registered command is part of it, not a cut. A red
     `npm test 2>$null | Select-Object -Last 5` counted as a run and the failing test stayed unnamed, in the docket
-    too (luradb-web-client 2026-11-13, line 1160)."""
+    too (2026-11-13)."""
     found = list(re.finditer(COMMAND_PLACE + re.escape(command) + r"(?!\w)", HERE_TEXT.sub("\n", text)))
     if not found:
         return False
@@ -1442,7 +1442,7 @@ def pending_agents(transcript_path, queued_only=False):
     """Background agents and workflows launched in the main line whose notification the model has not seen yet.
     A notification arrives either as a user entry (between turns) or as a queued_command attachment (mid-turn,
     seen by the model with its next assistant entry); a queued one the model has not answered yet still counts as
-    waiting, the turn resumes with it (luradb-web-client 2026-11-06: three waits were refused because
+    waiting, the turn resumes with it (2026-11-06: three waits were refused because
     background_tasks was already empty). An agent resumed by a SendMessage (`resumedAgentId` in its result) counts
     like a launch: its notification names the SendMessage call (recheck of 5a8994a, X3). `queued_only`: only those,
     for a client that reports background_tasks.
@@ -1803,7 +1803,7 @@ def records_commands(paths):
 def commit_records(paths):
     """At the end of a run the hook commits the records itself where they lie inside another repository, only their
     folder, and pushes that commit: the user got two commands to type at the end of a run that had delivered and
-    pushed its code (luradb-web-client 2026-11-12, line 566). It pushes where the branch has an upstream and the
+    pushed its code (2026-11-12). It pushes where the branch has an upstream and the
     commit is the only one waiting (what a run left unpushed stays so), in the project's own repository only on a
     branch `push_branch` allows. `commit_records: no` in DOCKET.md turns both off. Returns the push command where the
     records are committed and a push the hook may make did not happen, else ""; a commit that failed leaves the work
@@ -1864,7 +1864,7 @@ def write_metrics(paths, spec_id, transcript_path, kind):
     stats = review_stats(body)
     counts = point_counts(body) if body else {"x": 0, "~": 0, " ": 0}
     # A deviation is a `[~]` box of a point or a `[~]` line of the Deviations section: three such lines beside
-    # thirteen delivered points counted as none (luradb-web-client 2026-11-12, metrics/s-83467ecf.json).
+    # thirteen delivered points counted as none (2026-11-12).
     counts["~"] = max(counts["~"], len(re.findall(r"(?<!`)\[~\](?!`)", section_text(body or "", "Deviations"))))
     data = {"spec": spec_id, "title": spec_title(paths, spec_id), "outcome": kind, "sealed": sealed,
             "closed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1962,7 +1962,7 @@ def run_line(paths, state, mark="line"):
     """The state line of a marked run: which spec of the series runs, where its docket lies, its points, the rest by
     title. `mark`: `state` ([docket state]) where the Stop hook goes on with the next spec of the series; the user sees
     that one, so it carries the spec's id once (the model's source after a compaction) and no path, no points
-    (luradb-web-client 2026-11-13: "ihr Docket liegt unter D:/… (noch kein Docket). Danach: s-…, s-…")."""
+    (2026-11-13: "ihr Docket liegt unter D:/… (noch kein Docket). Danach: s-…, s-…")."""
     spec_id = state.get("spec", "")
     i, n = position(state)
     title = spec_title(paths, spec_id) or spec_id

@@ -77,7 +77,7 @@ def config_elsewhere(path, paths):
 
 def live(hook_input, paths, session_id, state):
     """The life sign of a run (session_live). An agent writes nothing into the session state: 15 agents at work were
-    15 writers on one file, and the mode fell out of it (luradb-web-client 2026-11-10)."""
+    15 writers on one file, and the mode fell out of it (2026-11-10)."""
     if not hook_input.get("agent_id") and state.get("refused"):
         state["refused"] = False  # work went on after a refusal: the next Stop is a first pass again
         save_state(paths, session_id, state)

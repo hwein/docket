@@ -117,7 +117,7 @@ def gate_problems(paths, spec_id, transcript):
 def end_spec(paths, session_id, state, kind, transcript):
     """The spec is closed: lock, spec state, metrics, LOG. The series goes on with its next spec after DELIVERED, and
     after BLOCKED or DISSENT when the spec left the project as it found it or all its work is pushed and the tree is
-    clean (luradb-web-client 2026-11-10: a spec blocked at 0 points ended a series of three); a spec that left
+    clean (2026-11-10: a spec blocked at 0 points ended a series of three); a spec that left
     commits or changes behind ends the series, since the next spec's push would carry them. A queued spec whose
     predecessor is not done is passed over. /docket:stop ends the series after the spec at work."""
     spec_id = state.get("spec", "")

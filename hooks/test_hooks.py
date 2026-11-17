@@ -191,7 +191,7 @@ class ModeSwitch(Project):
         self.assertEqual(self.state().get("mode", "none"), "none")
 
     def test_implement_with_several_ids_seals_the_first_and_queues_the_rest(self):
-        # luradb-web-client 2026-11-06: five ids in one call, the first was sealed, the other four vanished unnamed.
+        # 2026-11-06: five ids in one call, the first was sealed, the other four vanished unnamed.
         for spec_id in ("s-aaaa1111", "s-bbbb2222"):
             (self.work / "specs" / "core" / f"{spec_id}.md").write_text(f"---\nid: {spec_id}\nstate: ready\n---\n", "utf-8")
         code, err, out = self.prompt(f"/docket:implement {SPEC},s-aaaa1111 s-bbbb2222")
@@ -215,7 +215,7 @@ class ModeSwitch(Project):
         self.assertFalse((self.work / "locks").exists())
 
     def test_the_panes_request_for_a_session_seals_nothing_here(self):
-        # luradb-web-client 2026-11-10: the request carried the command on a line of its own, the hook sealed the
+        # 2026-11-10: the request carried the command on a line of its own, the hook sealed the
         # asking session on it, and the session started for the run found the spec taken.
         strings = (HOOKS / "mod" / "strings.ts").read_text("utf-8")
         asks = [line for line in strings.splitlines() if "start_session, initiation" in line]
@@ -238,8 +238,8 @@ class ModeSwitch(Project):
             self.assertEqual(code, 0, err)
             self.assertEqual(self.state()["mode"], "sealed", text)
 
-    # The brief of a session the app starts, as the session reads it (luradb-web-client 2026-11-10, session
-    # 5482c916, entry 5): the app's heading and background above the task, a line of its own below the command.
+    # The brief of a session the app starts, as the session reads it (2026-11-10): the app's heading and background
+    # above the task, a line of its own below the command.
     APP_BRIEF = ("Background (from the session that started this one):\nThis session was started from the docket "
                  "pane of the main session.\n\nTask:\nRun this command exactly as written, as your first action:\n\n"
                  "{command}\n\nShared notes folder for this group of sessions (create it when you first write to "
@@ -1252,7 +1252,7 @@ class JudgeCleanup(Project):
 
 class Series(Project):
     """Several specs are a series in one session, each with its own docket; the run ends in one closing message
-    for all of them. luradb-web-client 2026-11-06: five ids, the first sealed, four lost (0.2.8); four delivered,
+    for all of them. 2026-11-06: five ids, the first sealed, four lost (0.2.8); four delivered,
     four receipts, no word about the series (0.2.9)."""
 
     def spec_file(self, spec_id, title, state="ready", follows="", concept="", created="2026-11-01"):
@@ -1463,7 +1463,7 @@ class Series(Project):
         return git
 
     def test_after_in_the_goal_is_a_predecessor_like_follows(self):
-        # luradb-web-client 2026-11-10: `after:` stood in the goal, the order and the start check read `follows:` only.
+        # 2026-11-10: `after:` stood in the goal, the order and the start check read `follows:` only.
         self.spec_file("s-dddd4444", "Import", created="2026-10-15").write_text(
             "---\nid: s-dddd4444\ntitle: Import\nstate: ready\nfollows:\ncreated: 2026-10-15\n---\n# Import\n\n"
             "## Goal (WHAT)\n\nUsers import a file. `after: s-bbbb2222` (the profile) and `after: s-eeee5555`.\n\n"
@@ -1478,7 +1478,7 @@ class Series(Project):
         self.assertEqual((self.state()["spec"], self.state()["queue"]), (SPEC, ["s-aaaa1111", "s-bbbb2222", "s-dddd4444"]))
 
     def test_blocked_with_the_project_untouched_lets_the_series_go_on(self):
-        # luradb-web-client 2026-11-10: the second of three specs blocked at 0 points and the third never ran.
+        # 2026-11-10: the second of three specs blocked at 0 points and the third never ran.
         self.repo()
         self.prompt(f"/docket:implement {SPEC}, s-aaaa1111, s-bbbb2222")
         self.end_spec("BLOCKED: start Docker", result="Login is not built yet.")
@@ -1497,7 +1497,7 @@ class Series(Project):
         self.assertEqual(self.state()["mode"], "none")
 
     def test_blocked_with_its_work_pushed_lets_the_series_go_on(self):
-        # luradb-web-client 2026-11-10: the third spec's work was pushed and the tree clean; the fourth never started.
+        # 2026-11-10: the third spec's work was pushed and the tree clean; the fourth never started.
         git = self.repo()
         remote = self.tmp / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
@@ -1613,7 +1613,7 @@ class AcceptanceCommands(Project):
         self.assertEqual(self.state()["mode"], "none")
 
     def test_a_command_named_in_prose_is_no_run(self):
-        # luradb-web-client 2026-11-12, lines 446 and 504: a PowerShell call that wrote the docket carried the check
+        # 2026-11-12: a PowerShell call that wrote the docket carried the check
         # commands in an Evidence line and failed at a parser error; the gate took it for their failed last run.
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n"
                                              "| check | `npm run check` `npm test` | |\n", "utf-8")
@@ -1638,7 +1638,7 @@ class AcceptanceCommands(Project):
                       "2>&1`)", err)
 
     def test_a_run_that_cuts_its_output_is_a_gap(self):
-        # luradb-web-client 2026-11-13, line 1160: `npm test 2>$null | Select-Object -Last 5` was red, counted as a
+        # 2026-11-13: `npm test 2>$null | Select-Object -Last 5` was red, counted as a
         # run, and the failing test stayed unnamed in the closing message and the docket.
         for cut in ("cargo test login 2>$null | Select-Object -Last 5", "cargo test login | tail -5",
                     "cargo test login > /dev/null", "cargo test login | Out-Null; exit $LASTEXITCODE"):
@@ -1655,7 +1655,7 @@ class AcceptanceCommands(Project):
         self.assertIn("point 2 (`cargo test | grep ok`) cut its output", err)
 
     def test_the_metrics_count_the_lines_of_the_deviations_section(self):
-        # luradb-web-client 2026-11-12: three `[~]` lines under Deviations, every point `[x]`, metrics said 0.
+        # 2026-11-12: three `[~]` lines under Deviations, every point `[x]`, metrics said 0.
         self.docket.write_text("## Points\n\n| # | Point | Evidence line expected | State |\n|---|---|---|---|\n"
                                "| 1 | login | `cargo test login → 3 passed` | [x] |\n\n"
                                "## Deviations\n\n`[~]` lines: what differs.\n\n- [~] point 1: one commit for all\n"
@@ -2222,7 +2222,7 @@ class ReviewFindings(Project):
         self.assertNotIn("waiting", self.state())
 
     def test_a_check_moved_to_the_background_for_a_message_or_by_the_user_is_a_gap_until_its_result(self):
-        # Recheck of 5a8994a (X2), real formats (docket 5819a77e line 652, luradb 4a04d730 line 1304): a check moved to
+        # Recheck of 5a8994a (X2), real formats (docket 5819a77e line 652 and a second transcript): a check moved to
         # the background without a timeout was refused and halted, one moved at its timeout waited, without a limit.
         (self.work / "DOCKET.md").write_text("# DOCKET\n| Key | Value | Source |\n|---|---|---|\n| check | `cargo test` | |\n", "utf-8")
         self.end_spec()
@@ -2561,7 +2561,7 @@ class PaneData(Project):
 
 
 class SessionStateRace(Project):
-    """One state file, many hooks at once. luradb-web-client 2026-11-10: a message started 14 agents, their hooks
+    """One state file, many hooks at once. 2026-11-10: a message started 14 agents, their hooks
     wrote the state in the same second, a read that failed on Windows counted as mode none and went back to disk; the
     spec session had lost its mode, and 15 agents' Writes were refused after 10-25 minutes of work."""
 
@@ -2724,7 +2724,7 @@ class SessionStateRace(Project):
 
 
 class NeverInItsOwnWay(Project):
-    """0.5.8. luradb-web-client 2026-11-10: a spec whose code was reviewed and pushed ended BLOCKED over a line of its
+    """0.5.8. 2026-11-10: a spec whose code was reviewed and pushed ended BLOCKED over a line of its
     own record (a citation of an earlier session that an earlier spec of the same run had made stale), the series
     ended there, and 14 reports of the run's own agents stood in the closing message as messages of the user."""
 
@@ -2849,7 +2849,7 @@ class WorkDirElsewhere(Project):
 
 
 class RecordsInAnotherRepository(Project):
-    """luradb-web-client 2026-11-10: the dockets lay in a concept repository beside the code, the closing message said
+    """2026-11-10: the dockets lay in a concept repository beside the code, the closing message said
     "(nicht committet)" and named no step."""
 
     def setUp(self):
@@ -2892,7 +2892,7 @@ class RecordsInAnotherRepository(Project):
         self.assertNotIn("docket: records", self.git("log", "--oneline"))
 
     def test_the_hook_pushes_its_commit_where_the_branch_has_an_upstream(self):
-        # luradb-web-client 2026-11-12, line 566: the run had pushed its code, the closing message ended with two
+        # 2026-11-12: the run had pushed its code, the closing message ended with two
         # commands for the records.
         remote_log = self.with_upstream()
         self.end_spec()

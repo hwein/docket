@@ -203,8 +203,8 @@ const progress = (t: Words, run: Run): string => {
 
 /**
  * What holds a spec or stands out about it, as the row's dim note. A predecessor is named by its position in the
- * list, which the row in front of it shows: its title six times over made the rows unreadable (luradb-web-client
- * 2026-11-10). One without a position is named by its title.
+ * list, which the row in front of it shows: its title six times over made the rows unreadable (2026-11-10). One
+ * without a position is named by its title.
  */
 const marks = (t: Words, data: Overview, spec: Spec, rank: ReadonlyMap<string, number>): string => {
   const found: string[] = []

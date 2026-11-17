@@ -240,7 +240,7 @@ test('a docket project opens the pane, sets the status line and lists specs unde
 
     expect((await ui.find({ type: 'Text', text: /^Accounts$/ }))?.text).toBe('Accounts')
     // A row is position, state glyph and title; what holds the spec stands beside it, the predecessor by its
-    // position (luradb-web-client 2026-11-10: the state word and the predecessor's title in every row).
+    // position (2026-11-10: the state word and the predecessor's title in every row).
     expect((await ui.find({ key: 'spec-s-aaaa1111' }))?.text).toBe('2. ● Logout')
     expect(await ui.find({ type: 'Text', text: /^Waits for #1$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^2 open decisions$/ })).toBeDefined()
@@ -589,14 +589,14 @@ test('a session of its own is started through the session tool, else Claude is a
   answer = { deny: 'not allowed' }
   await ui.press({ key: 'implement-session' })
   // The request names the command inside a sentence: on a line of its own the hooks would seal the asking session,
-  // and the session it starts would find the spec taken (luradb-web-client 2026-11-10).
+  // and the session it starts would find the spec taken (2026-11-10).
   expect(seen.prompts.at(-1)).toContain('`/docket:implement s-0123abcd`')
   expect(String(seen.prompts.at(-1)).split('\n').some(line => line.trim().startsWith('/'))).toBe(false)
   await ui.unmount()
 })
 
 test('where the session tool starts none, the request waits in the empty prompt box for the person to send', async ($, on) => {
-  // luradb-web-client 2026-11-10: the app refused the session on the turn the pane's own prompt began, and started
+  // 2026-11-10: the app refused the session on the turn the pane's own prompt began, and started
   // it with the same call on the next turn the person typed.
   const { seen, clock } = world(on, overview, () => ({ deny: 'not allowed' }))
 
@@ -626,7 +626,7 @@ test('where the session tool starts none, the request waits in the empty prompt 
 })
 
 test('a session the app moves to its project with the first prompt opens the pane on the session start hooks', async ($, on) => {
-  // luradb-web-client 2026-11-10: the process of a new session stood in the app's placeholder folder until the first
+  // 2026-11-10: the process of a new session stood in the app's placeholder folder until the first
   // prompt (`relocated` in the transcript); the pane read that folder once and came up after the first turn only.
   let reply: unknown = { ok: true, initialized: false, root: '/spare', work: '/spare/docket' }
   const { seen, clock } = world(on, () => reply)

@@ -140,7 +140,7 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 
       // The first read of a docket project opens the pane, and so does the read after the session moved: the app
       // starts a session's process in a placeholder folder before the first prompt and moves it to the project
-      // with that prompt (luradb-web-client 2026-11-10: the pane came up only after the first turn had ended).
+      // with that prompt (2026-11-10: the pane came up only after the first turn had ended).
       if (reply.initialized && (before === undefined || !before.initialized || before.root !== reply.root)) {
         void $.ui.open({ id: PANE, title: t().title }).catch(() => undefined)
       }
@@ -241,7 +241,7 @@ const precheck = async ($: EngineInterface, target: string, label: string): Prom
 
 /**
  * Puts a request into the empty prompt box for the person to send: the app starts a session only on a turn the
- * person began, and refuses it on a prompt this plugin submits (luradb-web-client 2026-11-10: the pane's request
+ * person began, and refuses it on a prompt this plugin submits (2026-11-10: the pane's request
  * was refused, the same call succeeded on the next typed turn). False where no box takes it or a draft is in it.
  */
 const fillRequest = async ($: EngineInterface, text: string): Promise<boolean> => {

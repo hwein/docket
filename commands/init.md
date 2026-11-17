@@ -18,7 +18,7 @@ diff changes files the project owns.
    normal, verbose > 15 %; existing section markers); forbidden paths and content (.gitignore, guard hooks,
    CLAUDE.md); external systems an agent may touch (permissions in settings, CLAUDE.md rules); language of every
    message to the user, in every mode, which is a question of its own because it is not the language of the repo
-   (an English repo, a German author: luradb-web-client 2026-11-06); its finding is the language the user writes
+   (an English repo, a German author); its finding is the language the user writes
    in this session.
    The concept documents of question 7 are what the project already decided or plans: ADR folders (`docs/adr`,
    `doc/adr`, `adr/`, `decisions/`, `docs/decisions`), RFCs (`rfcs/`, `docs/rfc*`), design docs (`docs/design`,
