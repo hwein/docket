@@ -98,7 +98,7 @@ const STOP_BLANK = '\u2008'
 // The tick's slot in a row, in cells: wide enough for the glyph, and the same with and without one.
 const PICK_WIDTH = 3
 // The finished table draws at most this many rows, and the search reaches the others: the desktop app drops a tree
-// of 2,000 nodes or more (Claude 5.11492.5.0, ion-dist.asar: `e.nodes<2e3`), and a row is up to 21 of them.
+// of 2,000 nodes or more (Claude 5.11492.5.0, ion-dist.asar: `e.nodes<2e3`), and a row is up to 22 of them.
 const TABLE_ROWS = 60
 // The table's fixed columns, in cells: the state glyph, the concept's title, the closing day under its head, the
 // docket's button.
@@ -572,19 +572,21 @@ const group = (
     <Box flexDirection="column" gap="xs">
       {hasHeading && (
         <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
-          {/* A concept's heading opens its document; the group without one has none to open. */}
-          {concept ? (
-            <Button key={`concept-${concept.id}`} plain onPress={() => act.openConcept(concept.id)}>
-              <Text weight="semibold" size="heading">
-                {concept.title || concept.id}
-              </Text>
-            </Button>
-          ) : (
-            <Text weight="semibold" size="heading">
-              {t.noConcept}
-            </Text>
-          )}
+          <Text weight="semibold" size="heading">
+            {concept ? concept.title || concept.id : t.noConcept}
+          </Text>
           <Text dimColor>{meta}</Text>
+          {/* The button beside the heading, not around it: the desktop app draws a Button as its label alone, in
+              its own font, and the heading's size and weight would be gone (Claude 6.6395, ion-dist.asar). */}
+          {concept && (
+            <Button
+              key={`concept-${concept.id}`}
+              plain
+              dimColor
+              label={t.openConcept}
+              onPress={() => act.openConcept(concept.id)}
+            />
+          )}
         </Box>
       )}
       {concept !== undefined && ready > 0 && (

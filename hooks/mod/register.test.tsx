@@ -519,7 +519,10 @@ test('a concept opens to its document from its heading, a spec and the table, an
   const mount = async () => $.ui.mount({ ...PANE, surface: 'desktop' })
   let ui = await mount()
 
-  // The heading: the project's own document first, docket's concept file in the second tab.
+  // The heading keeps its size, the button beside it opens the project's own document first, docket's concept
+  // file in the second tab.
+  expect((await ui.find({ type: 'Text', text: /^Accounts$/ }))?.props.size).toBe('heading')
+  expect((await ui.find({ key: 'concept-c-11112222' }))?.text).toBe('Open concept ›')
   await ui.press({ key: 'concept-c-11112222' })
   await ui.unmount()
   ui = await mount()

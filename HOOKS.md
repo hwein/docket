@@ -119,8 +119,8 @@ with its own git history every LOG line is a commit.
 docket is not set up, the line above it. It reads no docket file's meaning itself: `hooks/docket_ui.py overview`
 answers register, runs and LOG as JSON with the functions the hooks use, so both read one project the same way.
 Each concept carries its `source` as the frontmatter writes it (`""` where the content stands in the docket file)
-and `source_path`, the same document as an absolute path. A concept's heading, the concept line of a spec and its
-cell in the finished table open the concept: the `source_path` document, with docket's concept file in a second tab,
+and `source_path`, the same document as an absolute path. The button beside a concept's heading, the concept line of a
+spec and its cell in the finished table open the concept: the `source_path` document, with docket's concept file in a second tab,
 or the concept file alone where `source` is empty; back returns to the spec it was opened from, else the register.
 `unregistered` lists the documents under `concept_roots` that no concept's `source` names and no `reference_roots`
 entry names, itself or a folder at or below their concept folder, leaving out docket's work dir (repo-relative,
