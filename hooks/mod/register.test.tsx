@@ -522,7 +522,7 @@ test('a concept opens to its document from its heading, a spec and the table, an
   // The heading keeps its size, the button beside it opens the project's own document first, docket's concept
   // file in the second tab.
   expect((await ui.find({ type: 'Text', text: /^Accounts$/ }))?.props.size).toBe('heading')
-  expect((await ui.find({ key: 'concept-c-11112222' }))?.text).toBe('Open concept ›')
+  expect((await ui.find({ key: 'concept-c-11112222' }))?.text).toBe('›')
   await ui.press({ key: 'concept-c-11112222' })
   await ui.unmount()
   ui = await mount()

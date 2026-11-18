@@ -90,6 +90,8 @@ const COLOR: Record<string, Color> = {
   superseded: 'inactive',
 }
 const LOG_ROWS = 100
+// The button beside a concept's heading that opens the concept.
+const OPEN_GLYPH = '›'
 const LEAD_HEADING = /^\s*#\s[^\n]*\n+/
 // A blank as wide as a digit and one as wide as a full stop: the positions line up in a face that is not
 // monospaced too, and a finished spec's blank is as wide as a position.
@@ -572,21 +574,24 @@ const group = (
     <Box flexDirection="column" gap="xs">
       {hasHeading && (
         <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
-          <Text weight="semibold" size="heading">
-            {concept ? concept.title || concept.id : t.noConcept}
-          </Text>
-          <Text dimColor>{meta}</Text>
           {/* The button beside the heading, not around it: the desktop app draws a Button as its label alone, in
-              its own font, and the heading's size and weight would be gone (Claude 6.6395, ion-dist.asar). */}
-          {concept && (
-            <Button
-              key={`concept-${concept.id}`}
-              plain
-              dimColor
-              label={t.openConcept}
-              onPress={() => act.openConcept(concept.id)}
-            />
-          )}
+              its own font, and the heading's size and weight would be gone (Claude 6.6395, ion-dist.asar). One
+              glyph is a control by itself, and a label in words crowded the heading (2026-11-18). */}
+          <Box flexDirection="row" gap="xs" alignItems="center">
+            <Text weight="semibold" size="heading">
+              {concept ? concept.title || concept.id : t.noConcept}
+            </Text>
+            {concept && (
+              <Button
+                key={`concept-${concept.id}`}
+                plain
+                dimColor
+                label={OPEN_GLYPH}
+                onPress={() => act.openConcept(concept.id)}
+              />
+            )}
+          </Box>
+          <Text dimColor>{meta}</Text>
         </Box>
       )}
       {concept !== undefined && ready > 0 && (
