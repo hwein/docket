@@ -29,6 +29,9 @@ const S: PaneState = {
   tab: 'register',
   openSpec: '',
   detail: 'spec',
+  openConcept: '',
+  conceptDetail: 'content',
+  conceptFrom: '',
   isSuperseding: false,
   supersedeBy: '',
   isOnlyOpen: false,
@@ -339,12 +342,16 @@ const actions = ($: EngineInterface): Actions => {
       show(() => {
         S.tab = tab
         S.openSpec = ''
+        S.openConcept = ''
+        S.conceptFrom = ''
         S.notice = ''
       })(),
     openSpec: id =>
       show(() => {
         S.openSpec = id
         S.detail = 'spec'
+        S.openConcept = ''
+        S.conceptFrom = ''
         S.isSuperseding = false
         S.supersedeBy = ''
         S.notice = ''
@@ -353,18 +360,37 @@ const actions = ($: EngineInterface): Actions => {
       show(() => {
         S.openSpec = id
         S.detail = 'docket'
+        S.openConcept = ''
+        S.conceptFrom = ''
+        S.isSuperseding = false
+        S.supersedeBy = ''
+        S.notice = ''
+      })(),
+    // From a spec, the concept's back button returns to that spec; from the register, to the register.
+    openConcept: id =>
+      show(() => {
+        S.conceptFrom = S.openSpec
+        S.openConcept = id
+        S.conceptDetail = 'content'
+        S.openSpec = ''
         S.isSuperseding = false
         S.supersedeBy = ''
         S.notice = ''
       })(),
     back: show(() => {
-      S.openSpec = ''
+      S.openSpec = S.openSpec === '' ? S.conceptFrom : ''
+      S.openConcept = ''
+      S.conceptFrom = ''
       S.isSuperseding = false
       S.notice = ''
     }),
     setDetail: detail =>
       show(() => {
         S.detail = detail
+      })(),
+    setConceptDetail: detail =>
+      show(() => {
+        S.conceptDetail = detail
       })(),
     toggleOnlyOpen: show(() => {
       S.isOnlyOpen = !S.isOnlyOpen
@@ -411,15 +437,23 @@ const actions = ($: EngineInterface): Actions => {
   }
 }
 
-/** The file the view in front shows: DOCKET.md, a spec or its docket; read once per refresh. */
+/**
+ * The file the view in front shows: DOCKET.md, a spec or its docket, a concept's own document or docket's concept
+ * file; read once per refresh.
+ */
 const content = async ($: EngineInterface): Promise<string | undefined> => {
   const data = S.data
   const spec = S.openSpec ? data?.specs?.find(found => found.id === S.openSpec) : undefined
+  const concept = S.openConcept ? data?.concepts?.find(found => found.id === S.openConcept) : undefined
   const path =
     spec === undefined
-      ? S.tab === 'config'
-        ? data?.config
-        : undefined
+      ? concept !== undefined
+        ? S.conceptDetail === 'content' && concept.source_path
+          ? concept.source_path
+          : concept.path
+        : S.tab === 'config'
+          ? data?.config
+          : undefined
       : S.detail === 'spec'
         ? spec.path
         : S.detail === 'docket'

@@ -501,6 +501,72 @@ test('a spec opens to its text, and its button starts the run in this session', 
   await ui.unmount()
 })
 
+test('a concept opens to its document from its heading, a spec and the table, and back leads where it came from', async ($, on) => {
+  let source = { source: 'docs/rfcs/0001-accounts.md', source_path: '/project/docs/rfcs/0001-accounts.md' }
+  const { clock } = world(on, () =>
+    overview({
+      concepts: [
+        { id: 'c-11112222', title: 'Accounts', topic: 'core', state: 'agreed', path: '/work/c.md', decisions: 1, ...source },
+      ],
+      specs: [
+        spec('s-0123abcd', 'Login', 'ready', { concept: 'c-11112222' }),
+        spec('s-cccc3333', 'Signup', 'done', { concept: 'c-11112222', closed: '2026-11-06T11:30:00Z' }),
+      ],
+    }),
+  )
+
+  await start($, clock)
+  const mount = async () => $.ui.mount({ ...PANE, surface: 'desktop' })
+  let ui = await mount()
+
+  // The heading: the project's own document first, docket's concept file in the second tab.
+  await ui.press({ key: 'concept-c-11112222' })
+  await ui.unmount()
+  ui = await mount()
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^Body of .*rfcs.0001-accounts\.md/)
+  expect(await ui.find({ type: 'Text', text: /^agreed$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^1 open · 1 finished$/ })).toBeDefined()
+  expect((await ui.find({ key: 'all-c-11112222' }))?.text).toBe('Implement all ready (1)')
+  expect(await ui.find({ key: 'spec-s-0123abcd' })).toBeUndefined()
+  await ui.press({ key: 'concept-detail-file' })
+  await ui.unmount()
+  ui = await mount()
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^Body of .*work.c\.md/)
+  expect((await ui.find({ key: 'back' }))?.text).toBe('← Register')
+  await ui.press({ key: 'back' })
+  await ui.unmount()
+  ui = await mount()
+  expect(await ui.find({ key: 'spec-s-0123abcd' })).toBeDefined()
+
+  // From a spec, back returns to that spec.
+  await ui.press({ key: 'spec-s-0123abcd' })
+  await ui.unmount()
+  ui = await mount()
+  await ui.press({ key: 'spec-concept-c-11112222' })
+  await ui.unmount()
+  ui = await mount()
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^Body of .*rfcs.0001-accounts\.md/)
+  expect((await ui.find({ key: 'back' }))?.text).toBe('← Login')
+  await ui.press({ key: 'back' })
+  await ui.unmount()
+  ui = await mount()
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^Body of .*s-0123abcd\.md/)
+  await ui.press({ key: 'back' })
+  await ui.unmount()
+
+  // A concept without a source has its content in docket's file, and no tabs; the table's concept cell opens it.
+  source = { source: '', source_path: '' }
+  ui = await mount()
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  await ui.press({ key: 'row-concept-s-cccc3333' })
+  await ui.unmount()
+  ui = await mount()
+  expect((await ui.find({ type: 'Markdown' }))?.text).toMatch(/^Body of .*work.c\.md/)
+  expect(await ui.find({ key: 'concept-detail-content' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a spec whose precondition check says not met starts no run, and its button has them checked again', async ($, on) => {
   let check: Record<string, unknown> = {
     lines: 1,

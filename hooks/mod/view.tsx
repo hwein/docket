@@ -12,6 +12,8 @@ export type Kit = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button' | 'Input' 
 
 export type Tab = 'register' | 'log' | 'config'
 export type Detail = 'spec' | 'docket' | 'log'
+/** What an open concept shows: the project's own document `source` names, or docket's concept file. */
+export type ConceptDetail = 'content' | 'file'
 /** A column of the finished table that orders it. */
 export type SortKey = 'closed' | 'title' | 'concept'
 
@@ -22,6 +24,11 @@ export type PaneState = {
   tab: Tab
   openSpec: string
   detail: Detail
+  /** The concept shown, '' for none; a spec open beside it is shown first. */
+  openConcept: string
+  conceptDetail: ConceptDetail
+  /** The spec the open concept was reached from, which its back button returns to; '' for the register. */
+  conceptFrom: string
   isSuperseding: boolean
   supersedeBy: string
   isOnlyOpen: boolean
@@ -44,8 +51,10 @@ export type Actions = {
   setTab: (tab: Tab) => void
   openSpec: (id: string) => void
   openDocket: (id: string) => void
+  openConcept: (id: string) => void
   back: () => void
   setDetail: (detail: Detail) => void
+  setConceptDetail: (detail: ConceptDetail) => void
   toggleOnlyOpen: () => void
   togglePick: (id: string) => void
   clearPicks: () => void
@@ -382,9 +391,11 @@ const finishedRow = (
       {concepts.size > 0 && (
         <Box width={CONCEPT_WIDTH} flexShrink={0} overflow="hidden">
           {concept !== '' && (
-            <Text dimColor wrap="truncate-end">
-              {concept}
-            </Text>
+            <Button key={`row-concept-${spec.id}`} plain dimColor onPress={() => act.openConcept(spec.concept)}>
+              <Text dimColor wrap="truncate-end">
+                {concept}
+              </Text>
+            </Button>
           )}
         </Box>
       )}
@@ -561,9 +572,18 @@ const group = (
     <Box flexDirection="column" gap="xs">
       {hasHeading && (
         <Box flexDirection="row" gap="sm" flexWrap="wrap" alignItems="center">
-          <Text weight="semibold" size="heading">
-            {concept ? concept.title || concept.id : t.noConcept}
-          </Text>
+          {/* A concept's heading opens its document; the group without one has none to open. */}
+          {concept ? (
+            <Button key={`concept-${concept.id}`} plain onPress={() => act.openConcept(concept.id)}>
+              <Text weight="semibold" size="heading">
+                {concept.title || concept.id}
+              </Text>
+            </Button>
+          ) : (
+            <Text weight="semibold" size="heading">
+              {t.noConcept}
+            </Text>
+          )}
           <Text dimColor>{meta}</Text>
         </Box>
       )}
@@ -777,7 +797,17 @@ const specView = (
         <Text dimColor>{spec.id}</Text>
         {spec.created !== '' && <Text dimColor>{`${t.created} ${spec.created}`}</Text>}
       </Box>
-      {concept !== undefined && fact(kit, t.concept, concept.title || concept.id)}
+      {concept !== undefined && (
+        <Box flexDirection="row" gap="sm" flexWrap="wrap">
+          <Text dimColor>{t.concept}</Text>
+          <Button
+            key={`spec-concept-${concept.id}`}
+            plain
+            label={concept.title || concept.id}
+            onPress={() => act.openConcept(concept.id)}
+          />
+        </Box>
+      )}
       {spec.follows.length > 0 &&
         fact(kit, t.follows, spec.follows.map(id => titleOf(data, id)).join(', '))}
       {spec.waits_for.length > 0 &&
@@ -845,6 +875,93 @@ const specView = (
           <Button key="supersede" plain dimColor label={t.markSuperseded} onPress={act.supersedeOpen} />
         )}
       </Box>
+      <Markdown text={shown.trim() === '' ? t.unreadable : shown} />
+    </Box>
+  )
+}
+
+/**
+ * One concept: its state and what was derived from it, the runs of its ready specs, and its text. With `source` set
+ * the project's own document holds the content and docket's file the decisions and the specs derived: both have a
+ * tab, the content first.
+ */
+const conceptView = (
+  kit: Kit,
+  t: Words,
+  data: Overview,
+  concept: Concept,
+  s: PaneState,
+  act: Actions,
+  content: string | undefined,
+) => {
+  const { Box, Button, Markdown, Text } = kit
+  const specs = (data.specs ?? []).filter(spec => spec.concept === concept.id)
+  const open = specs.filter(isOpen).length
+  const ready = specs.filter(spec => spec.state === 'ready' && !spec.held).length
+  const title = concept.title || concept.id
+  const from = s.conceptFrom ? data.specs?.find(spec => spec.id === s.conceptFrom) : undefined
+  const hasSource = Boolean(concept.source_path)
+  const tab = (detail: ConceptDetail, label: string) => (
+    <Button
+      key={`concept-detail-${detail}`}
+      variant={s.conceptDetail === detail ? 'primary' : 'secondary'}
+      label={label}
+      onPress={() => act.setConceptDetail(detail)}
+    />
+  )
+  // The card above already carries the title: the file's own first heading would say it twice.
+  const shown = (content ?? t.unreadable).replace(LEAD_HEADING, '')
+
+  return (
+    <Box flexDirection="column" gap="sm">
+      <Box flexDirection="row">
+        <Button key="back" plain dimColor label={from ? t.backTo(from.title) : t.back} onPress={act.back} />
+      </Box>
+      <Box
+        flexDirection="column"
+        gap="xs"
+        borderStyle="round"
+        borderColor="inactive"
+        paddingX="md"
+        paddingY="sm"
+      >
+        <Text size="title" weight="semibold" strikethrough={concept.state === 'superseded'}>
+          {title}
+        </Text>
+        <Box flexDirection="row" gap="md" flexWrap="wrap">
+          <Text weight="semibold">{t.conceptStates[concept.state] ?? concept.state}</Text>
+          <Text dimColor>{concept.id}</Text>
+        </Box>
+        {fact(
+          kit,
+          t.specsLabel,
+          [`${open} ${t.open.toLowerCase()}`, specs.length > open ? t.finishedCount(specs.length - open) : '']
+            .filter(Boolean)
+            .join(' · '),
+        )}
+        {concept.decisions > 0 && fact(kit, t.decisionsLabel, String(concept.decisions), 'warning')}
+        {ready > 0 && (
+          <Box flexDirection="row" gap="sm" flexWrap="wrap" marginTop="xs">
+            <Button
+              key={`all-${concept.id}`}
+              variant="primary"
+              label={t.implementAll(ready)}
+              onPress={() => act.implement(concept.id, title)}
+            />
+            <Button
+              key={`all-session-${concept.id}`}
+              label={t.allInSession(ready)}
+              onPress={() => act.implementInSession(concept.id, title)}
+            />
+          </Box>
+        )}
+      </Box>
+      {hasSource && (
+        <Box flexDirection="row" gap="xs">
+          {tab('content', t.conceptContent)}
+          {tab('file', t.conceptFile)}
+        </Box>
+      )}
       <Markdown text={shown.trim() === '' ? t.unreadable : shown} />
     </Box>
   )
@@ -919,10 +1036,13 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
 
   const counts = data.counts ?? {}
   const spec = s.openSpec ? data.specs?.find(found => found.id === s.openSpec) : undefined
+  const concept =
+    spec === undefined && s.openConcept ? data.concepts?.find(found => found.id === s.openConcept) : undefined
+  const isList = spec === undefined && concept === undefined
   const tab = (name: Tab, label: string) => (
     <Button
       key={`tab-${name}`}
-      variant={s.tab === name && spec === undefined ? 'primary' : 'secondary'}
+      variant={s.tab === name && isList ? 'primary' : 'secondary'}
       label={label}
       onPress={() => act.setTab(name)}
     />
@@ -937,7 +1057,7 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
         {tab('config', t.config)}
         <Button key="refresh" label={`↻ ${t.refresh}`} onPress={act.refresh} />
       </Box>
-      {spec === undefined && (
+      {isList && (
         <Box flexDirection="row" gap="md" flexWrap="wrap">
           <Text weight="semibold">{`${t.open} ${counts.open ?? 0}`}</Text>
           {STATES.map(state => (
@@ -949,13 +1069,14 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
       {s.error !== '' && <Text color="error">{s.error}</Text>}
       {s.notice !== '' && <Text color="suggestion">{s.notice}</Text>}
       {spec !== undefined && specView(kit, t, data, spec, s, act, content)}
-      {spec === undefined && s.tab === 'register' && registerView(kit, t, data, s, act)}
-      {spec === undefined && s.tab === 'register' && data.dirty === true && (
+      {concept !== undefined && conceptView(kit, t, data, concept, s, act, content)}
+      {isList && s.tab === 'register' && registerView(kit, t, data, s, act)}
+      {isList && s.tab === 'register' && data.dirty === true && (
         <Text dimColor size="caption">
           {t.dirty}
         </Text>
       )}
-      {spec === undefined && s.tab === 'log' && (
+      {isList && s.tab === 'log' && (
         <Box flexDirection="column" gap="xs">
           <Text dimColor size="caption">
             {t.logNote}
@@ -963,7 +1084,7 @@ export const drawPane = (kit: Kit, s: PaneState, t: Words, act: Actions, content
           <Markdown text={logTable(t, data, data.log ?? [])} />
         </Box>
       )}
-      {spec === undefined && s.tab === 'config' && <Markdown text={content ?? t.unreadable} />}
+      {isList && s.tab === 'config' && <Markdown text={content ?? t.unreadable} />}
     </Box>
   )
 }

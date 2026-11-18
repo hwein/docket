@@ -2523,6 +2523,12 @@ class PaneData(Project):
         self.assertEqual(code, 0, data)
         self.assertEqual({c["id"]: c["source"] for c in data["concepts"]},
                          {"c-11112222": "", "c-33334444": sso, "c-55556666": str(audit), "c-77778888": ""})
+        # The pane reads the source by its absolute path, also where the frontmatter names it from the repo root.
+        read = {c["id"]: c["source_path"] for c in data["concepts"]}
+        self.assertEqual((read["c-11112222"], read["c-77778888"]), ("", ""))
+        for concept, document in (("c-33334444", self.tmp / "repo/docs/rfcs/0001-sso.md"), ("c-55556666", audit)):
+            self.assertTrue(os.path.isabs(read[concept]), read[concept])
+            self.assertTrue(os.path.samefile(read[concept], document), read[concept])
         self.assertEqual(data["unregistered"], ["../concepts/payments.mdx", "docs/rfcs/0002-mfa.md",
                                                 "docs/rfcs/drafts/0005-export.adoc"])
 

@@ -51,6 +51,10 @@ const en = {
   orderHint:
     'A number marks a spec in a dependency: “Waits for #n” names the spec with that number. Specs without a number can be taken in any order.',
   back: '← Register',
+  backTo: (title: string) => `← ${title}`,
+  conceptContent: 'Content',
+  conceptFile: 'docket file',
+  specsLabel: 'Specs',
   waitsFor: 'Waits for',
   waitsPrecondition: 'Waits for a precondition',
   preconditions: 'Preconditions',
@@ -178,6 +182,10 @@ const de: typeof en = {
   orderHint:
     'Eine Zahl kennzeichnet eine Spec in einer Abhängigkeit: „Wartet auf #n“ nennt die Spec mit dieser Zahl. Specs ohne Zahl sind in beliebiger Reihenfolge wählbar.',
   back: '← Register',
+  backTo: title => `← ${title}`,
+  conceptContent: 'Inhalt',
+  conceptFile: 'docket-Datei',
+  specsLabel: 'Specs',
   waitsFor: 'Wartet auf',
   waitsPrecondition: 'Wartet auf Vorbedingung',
   preconditions: 'Vorbedingungen',

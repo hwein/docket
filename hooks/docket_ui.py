@@ -43,7 +43,8 @@ def open_decisions(path, title):
 
 def concept_records(paths):
     """Frontmatter of every concept (id, title, topic, state, source) and its file, by path. `source` is the
-    project's own concept document as the frontmatter names it, "" where the content stands in the docket file."""
+    project's own concept document as the frontmatter names it, "" where the content stands in the docket file;
+    `source_path` is the same document as an absolute path, the one the pane reads."""
     found = []
     if not os.path.isdir(paths.concepts):
         return found
@@ -55,9 +56,11 @@ def concept_records(paths):
             path = posixpath.join(folder, name)
             fields = frontmatter(path) if name.lower().endswith(".md") else {}
             if CONCEPT_ID.fullmatch(fields.get("id", "")):
+                source = fields.get("source", "")
                 found.append({"id": fields["id"].lower(), "title": fields.get("title", ""),
                               "topic": fields.get("topic", "") or topic, "state": fields.get("state", "").lower(),
-                              "source": fields.get("source", ""), "path": path,
+                              "source": source, "source_path": absolute(source, paths.root) if source else "",
+                              "path": path,
                               "decisions": open_decisions(path, "Open decisions")})
     return found
 

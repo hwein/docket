@@ -36,6 +36,8 @@ export type Concept = {
   path: string
   /** The project's own concept document as the frontmatter names it, '' where the content stands in `path`. */
   source: string
+  /** `source` as an absolute path, the file the pane reads; '' where `source` is. */
+  source_path: string
   decisions: number
 }
 
