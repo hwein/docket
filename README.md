@@ -83,4 +83,4 @@ offers `docket/` in the repo or another folder. docket adds no code to your repo
 
 ## Status
 
-0.6.14, early development. No warranty: use docket only where you can verify the result.
+0.6.15, early development. No warranty: use docket only where you can verify the result.
