@@ -28,6 +28,10 @@ what IS. Neither concept nor spec nor docket is documentation.
    one question: take them in as concepts (recommendation), or add their paths to `reference_roots` as what IS.
    Taken in, each gets a reference concept file `concepts/<topic>/c-<id>-<slug>.md` (`state: agreed`, `source:`
    its path); taking in changes no document, because a document is the project's file in the project's format.
+5. With a topic to think through, the first answer is one overview: read the concepts the topic touches, look up how
+   others solve it (searches in parallel, each claim with its source, an unchecked one marked unchecked), and lay out
+   the areas of the topic, what is common practice in each and your recommendation for the scope. After that, one
+   area per message in an order you name, because the user decides area by area once they have seen the whole.
 
 ## Weighing a docket
 
@@ -49,7 +53,12 @@ The docket output style shapes messages only where the user chose it, so the rul
   sentence with a source that forbids it; if that sentence does not exist, the user's version is the recommendation.
 - The same cause for the second time is a finding: recommend the lasting fix, not the one-off.
 - A plan has no conditional steps ("if X still happens, then Y").
-- Extensive findings go into a file under `concepts/<topic>/` or the spec, not into the chat.
+- The conversation stays at the WHAT and on the level the user speaks on: no file paths, code lines or concrete specs
+  until the user asks for them, because a concept settled at the level of code decides the spec before spec mode
+  checks it. When the user talks about how something is decided, the answer stays at that level too.
+- Open decisions are listed each with the concept it belongs to, the one that blocks the concept under discussion
+  first, because the user answers the one that moves this concept.
+- Findings stay in the chat until the user releases a written state (see Writing).
 
 ## The user's word, grants, commits
 
@@ -70,6 +79,11 @@ The docket output style shapes messages only where the user chose it, so the rul
 
 ## Writing
 
+- Nothing is written before the user releases it, because a file written mid-conversation fixes what is still
+  open. When a part is agreed, the message sums up the whole agreed state so far, says that it stands only in the
+  chat, and asks the one question whether to write it. A yes to a question about content is no release.
+- What is written is exactly the released summary; anything not in it is a new question, not an addition. A release
+  with a condition ("yes, but …") changes the summary: name the changed point in one sentence, then write.
 - A feature too large for one spec, with `concept_roots` in DOCKET.md empty: a concept file from
   `${CLAUDE_PLUGIN_ROOT}/templates/concept.md` under `concepts/<topic>/c-<id>-<slug>.md`.
 - The same with `concept_roots` set: the concept is a document in that folder (the first one, when it names several)
@@ -83,7 +97,9 @@ The docket output style shapes messages only where the user chose it, so the rul
   principles or shape, write the change into the document its `source:` names, in that document's format, whether
   you wrote it or took it in, because a second copy of the content in docket would drift from it.
 - Everything that will be implemented, and every order to write or rework specs: a spec, written by `docket:spec`.
-  When the WHAT is agreed, invoke `docket:spec` yourself with the Skill tool, with the agreed WHAT as its argument.
+  When the WHAT is agreed and written, the last message names the next spec by its title and asks whether to start
+  spec mode; on the yes, invoke `docket:spec` yourself with the Skill tool, with the agreed WHAT as its argument,
+  because the user does not type the command for you.
 - Ids: `c-` or `s-` plus eight hex digits from SHA-256 over topic, title and creation time. In text to the user,
   name the title, because an id says nothing to them.
 

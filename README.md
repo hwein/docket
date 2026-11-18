@@ -61,7 +61,7 @@ Optional: the output style `docket:docket` (result first, at most one question),
 | Command | What happens |
 |---|---|
 | `/docket:init` | Sets the project up and writes `DOCKET.md` after your `go`. |
-| `/docket:concept` | Thinks with you until the WHAT is agreed. |
+| `/docket:concept` | Thinks with you until the WHAT is agreed; writes only what you release. |
 | `/docket:spec` | Turns it into a spec with checkable done criteria, then `ready`. |
 | `/docket:implement` | Runs the next ready spec, a spec id, a list of ids, a concept id or `--all`, in order. |
 | `/docket:precheck` | Runs the preconditions of ready specs and records whether they are met; a spec that waits for one starts no run. |
