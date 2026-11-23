@@ -9,3 +9,4 @@ framework/
 experiments/
 .claude-plugin/types/
 evals/results/
+.rgignore
