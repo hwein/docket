@@ -97,3 +97,14 @@ diff changes files the project owns.
    <repo root>`. `"initialized": true` with `"work"` equal to the work dir of the diff says the hooks and the pane
    find DOCKET.md. Any other answer is a blocker: report the command, its answer and the folder docket looks in
    instead, because a project docket does not find gets no pane, no state line and no run.
+7. Last, when every file is written and the document situation is final: check which context paths git ignores,
+   because Claude Code's Grep searched from the repo root skips every path `.gitignore` excludes, while Read, Glob
+   and a Grep whose `path` lies inside that folder find it. Context paths: the work dir, every `reference_roots` and
+   `concept_roots` entry, CLAUDE.md, AGENTS.md, `.claude/CLAUDE.md`, CONTRIBUTING.md
+   (`git check-ignore -v <path>`). A work dir outside the repo is no context path here: no search from the repo root
+   reaches it. None ignored: nothing is said. Otherwise read an existing `.rgignore` or `.ignore` in the repo root
+   and propose, as one card with the recommendation first, the missing lines of a `.rgignore` in the repo root: one
+   line `!<folder>/` per ignored folder and `!<file>` per ignored file, never `<folder>/**`, which does not lift the
+   exclusion; and the line `.rgignore` in `.gitignore`, so git keeps ignoring what it ignored. Write both only after
+   the user's go. Then Grep from the repo root, per line, for a word that occurs only under that path and report each
+   line as found or not found; a line not found is reported with its command and result.
